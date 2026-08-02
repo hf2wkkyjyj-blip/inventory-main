@@ -611,7 +611,7 @@ app.get('/api/admin/pl', auth, (req, res) => {
 
 // ─── START ───────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`\n✅ Inventory Site running at http://localhost:${PORT}`);
+  console.log(`\n✅ Inventory Site v2 running at http://localhost:${PORT}`);
   console.log(`   Admin panel: http://localhost:${PORT}/admin.html`);
   console.log(`   Admin password: ${ADMIN_PASSWORD}\n`);
 });
