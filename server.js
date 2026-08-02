@@ -101,6 +101,40 @@ db.exec(`
 // Migrations
 try { db.exec('ALTER TABLE products ADD COLUMN quantity INTEGER DEFAULT 0'); } catch(e) {}
 try { db.exec('ALTER TABLE products ADD COLUMN source_url TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE products ADD COLUMN cost_price REAL'); } catch(e) {}
+try { db.exec('ALTER TABLE sales ADD COLUMN payment_method TEXT'); } catch(e) {}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sales (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id     INTEGER,
+    product_name   TEXT NOT NULL,
+    quantity_sold  INTEGER NOT NULL DEFAULT 1,
+    sale_price     REAL NOT NULL,
+    cost_price     REAL NOT NULL DEFAULT 0,
+    profit         REAL,
+    payment_method TEXT,
+    notes          TEXT,
+    sold_at        DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS restocks (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id     INTEGER NOT NULL,
+    product_name   TEXT NOT NULL,
+    quantity_added INTEGER NOT NULL,
+    cost_per_unit  REAL,
+    notes          TEXT,
+    restocked_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS expenses (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    category       TEXT NOT NULL DEFAULT 'Other',
+    amount         REAL NOT NULL,
+    payment_method TEXT DEFAULT 'Cash',
+    notes          TEXT,
+    expense_date   DATE DEFAULT (date('now'))
+  );
+`);
 
 // Seed default settings
 const defaultSettings = {
@@ -188,20 +222,20 @@ app.post('/api/admin/login', (req, res) => {
 
 // ─── ADMIN PRODUCT ROUTES ─────────────────────────────────────────────────────
 app.post('/api/admin/products', auth, (req, res) => {
-  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url } = req.body;
+  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   const n = v => (v === undefined || v === '') ? null : v;
-  const result = db.prepare(`INSERT INTO products (name,category,subcategory,description,price,price_unit,sku,source,stock,images,featured,sort_order,quantity,source_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url)]);
+  const result = db.prepare(`INSERT INTO products (name,category,subcategory,description,price,price_unit,sku,source,stock,images,featured,sort_order,quantity,source_url,cost_price) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price)]);
   res.json({ id: result.lastInsertRowid });
 });
 
 app.put('/api/admin/products/:id', auth, (req, res) => {
-  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url } = req.body;
+  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   const n = v => (v === undefined || v === '') ? null : v;
-  db.prepare(`UPDATE products SET name=?,category=?,subcategory=?,description=?,price=?,price_unit=?,sku=?,source=?,stock=?,images=?,featured=?,sort_order=?,quantity=?,source_url=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), req.params.id]);
+  db.prepare(`UPDATE products SET name=?,category=?,subcategory=?,description=?,price=?,price_unit=?,sku=?,source=?,stock=?,images=?,featured=?,sort_order=?,quantity=?,source_url=?,cost_price=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), req.params.id]);
   res.json({ success: true });
 });
 
@@ -419,6 +453,160 @@ app.post('/api/admin/fetch-product', auth, async (req, res) => {
   } finally {
     if (browser) await browser.close().catch(() => {});
   }
+});
+
+// ─── SALES ───────────────────────────────────────────────────────────────────
+// Aggregate by product (for top-seller badge and per-SKU stats)
+app.get('/api/admin/sales/by-product', auth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT product_id,
+      COALESCE(SUM(quantity_sold),0)           as units_sold,
+      COALESCE(SUM(sale_price*quantity_sold),0) as revenue,
+      COALESCE(SUM(cost_price*quantity_sold),0) as cogs,
+      COALESCE(SUM(profit),0)                  as profit,
+      COUNT(*)                                  as transactions
+    FROM sales WHERE product_id IS NOT NULL GROUP BY product_id
+  `).all();
+  const map = {};
+  rows.forEach(r => { map[r.product_id] = r; });
+  res.json(map);
+});
+
+// Per-product mini P&L + full history
+app.get('/api/admin/products/:id/pl', auth, (req, res) => {
+  const pid = req.params.id;
+  const sales    = db.prepare('SELECT * FROM sales WHERE product_id=? ORDER BY sold_at DESC').all([pid]);
+  const restocks = db.prepare('SELECT * FROM restocks WHERE product_id=? ORDER BY restocked_at DESC').all([pid]);
+  const summary  = db.prepare(`
+    SELECT COALESCE(SUM(quantity_sold),0)            as units_sold,
+           COALESCE(SUM(sale_price*quantity_sold),0)  as revenue,
+           COALESCE(SUM(cost_price*quantity_sold),0)  as cogs,
+           COALESCE(SUM(profit),0)                    as gross_profit,
+           COUNT(*)                                    as transactions
+    FROM sales WHERE product_id=?
+  `).get([pid]);
+  const prod = db.prepare('SELECT quantity, cost_price FROM products WHERE id=?').get([pid]);
+  const inventory_value = prod ? (prod.quantity||0)*(prod.cost_price||0) : 0;
+  const margin_pct = summary.revenue > 0 ? (summary.gross_profit / summary.revenue * 100) : 0;
+  res.json({ sales, restocks, summary: { ...summary, inventory_value, margin_pct } });
+});
+
+// All sales
+app.get('/api/admin/sales', auth, (req, res) => {
+  const { product_id } = req.query;
+  if (product_id) {
+    res.json(db.prepare('SELECT * FROM sales WHERE product_id=? ORDER BY sold_at DESC').all([product_id]));
+  } else {
+    res.json(db.prepare('SELECT * FROM sales ORDER BY sold_at DESC').all());
+  }
+});
+
+// Record a sale — auto-reduces stock, returns sold_out flag
+app.post('/api/admin/sales', auth, (req, res) => {
+  const { product_id, product_name, quantity_sold, sale_price, cost_price, notes, payment_method, sold_at } = req.body;
+  if (!product_name || !quantity_sold || sale_price == null) return res.status(400).json({ error: 'Missing required fields' });
+  const qty = parseInt(quantity_sold) || 1;
+  const sp  = parseFloat(sale_price)  || 0;
+  const cp  = parseFloat(cost_price)  || 0;
+  const profit = (sp - cp) * qty;
+  const vals = [product_id||null, product_name, qty, sp, cp, profit, notes||null, payment_method||null];
+  let result;
+  if (sold_at) {
+    result = db.prepare('INSERT INTO sales (product_id,product_name,quantity_sold,sale_price,cost_price,profit,notes,payment_method,sold_at) VALUES (?,?,?,?,?,?,?,?,?)').run([...vals, sold_at]);
+  } else {
+    result = db.prepare('INSERT INTO sales (product_id,product_name,quantity_sold,sale_price,cost_price,profit,notes,payment_method) VALUES (?,?,?,?,?,?,?,?)').run(vals);
+  }
+  let sold_out = false;
+  if (product_id) {
+    const prod = db.prepare('SELECT quantity FROM products WHERE id=?').get([product_id]);
+    if (prod) {
+      const newQty = Math.max(0, (prod.quantity||0) - qty);
+      const newStock = newQty === 0 ? 'out_stock' : newQty <= 5 ? 'low_stock' : 'in_stock';
+      db.prepare('UPDATE products SET quantity=?,stock=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run([newQty, newStock, product_id]);
+      sold_out = newQty === 0;
+    }
+  }
+  res.json({ id: result.lastInsertRowid, sold_out });
+});
+
+app.delete('/api/admin/sales/:id', auth, (req, res) => {
+  db.prepare('DELETE FROM sales WHERE id=?').run([req.params.id]);
+  res.json({ success: true });
+});
+
+// ─── RESTOCKS ────────────────────────────────────────────────────────────────
+app.get('/api/admin/restocks/:productId', auth, (req, res) => {
+  res.json(db.prepare('SELECT * FROM restocks WHERE product_id=? ORDER BY restocked_at DESC').all([req.params.productId]));
+});
+
+app.post('/api/admin/restocks', auth, (req, res) => {
+  const { product_id, product_name, quantity_added, cost_per_unit, notes, restocked_at, update_cost } = req.body;
+  if (!product_id || !quantity_added) return res.status(400).json({ error: 'Missing fields' });
+  const qty = parseInt(quantity_added) || 0;
+  const cpu = parseFloat(cost_per_unit) || null;
+  const vals = [product_id, product_name||'', qty, cpu, notes||null];
+  let result;
+  if (restocked_at) {
+    result = db.prepare('INSERT INTO restocks (product_id,product_name,quantity_added,cost_per_unit,notes,restocked_at) VALUES (?,?,?,?,?,?)').run([...vals, restocked_at]);
+  } else {
+    result = db.prepare('INSERT INTO restocks (product_id,product_name,quantity_added,cost_per_unit,notes) VALUES (?,?,?,?,?)').run(vals);
+  }
+  const prod = db.prepare('SELECT quantity FROM products WHERE id=?').get([product_id]);
+  if (prod) {
+    const newQty = (prod.quantity||0) + qty;
+    const newStock = newQty > 5 ? 'in_stock' : newQty > 0 ? 'low_stock' : 'out_stock';
+    if (update_cost && cpu) {
+      db.prepare('UPDATE products SET quantity=?,stock=?,cost_price=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run([newQty, newStock, cpu, product_id]);
+    } else {
+      db.prepare('UPDATE products SET quantity=?,stock=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run([newQty, newStock, product_id]);
+    }
+  }
+  res.json({ id: result.lastInsertRowid });
+});
+
+// ─── EXPENSES ────────────────────────────────────────────────────────────────
+app.get('/api/admin/expenses', auth, (req, res) => {
+  const { from, to } = req.query;
+  let sql = 'SELECT * FROM expenses WHERE 1=1';
+  const params = [];
+  if (from) { sql += ' AND expense_date >= ?'; params.push(from); }
+  if (to)   { sql += ' AND expense_date <= ?'; params.push(to); }
+  sql += ' ORDER BY expense_date DESC, id DESC';
+  res.json(db.prepare(sql).all(params));
+});
+
+app.post('/api/admin/expenses', auth, (req, res) => {
+  const { category, amount, payment_method, notes, expense_date } = req.body;
+  if (!amount) return res.status(400).json({ error: 'Amount required' });
+  const vals = [category||'Other', parseFloat(amount)||0, payment_method||'Cash', notes||null];
+  let result;
+  if (expense_date) {
+    result = db.prepare('INSERT INTO expenses (category,amount,payment_method,notes,expense_date) VALUES (?,?,?,?,?)').run([...vals, expense_date]);
+  } else {
+    result = db.prepare('INSERT INTO expenses (category,amount,payment_method,notes) VALUES (?,?,?,?)').run(vals);
+  }
+  res.json({ id: result.lastInsertRowid });
+});
+
+app.delete('/api/admin/expenses/:id', auth, (req, res) => {
+  db.prepare('DELETE FROM expenses WHERE id=?').run([req.params.id]);
+  res.json({ success: true });
+});
+
+// ─── P&L ─────────────────────────────────────────────────────────────────────
+app.get('/api/admin/pl', auth, (req, res) => {
+  const { from, to } = req.query;
+  const sf = [], sp = [], ef = [], ep = [];
+  if (from) { sf.push('date(sold_at)>=?'); sp.push(from); ef.push('expense_date>=?'); ep.push(from); }
+  if (to)   { sf.push('date(sold_at)<=?'); sp.push(to);   ef.push('expense_date<=?'); ep.push(to); }
+  const sw = sf.length ? 'WHERE '+sf.join(' AND ') : '';
+  const ew = ef.length ? 'WHERE '+ef.join(' AND ') : '';
+  const s   = db.prepare(`SELECT COALESCE(SUM(sale_price*quantity_sold),0) as revenue, COALESCE(SUM(cost_price*quantity_sold),0) as cogs, COALESCE(SUM(profit),0) as gross_profit, COUNT(*) as transactions FROM sales ${sw}`).get(sp);
+  const e   = db.prepare(`SELECT COALESCE(SUM(amount),0) as total FROM expenses ${ew}`).get(ep);
+  const eCat= db.prepare(`SELECT category, COALESCE(SUM(amount),0) as total FROM expenses ${ew} GROUP BY category ORDER BY total DESC`).all(ep);
+  const inv = db.prepare('SELECT COALESCE(SUM(quantity*COALESCE(cost_price,0)),0) as value FROM products WHERE quantity>0').get();
+  const top = db.prepare(`SELECT product_name, SUM(quantity_sold) as units, SUM(sale_price*quantity_sold) as revenue, SUM(profit) as profit FROM sales ${sw} GROUP BY product_id,product_name ORDER BY revenue DESC LIMIT 5`).all(sp);
+  res.json({ revenue: s.revenue, cogs: s.cogs, gross_profit: s.gross_profit, transactions: s.transactions, total_expenses: e.total, net_profit: s.gross_profit - e.total, inventory_value: inv.value, expense_breakdown: eCat, top_products: top });
 });
 
 // ─── START ───────────────────────────────────────────────────────────────────
