@@ -604,7 +604,11 @@ else if(/tool|drill|saw|hardware/.test(bc))d.category='Tools';
 fetch('http://localhost:4000/api/import-from-page',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(){alert('✅ Sent! Switch back to your admin panel.');}).catch(function(e){alert('❌ Could not reach inventory server.\\nMake sure it is running on port 4000.');});
 })();`;
 
-document.getElementById('bookmarklet-link').href = BOOKMARKLET;
+// Use current server URL so bookmarklet works both locally and on Railway
+const serverUrl = window.location.origin;
+document.getElementById('bookmarklet-link').href = BOOKMARKLET
+  .replace('http://localhost:4000', serverUrl)
+  .replace('Make sure it is running on port 4000.', 'Server: ' + serverUrl);
 
 let importPollInterval = null;
 
