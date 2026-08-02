@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin – Inventory</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<style>
+  :root {
+    --bg:#0d1117; --surface:#161b22; --card:#1c2333; --border:#30363d;
+    --accent:#2f81f7; --green:#56d364; --yellow:#d29922; --red:#f85149;
+    --text:#e6edf3; --muted:#8b949e;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;min-height:100vh;}
+
+  /* LOGIN */
+  #login-screen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999;}
+  .login-box{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:40px;width:360px;text-align:center;}
+  .login-box h2{font-size:20px;font-weight:700;margin-bottom:6px;}
+  .login-box p{font-size:13px;color:var(--muted);margin-bottom:28px;}
+  .login-box input{width:100%;padding:11px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin-bottom:12px;}
+  .login-box input:focus{outline:none;border-color:var(--accent);}
+  .login-box button{width:100%;padding:12px;background:var(--accent);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:700;cursor:pointer;}
+  #login-err{color:var(--red);font-size:13px;margin-top:8px;}
+
+  /* TOPBAR */
+  #topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;justify-content:space-between;height:56px;position:sticky;top:0;z-index:100;}
+  .topbar-title{font-size:16px;font-weight:700;display:flex;align-items:center;gap:10px;}
+  .topbar-title a{font-size:12px;color:var(--accent);text-decoration:none;font-weight:400;margin-left:8px;}
+  .topbar-actions{display:flex;gap:10px;align-items:center;}
+
+  /* TABS */
+  #tabs{display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--surface);padding:0 24px;}
+  .tab{padding:12px 20px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;}
+  .tab:hover{color:var(--text);}
+  .tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+
+  /* CONTENT */
+  #content{max-width:1100px;margin:0 auto;padding:28px 24px;}
+
+  /* BUTTONS */
+  .btn{padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;display:inline-flex;align-items:center;gap:6px;transition:all .15s;}
+  .btn-primary{background:var(--accent);color:#fff;}
+  .btn-primary:hover{background:#1a6fd4;}
+  .btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border);}
+  .btn-ghost:hover{border-color:var(--accent);color:var(--accent);}
+  .btn-danger{background:rgba(248,81,73,.15);color:var(--red);border:1px solid rgba(248,81,73,.2);}
+  .btn-danger:hover{background:rgba(248,81,73,.25);}
+  .btn-sm{padding:5px 10px;font-size:12px;}
+  .btn-success{background:rgba(86,211,100,.15);color:var(--green);border:1px solid rgba(86,211,100,.2);}
+
+  /* TOOLBAR */
+  .toolbar{display:flex;gap:10px;margin-bottom:20px;align-items:center;flex-wrap:wrap;}
+  .search-box{position:relative;flex:1;min-width:200px;}
+  .search-box i{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:12px;}
+  .search-box input{width:100%;padding:9px 12px 9px 33px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;}
+  .search-box input:focus{outline:none;border-color:var(--accent);}
+  select{padding:9px 12px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;cursor:pointer;}
+  select:focus{outline:none;border-color:var(--accent);}
+
+  /* TABLE */
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:20px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;padding:10px 14px;color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);}
+  td{padding:12px 14px;border-bottom:1px solid rgba(48,54,61,.6);vertical-align:middle;}
+  tr:last-child td{border-bottom:none;}
+  tr:hover td{background:rgba(47,129,247,.03);}
+  .thumb{width:48px;height:40px;border-radius:6px;object-fit:cover;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:16px;}
+  .thumb img{width:100%;height:100%;object-fit:cover;border-radius:6px;}
+
+  /* BADGES */
+  .badge{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;}
+  .badge.in_stock{background:rgba(86,211,100,.15);color:var(--green);}
+  .badge.low_stock{background:rgba(210,153,34,.15);color:var(--yellow);}
+  .badge.out_stock{background:rgba(248,81,73,.15);color:var(--red);}
+  .badge.featured{background:rgba(86,211,100,.15);color:var(--green);}
+
+  /* MODAL */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s;}
+  .overlay.open{opacity:1;pointer-events:all;}
+  .modal{background:var(--card);border:1px solid var(--border);border-radius:14px;width:680px;max-width:95vw;max-height:90vh;overflow-y:auto;transform:scale(.96);transition:transform .2s;padding:28px;}
+  .overlay.open .modal{transform:scale(1);}
+  .modal h2{font-size:17px;font-weight:700;margin-bottom:24px;display:flex;align-items:center;gap:10px;}
+  .modal-footer{display:flex;justify-content:flex-end;gap:10px;margin-top:24px;padding-top:20px;border-top:1px solid var(--border);}
+
+  /* FORMS */
+  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
+  .form-row.three{grid-template-columns:1fr 1fr 1fr;}
+  .form-group{margin-bottom:16px;}
+  .form-group label{display:block;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;}
+  .form-group input,.form-group select,.form-group textarea{width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:inherit;}
+  .form-group textarea{min-height:80px;resize:vertical;}
+  .form-group input:focus,.form-group select:focus,.form-group textarea:focus{outline:none;border-color:var(--accent);}
+
+  /* IMAGE UPLOAD */
+  .img-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
+  .img-thumb-wrap{position:relative;}
+  .img-thumb{width:72px;height:60px;border-radius:8px;object-fit:cover;border:1px solid var(--border);}
+  .img-remove{position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;background:var(--red);color:#fff;border:none;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .upload-area{border:2px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;color:var(--muted);font-size:13px;transition:border-color .15s;}
+  .upload-area:hover{border-color:var(--accent);}
+  .upload-area input{display:none;}
+  #upload-progress{font-size:12px;color:var(--muted);margin-top:4px;display:none;}
+
+  /* SETTINGS */
+  .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+  .settings-msg{font-size:13px;margin-top:12px;display:none;padding:10px 14px;border-radius:8px;}
+  .settings-msg.ok{background:rgba(86,211,100,.1);color:var(--green);border:1px solid rgba(86,211,100,.2);}
+
+  /* EMPTY */
+  .empty{text-align:center;padding:48px;color:var(--muted);}
+  .empty i{font-size:36px;margin-bottom:12px;opacity:.25;display:block;}
+
+  /* IMPORT BAR */
+  .import-bar{background:rgba(47,129,247,.07);border:1px solid rgba(47,129,247,.2);border-radius:10px;padding:14px 16px;margin-bottom:20px;}
+  .import-bar .import-title{font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;}
+  .import-bar .import-steps{font-size:12px;color:var(--muted);line-height:1.8;}
+  .import-bar .import-steps b{color:var(--text);}
+  .bookmarklet-link{display:inline-block;margin-top:10px;padding:7px 14px;background:var(--accent);color:#fff;border-radius:8px;font-size:12px;font-weight:700;text-decoration:none;cursor:grab;}
+  .bookmarklet-link:active{cursor:grabbing;}
+  .import-waiting{display:none;align-items:center;gap:8px;font-size:12px;color:var(--green);margin-top:8px;}
+  #import-msg{font-size:12px;margin-top:8px;display:none;padding:8px 12px;border-radius:6px;}
+  #import-msg.ok{background:rgba(86,211,100,.1);color:var(--green);border:1px solid rgba(86,211,100,.2);}
+  #import-msg.err{background:rgba(248,81,73,.1);color:var(--red);border:1px solid rgba(248,81,73,.2);}
+
+  /* SPINNER */
+  .spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <h2>🔐 Admin Panel</h2>
+    <p>Enter your admin password to manage inventory</p>
+    <input type="password" id="pw-input" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()">
+    <button onclick="doLogin()">Sign In</button>
+    <div id="login-err"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="topbar">
+  <div class="topbar-title">
+    <i class="fa fa-boxes-stacking" style="color:var(--accent)"></i>
+    Inventory Admin
+    <a href="/" target="_blank"><i class="fa fa-external-link-alt"></i> View Site</a>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn btn-ghost btn-sm" onclick="doLogout()"><i class="fa fa-sign-out-alt"></i> Sign Out</button>
+  </div>
+</div>
+
+<div id="tabs">
+  <div class="tab active" onclick="showTab('products')"><i class="fa fa-box"></i> Products</div>
+  <div class="tab" onclick="showTab('settings')"><i class="fa fa-cog"></i> Business Info</div>
+</div>
+
+<div id="content">
+
+  <!-- PRODUCTS TAB -->
+  <div id="tab-products">
+    <div class="toolbar">
+      <div class="search-box"><i class="fa fa-search"></i><input type="text" id="admin-search" placeholder="Search products…" oninput="adminLoadProducts()"></div>
+      <select id="admin-cat-filter" onchange="adminLoadProducts()">
+        <option value="">All Categories</option>
+        <option>Flooring</option><option>Vanity</option><option>Tools</option><option>Other</option>
+      </select>
+      <select id="admin-stock-filter" onchange="adminLoadProducts()">
+        <option value="">All Stock</option>
+        <option value="in_stock">In Stock</option>
+        <option value="low_stock">Low Stock</option>
+        <option value="out_stock">Out of Stock</option>
+      </select>
+      <button class="btn btn-primary" onclick="openModal()"><i class="fa fa-plus"></i> Add Product</button>
+    </div>
+    <div class="panel">
+      <table>
+        <thead><tr>
+          <th style="width:60px">Image</th>
+          <th>Product</th>
+          <th>Category</th>
+          <th>Price</th>
+          <th>Stock</th>
+          <th>Source</th>
+          <th>Featured</th>
+          <th style="width:120px">Actions</th>
+        </tr></thead>
+        <tbody id="products-tbody"></tbody>
+      </table>
+    </div>
+    <div id="product-count" style="font-size:12px;color:var(--muted);text-align:right;"></div>
+  </div>
+
+  <!-- SETTINGS TAB -->
+  <div id="tab-settings" style="display:none;">
+    <div class="panel" style="padding:24px;">
+      <h3 style="font-size:15px;font-weight:700;margin-bottom:20px;"><i class="fa fa-store" style="color:var(--accent);margin-right:8px;"></i>Business Information</h3>
+      <div class="settings-grid">
+        <div class="form-group"><label>Business Name</label><input type="text" id="s-name" placeholder="Your Business Name"></div>
+        <div class="form-group"><label>Phone Number</label><input type="text" id="s-phone" placeholder="(555) 123-4567"></div>
+        <div class="form-group"><label>Email</label><input type="email" id="s-email" placeholder="contact@yourbusiness.com"></div>
+        <div class="form-group"><label>Address</label><input type="text" id="s-address" placeholder="123 Main St, City, State"></div>
+        <div class="form-group"><label>Business Hours</label><input type="text" id="s-hours" placeholder="Mon–Fri 8am–6pm, Sat 9am–4pm"></div>
+        <div class="form-group"><label>Service Area</label><input type="text" id="s-area" placeholder="Serving Miami-Dade & Broward County"></div>
+        <div class="form-group" style="grid-column:1/-1;"><label>Hero Tagline</label><input type="text" id="s-tagline" placeholder="Short description shown on homepage"></div>
+      </div>
+      <button class="btn btn-primary" onclick="saveSettings()"><i class="fa fa-save"></i> Save Settings</button>
+      <div class="settings-msg" id="settings-msg">✅ Settings saved!</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- PRODUCT MODAL -->
+<div class="overlay" id="product-overlay">
+  <div class="modal">
+    <h2><i class="fa fa-box" style="color:var(--accent)"></i> <span id="modal-title">Add Product</span></h2>
+    <input type="hidden" id="p-id">
+
+    <!-- IMPORT FROM BROWSER -->
+    <div class="import-bar">
+      <div class="import-title">📦 Import from Home Depot / Lowe's</div>
+      <div class="import-steps">
+        <b>1.</b> Drag this button to your bookmarks bar: &nbsp;
+        <a class="bookmarklet-link" id="bookmarklet-link" href="#" title="Drag me to your bookmarks bar">📦 Send to Inventory</a><br>
+        <b>2.</b> Open any product page in your browser, then click that bookmark.<br>
+        <b>3.</b> Come back here — the form will auto-fill instantly.
+      </div>
+      <div class="import-waiting" id="import-waiting"><span class="spinner"></span> Waiting for product from browser…</div>
+    </div>
+    <div id="import-msg"></div>
+
+    <div class="form-row">
+      <div class="form-group" style="grid-column:1/-1;margin:0"><label>Product Name *</label><input type="text" id="p-name" placeholder="e.g. LifeProof Vinyl Plank Flooring 6mm"></div>
+    </div>
+
+    <div class="form-row three" style="margin-top:16px;">
+      <div class="form-group" style="margin:0"><label>Category *</label>
+        <select id="p-cat">
+          <option>Flooring</option><option>Vanity</option><option>Tools</option><option>Other</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0"><label>Subcategory</label><input type="text" id="p-subcat" placeholder="e.g. Vinyl Plank, Vanity Cabinet…"></div>
+      <div class="form-group" style="margin:0"><label>SKU / Item #</label><input type="text" id="p-sku" placeholder="e.g. FLR-001"></div>
+    </div>
+
+    <div class="form-group" style="margin-top:16px;"><label>Description</label>
+      <textarea id="p-desc" placeholder="Brief product description — waterproof, dimensions, color, material…"></textarea>
+    </div>
+
+    <div class="form-row three">
+      <div class="form-group" style="margin:0"><label>Price ($)</label><input type="number" id="p-price" placeholder="0.00" step="0.01" min="0"></div>
+      <div class="form-group" style="margin:0"><label>Price Unit</label>
+        <select id="p-unit">
+          <option value="each">each</option>
+          <option value="sq ft">sq ft</option>
+          <option value="box">box</option>
+          <option value="pallet">pallet</option>
+          <option value="linear ft">linear ft</option>
+          <option value="set">set</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0"><label>Source</label>
+        <select id="p-source">
+          <option>Home Depot</option>
+          <option>Lowe's</option>
+          <option>Other</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group" style="margin:0"><label>Stock Status</label>
+        <select id="p-stock">
+          <option value="in_stock">✅ In Stock</option>
+          <option value="low_stock">⚠️ Low Stock</option>
+          <option value="out_stock">❌ Out of Stock</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0"><label>Featured on Homepage</label>
+        <select id="p-featured">
+          <option value="0">No</option>
+          <option value="1">Yes — show featured badge</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0"><label>Quantity Available</label><input type="number" id="p-qty" placeholder="0" min="0" step="1"></div>
+    </div>
+
+    <div class="form-group">
+      <label>Source URL <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(Home Depot / Lowe's product page link — optional)</span></label>
+      <input type="url" id="p-source-url" placeholder="https://www.homedepot.com/p/...">
+    </div>
+
+    <!-- IMAGE UPLOAD -->
+    <div class="form-group">
+      <label>Product Images</label>
+      <div id="img-preview-row" class="img-row"></div>
+      <div class="upload-area" onclick="document.getElementById('img-file').click()">
+        <i class="fa fa-camera" style="font-size:20px;margin-bottom:6px;display:block;"></i>
+        Click to upload photo <span style="font-size:11px;display:block;margin-top:4px;">JPG, PNG, WEBP — up to 10MB</span>
+        <input type="file" id="img-file" accept="image/*" multiple onchange="uploadImages(this.files)">
+      </div>
+      <div id="upload-progress"></div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveProduct()"><i class="fa fa-save"></i> Save Product</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let TOKEN = localStorage.getItem('inv_admin_token');
+let productImages = [];
+
+// ── AUTH ──
+async function doLogin() {
+  const pw = document.getElementById('pw-input').value;
+  const res = await fetch('/api/admin/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ password: pw }) });
+  const data = await res.json();
+  if (data.token) {
+    TOKEN = data.token;
+    localStorage.setItem('inv_admin_token', TOKEN);
+    document.getElementById('login-screen').style.display = 'none';
+    adminLoadProducts(); loadSettings();
+  } else {
+    document.getElementById('login-err').textContent = data.error || 'Wrong password';
+  }
+}
+
+function doLogout() {
+  localStorage.removeItem('inv_admin_token');
+  location.reload();
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+TOKEN } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch('/api' + path, opts);
+  if (res.status === 401) { doLogout(); return null; }
+  return res.json();
+}
+
+// Auto-login if token exists
+if (TOKEN) {
+  document.getElementById('login-screen').style.display = 'none';
+  adminLoadProducts(); loadSettings();
+}
+
+// ── TABS ──
+function showTab(name) {
+  document.getElementById('tab-products').style.display = name==='products' ? 'block' : 'none';
+  document.getElementById('tab-settings').style.display = name==='settings' ? 'block' : 'none';
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', i===(name==='products'?0:1)));
+}
+
+// ── PRODUCTS ──
+async function adminLoadProducts() {
+  const search = document.getElementById('admin-search').value.trim();
+  const cat = document.getElementById('admin-cat-filter').value;
+  const stock = document.getElementById('admin-stock-filter').value;
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  if (cat) params.set('category', cat);
+  if (stock) params.set('stock', stock);
+  const products = await api('GET', '/products?' + params.toString());
+  if (!products) return;
+  document.getElementById('product-count').textContent = products.length + ' product' + (products.length!==1?'s':'');
+  const tbody = document.getElementById('products-tbody');
+  if (products.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty"><i class="fa fa-box-open"></i>No products found</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = products.map(p => {
+    const imgs = (() => { try { return JSON.parse(p.images||'[]'); } catch(e){ return []; } })();
+    const thumb = imgs[0]
+      ? `<img src="${imgs[0]}" class="img-thumb" style="width:48px;height:40px;border-radius:6px;object-fit:cover;">`
+      : `<div class="thumb"><i class="fa fa-image"></i></div>`;
+    const stockBadge = { in_stock:'<span class="badge in_stock">In Stock</span>', low_stock:'<span class="badge low_stock">Low Stock</span>', out_stock:'<span class="badge out_stock">Out of Stock</span>' }[p.stock]||'';
+    const priceStr = p.price != null ? `$${Number(p.price).toFixed(2)} <span style="color:var(--muted);font-size:11px;">/ ${p.price_unit||'each'}</span>` : '<span style="color:var(--muted)">—</span>';
+    return `<tr>
+      <td>${thumb}</td>
+      <td>
+        <div style="font-weight:600;font-size:13px;margin-bottom:2px;">${esc(p.name)}</div>
+        ${p.sku ? `<div style="font-size:11px;color:var(--muted);">SKU: ${esc(p.sku)}</div>` : ''}
+      </td>
+      <td><span style="font-size:12px;">${esc(p.category)}${p.subcategory?'<br><span style="color:var(--muted);font-size:11px;">'+esc(p.subcategory)+'</span>':''}</span></td>
+      <td style="font-weight:600;">${priceStr}</td>
+      <td>${stockBadge}</td>
+      <td style="font-size:12px;color:var(--muted);">${esc(p.source||'')}</td>
+      <td>${p.featured ? '<span class="badge featured">⭐ Yes</span>' : '<span style="color:var(--muted);font-size:12px;">—</span>'}</td>
+      <td>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-ghost btn-sm" onclick="editProduct(${p.id})"><i class="fa fa-edit"></i></button>
+          <button class="btn btn-danger btn-sm" onclick="deleteProduct(${p.id},'${esc(p.name).replace(/'/g,"\\'")}')"><i class="fa fa-trash"></i></button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── MODAL ──
+function openModal(data) {
+  productImages = [];
+  document.getElementById('p-id').value = '';
+  document.getElementById('modal-title').textContent = 'Add Product';
+  document.getElementById('p-name').value = '';
+  document.getElementById('p-cat').value = 'Flooring';
+  document.getElementById('p-subcat').value = '';
+  document.getElementById('p-sku').value = '';
+  document.getElementById('p-desc').value = '';
+  document.getElementById('p-price').value = '';
+  document.getElementById('p-unit').value = 'each';
+  document.getElementById('p-source').value = 'Home Depot';
+  document.getElementById('p-stock').value = 'in_stock';
+  document.getElementById('p-featured').value = '0';
+  document.getElementById('p-qty').value = '0';
+  document.getElementById('p-source-url').value = '';
+  document.getElementById('img-preview-row').innerHTML = '';
+  document.getElementById('upload-progress').style.display = 'none';
+  if (data) {
+    document.getElementById('p-id').value = data.id;
+    document.getElementById('modal-title').textContent = 'Edit Product';
+    document.getElementById('p-name').value = data.name||'';
+    document.getElementById('p-cat').value = data.category||'Flooring';
+    document.getElementById('p-subcat').value = data.subcategory||'';
+    document.getElementById('p-sku').value = data.sku||'';
+    document.getElementById('p-desc').value = data.description||'';
+    document.getElementById('p-price').value = data.price!=null?data.price:'';
+    document.getElementById('p-unit').value = data.price_unit||'each';
+    document.getElementById('p-source').value = data.source||'Home Depot';
+    document.getElementById('p-stock').value = data.stock||'in_stock';
+    document.getElementById('p-featured').value = data.featured?'1':'0';
+    document.getElementById('p-qty').value = data.quantity != null ? data.quantity : 0;
+    document.getElementById('p-source-url').value = data.source_url || '';
+    productImages = (() => { try { return JSON.parse(data.images||'[]'); } catch(e){ return []; } })();
+    renderImagePreviews();
+  }
+  document.getElementById('product-overlay').classList.add('open');
+  document.getElementById('import-msg').style.display = 'none';
+  setTimeout(() => document.getElementById('p-name').focus(), 100);
+  startImportPolling();
+}
+
+function closeModal() {
+  document.getElementById('product-overlay').classList.remove('open');
+  stopImportPolling();
+}
+
+async function editProduct(id) {
+  const data = await api('GET', '/products/' + id);
+  if (data) openModal(data);
+}
+
+async function deleteProduct(id, name) {
+  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  await api('DELETE', '/admin/products/' + id);
+  adminLoadProducts();
+}
+
+async function saveProduct() {
+  const id = document.getElementById('p-id').value;
+  const name = document.getElementById('p-name').value.trim();
+  if (!name) { alert('Product name is required'); return; }
+  const body = {
+    name,
+    category: document.getElementById('p-cat').value,
+    subcategory: document.getElementById('p-subcat').value.trim() || null,
+    description: document.getElementById('p-desc').value.trim() || null,
+    price: document.getElementById('p-price').value !== '' ? parseFloat(document.getElementById('p-price').value) : null,
+    price_unit: document.getElementById('p-unit').value,
+    sku: document.getElementById('p-sku').value.trim() || null,
+    source: document.getElementById('p-source').value,
+    stock: document.getElementById('p-stock').value,
+    featured: parseInt(document.getElementById('p-featured').value),
+    quantity: parseInt(document.getElementById('p-qty').value) || 0,
+    source_url: document.getElementById('p-source-url').value.trim() || null,
+    images: productImages,
+  };
+  if (id) await api('PUT', '/admin/products/' + id, body);
+  else await api('POST', '/admin/products', body);
+  closeModal();
+  adminLoadProducts();
+}
+
+// ── IMAGE UPLOAD ──
+async function uploadImages(files) {
+  const prog = document.getElementById('upload-progress');
+  prog.style.display = 'block';
+  prog.textContent = 'Uploading…';
+  for (const file of Array.from(files)) {
+    const fd = new FormData();
+    fd.append('image', file);
+    try {
+      const res = await fetch('/api/admin/upload', { method:'POST', headers:{ 'Authorization':'Bearer '+TOKEN }, body: fd });
+      const data = await res.json();
+      if (data.url) { productImages.push(data.url); renderImagePreviews(); }
+    } catch(e) { prog.textContent = 'Upload failed: ' + e.message; return; }
+  }
+  prog.textContent = '✅ Uploaded ' + files.length + ' image' + (files.length!==1?'s':'');
+  setTimeout(() => { prog.style.display = 'none'; }, 2000);
+}
+
+function renderImagePreviews() {
+  const row = document.getElementById('img-preview-row');
+  row.innerHTML = productImages.map((url, i) => `
+    <div class="img-thumb-wrap">
+      <img src="${url}" class="img-thumb" onerror="this.src=''">
+      <button class="img-remove" onclick="removeImage(${i})">×</button>
+    </div>`).join('');
+}
+
+function removeImage(i) {
+  productImages.splice(i, 1);
+  renderImagePreviews();
+}
+
+// close modal on backdrop click
+document.getElementById('product-overlay').addEventListener('click', e => { if (e.target.id==='product-overlay') closeModal(); });
+
+// ── SETTINGS ──
+async function loadSettings() {
+  const data = await api('GET', '/settings');
+  if (!data) return;
+  document.getElementById('s-name').value = data.business_name||'';
+  document.getElementById('s-phone').value = data.business_phone||'';
+  document.getElementById('s-email').value = data.business_email||'';
+  document.getElementById('s-address').value = data.business_address||'';
+  document.getElementById('s-hours').value = data.business_hours||'';
+  document.getElementById('s-area').value = data.service_area||'';
+  document.getElementById('s-tagline').value = data.hero_tagline||'';
+}
+
+async function saveSettings() {
+  const body = {
+    business_name: document.getElementById('s-name').value.trim(),
+    business_phone: document.getElementById('s-phone').value.trim(),
+    business_email: document.getElementById('s-email').value.trim(),
+    business_address: document.getElementById('s-address').value.trim(),
+    business_hours: document.getElementById('s-hours').value.trim(),
+    service_area: document.getElementById('s-area').value.trim(),
+    hero_tagline: document.getElementById('s-tagline').value.trim(),
+  };
+  await api('PUT', '/admin/settings', body);
+  const msg = document.getElementById('settings-msg');
+  msg.className = 'settings-msg ok';
+  msg.style.display = 'block';
+  setTimeout(() => { msg.style.display = 'none'; }, 3000);
+}
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ── BOOKMARKLET IMPORT ──
+const BOOKMARKLET = `javascript:(function(){
+function hiRes(u){
+  if(!u)return u;
+  // Home Depot: upgrade _100/_300/_600 → _1000
+  u=u.replace(/_(\\d+)(\\.[a-z]{3,4})(\\?.*)?$/i,function(m,sz,ext,qs){return parseInt(sz)<900?'_1000'+ext:m;});
+  // Lowe's Scene7: set wid/hei to 1000
+  u=u.replace(/(wid=)\\d+/,'$11000').replace(/(hei=)\\d+/,'$11000');
+  // Remove size constraints from query strings
+  u=u.replace(/[?&](width|w|size|fmt)=[^&]*/g,'');
+  return u;
+}
+function bestSrc(el){
+  // Prefer srcset largest
+  if(el.srcset){
+    var best=null,bestW=0;
+    el.srcset.split(',').forEach(function(p){
+      var m=p.trim().match(/^(\\S+)\\s+(\\d+)w/);
+      if(m&&parseInt(m[2])>bestW){bestW=parseInt(m[2]);best=m[1];}
+    });
+    if(best)return hiRes(best);
+  }
+  return hiRes(el.getAttribute('data-src')||el.src||'');
+}
+var d={};
+// JSON-LD
+var ss=document.querySelectorAll('script[type="application/ld+json"]');
+for(var s of ss){if(d.name)break;try{var j=JSON.parse(s.textContent);var it=Array.isArray(j)?j:(j['@graph']||[j]);for(var item of it){if(item['@type']==='Product'){d.name=(item.name||'').replace(/\\s+/g,' ').trim();if(item.description)d.description=item.description.replace(/<[^>]+>/g,'').replace(/\\s+/g,' ').trim();var o=item.offers?(Array.isArray(item.offers)?item.offers[0]:item.offers):null;if(o&&o.price)d.price=parseFloat(o.price);if(item.image){var imgs=Array.isArray(item.image)?item.image:[item.image];d.images=imgs.filter(function(i){return typeof i==='string';}).map(hiRes).slice(0,8);}break;}}}catch(e){}}
+// Fallbacks
+if(!d.name){var h=document.querySelector('h1');if(h)d.name=h.textContent.replace(/\\s+/g,' ').trim();}
+if(!d.name){var og=document.querySelector('meta[property="og:title"]');if(og)d.name=og.content.split('|')[0].trim();}
+if(!d.description){var ogd=document.querySelector('meta[property="og:description"]')||document.querySelector('meta[name="description"]');if(ogd)d.description=ogd.content;}
+if(!d.price){var pe=document.querySelector('[itemprop="price"],[class*="price__value"],[class*="Price__value"]');if(pe){var m=(pe.getAttribute('content')||pe.textContent).match(/([\\d,]+\\.?\\d{0,2})/);if(m)d.price=parseFloat(m[1].replace(',',''));}}
+// Gallery images (srcset-aware, skip icons/placeholders)
+if(!d.images||d.images.length<2){
+  var seen={};
+  var gi=[...document.querySelectorAll('[class*="mediagallery"] img,[class*="MediaGallery"] img,[class*="gallery"] img,[class*="carousel"] img,[class*="swiper"] img,img[class*="product"]')].map(function(i){return bestSrc(i);}).filter(function(u){return u&&u.length>10&&u.startsWith('http')&&!u.includes('data:')&&!u.includes('placeholder')&&!u.includes('icon')&&!seen[u]&&(seen[u]=1);}).slice(0,8);
+  if(gi.length)(d.images||[]).length<2?d.images=gi:d.images=[...new Set([...d.images,...gi])].slice(0,8);
+}
+if(!d.images||!d.images.length){var ogi=document.querySelector('meta[property="og:image"]');if(ogi)d.images=[hiRes(ogi.content)];}
+d.source=location.hostname.includes('homedepot')?'Home Depot':location.hostname.includes('lowes')?"Lowe's":'Other';
+d.source_url=location.href;
+var bc=[...document.querySelectorAll('[class*="breadcrumb"] a,[aria-label*="breadcrumb"] a')].map(function(a){return a.textContent.trim();}).filter(function(t){return t&&!/^home$/i.test(t);}).join(' ').toLowerCase();
+if(/floor|tile|hardwood|laminate|vinyl|carpet/.test(bc))d.category='Flooring';
+else if(/vanit|bath|sink/.test(bc))d.category='Vanity';
+else if(/tool|drill|saw|hardware/.test(bc))d.category='Tools';
+fetch('http://localhost:4000/api/import-from-page',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)}).then(function(){alert('✅ Sent! Switch back to your admin panel.');}).catch(function(e){alert('❌ Could not reach inventory server.\\nMake sure it is running on port 4000.');});
+})();`;
+
+document.getElementById('bookmarklet-link').href = BOOKMARKLET;
+
+let importPollInterval = null;
+
+function startImportPolling() {
+  if (importPollInterval) return;
+  document.getElementById('import-waiting').style.display = 'flex';
+  importPollInterval = setInterval(async () => {
+    const data = await api('GET', '/admin/pending-import');
+    if (!data) return;
+    stopImportPolling();
+    fillImportData(data);
+  }, 2000);
+}
+
+function stopImportPolling() {
+  clearInterval(importPollInterval);
+  importPollInterval = null;
+  document.getElementById('import-waiting').style.display = 'none';
+}
+
+function fillImportData(data) {
+  if (data.name)        document.getElementById('p-name').value = data.name;
+  if (data.price)       document.getElementById('p-price').value = parseFloat(data.price).toFixed(2);
+  if (data.description) document.getElementById('p-desc').value = data.description;
+  if (data.source)      { try { document.getElementById('p-source').value = data.source; } catch(e){} }
+  if (data.category)    { try { document.getElementById('p-cat').value = data.category; } catch(e){} }
+  if (data.source_url)  document.getElementById('p-source-url').value = data.source_url;
+  if (data.images && data.images.length) {
+    productImages = data.images.slice(0, 6);
+    renderImagePreviews();
+  }
+  const msg = document.getElementById('import-msg');
+  const filled = ['name','price','description','images'].filter(k => k==='images' ? data.images?.length : data[k]);
+  msg.className = 'ok';
+  msg.textContent = `✅ Imported: ${filled.join(', ')}. Review and save.`;
+  msg.style.display = 'block';
+  document.getElementById('p-name').focus();
+}
+</script>
+</body>
+</html>
