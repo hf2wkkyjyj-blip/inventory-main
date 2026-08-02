@@ -28,9 +28,9 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || 'inventory-site-secret';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-// DATA_DIR is set on Railway to a persistent volume path (e.g. /data)
-// Locally it's not set, so files go in the project folder as before
-const DATA_DIR = process.env.DATA_DIR || null;
+// Auto-detect persistent volume: use DATA_DIR env var, or fallback to /data if it exists
+const DATA_DIR = process.env.DATA_DIR || (fs.existsSync('/data') ? '/data' : null);
+console.log(`📂 DATA_DIR: ${DATA_DIR || 'none (using app folder)'}`);
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -65,6 +65,7 @@ const upload = multer({
 const dbPath = DATA_DIR
   ? path.join(DATA_DIR, 'inventory.db')
   : path.join(__dirname, 'inventory.db');
+console.log(`🗄️  DB path: ${dbPath}`);
 try {
   const lock = dbPath + '.lock';
   if (fs.existsSync(lock)) fs.rmSync(lock, { recursive: true, force: true });
