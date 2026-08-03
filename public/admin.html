@@ -390,13 +390,15 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     </div>
     <div id="import-msg"></div>
 
-    <div class="form-group"><label>Product Name *</label><input type="text" id="p-name" placeholder="e.g. LifeProof Vinyl Plank Flooring 6mm"></div>
+    <div class="form-group"><label>Product Name *</label><input type="text" id="p-name" placeholder="e.g. LifeProof Vinyl Plank Flooring 6mm" oninput="autoDetectSubcat()"></div>
 
     <div class="form-row three">
       <div class="form-group" style="margin:0"><label>Category *</label>
-        <select id="p-cat"><option>Flooring</option><option>Vanity</option><option>Tools</option><option>Other</option></select>
+        <select id="p-cat" onchange="updateSubcatOptions()"><option>Flooring</option><option>Vanity</option><option>Tools</option><option>Other</option></select>
       </div>
-      <div class="form-group" style="margin:0"><label>Subcategory</label><input type="text" id="p-subcat" placeholder="e.g. Vinyl Plank"></div>
+      <div class="form-group" style="margin:0"><label>Subcategory</label>
+        <select id="p-subcat"></select>
+      </div>
       <div class="form-group" style="margin:0"><label>SKU / Item #</label><input type="text" id="p-sku" placeholder="FLR-001"></div>
     </div>
 
@@ -808,9 +810,10 @@ async function saveEditSale() {
 // ── PRODUCT MODAL ─────────────────────────────────────────────────────────────
 function openModal(data) {
   productImages = [];
-  const fields = ['p-id','p-name','p-subcat','p-sku','p-desc','p-price','p-cost-price','p-qty','p-source-url','p-coverage'];
+  const fields = ['p-id','p-name','p-sku','p-desc','p-price','p-cost-price','p-qty','p-source-url','p-coverage'];
   fields.forEach(id => document.getElementById(id).value = '');
   document.getElementById('p-cat').value = 'Flooring';
+  updateSubcatOptions();
   document.getElementById('p-unit').value = 'each';
   document.getElementById('p-source').value = 'Home Depot';
   document.getElementById('p-stock').value = 'in_stock';
@@ -823,6 +826,7 @@ function openModal(data) {
     document.getElementById('modal-title').textContent = 'Edit Product';
     document.getElementById('p-name').value = data.name||'';
     document.getElementById('p-cat').value = data.category||'Flooring';
+    updateSubcatOptions(data.subcategory||'');
     document.getElementById('p-subcat').value = data.subcategory||'';
     document.getElementById('p-sku').value = data.sku||'';
     document.getElementById('p-desc').value = data.description||'';
@@ -876,6 +880,40 @@ async function saveProduct() {
   else     await api('POST', '/admin/products', body);
   closeModal();
   adminLoadProducts();
+}
+const SUBCAT_OPTIONS = {
+  Flooring: ['Luxury Vinyl Plank','Laminate','Hardwood','Tile','Carpet','Other'],
+  Vanity:   ['Vanity Cabinet','Medicine Cabinet','Mirror','Sink','Other'],
+  Tools:    ['Power Tools','Hand Tools','Accessories','Other'],
+  Other:    ['Other'],
+};
+function updateSubcatOptions(keepValue) {
+  const cat = document.getElementById('p-cat').value;
+  const sel = document.getElementById('p-subcat');
+  const prev = keepValue || sel.value;
+  const opts = SUBCAT_OPTIONS[cat] || ['Other'];
+  sel.innerHTML = opts.map(o => `<option value="${o}">${o}</option>`).join('');
+  if (opts.includes(prev)) sel.value = prev;
+}
+function autoDetectSubcat() {
+  const cat = document.getElementById('p-cat').value;
+  if (cat !== 'Flooring' && cat !== 'Vanity') return;
+  const name = document.getElementById('p-name').value.toLowerCase();
+  const sel = document.getElementById('p-subcat');
+  let detected = '';
+  if (cat === 'Flooring') {
+    if (/luxury vinyl|vinyl plank|lvp|lvt/.test(name))  detected = 'Luxury Vinyl Plank';
+    else if (/laminate/.test(name))                      detected = 'Laminate';
+    else if (/hardwood|engineered wood/.test(name))      detected = 'Hardwood';
+    else if (/tile|porcelain|ceramic/.test(name))        detected = 'Tile';
+    else if (/carpet/.test(name))                        detected = 'Carpet';
+  } else if (cat === 'Vanity') {
+    if (/medicine cabinet/.test(name))  detected = 'Medicine Cabinet';
+    else if (/mirror/.test(name))       detected = 'Mirror';
+    else if (/sink/.test(name))         detected = 'Sink';
+    else if (/vanity/.test(name))       detected = 'Vanity Cabinet';
+  }
+  if (detected) sel.value = detected;
 }
 function updateProductMargin() {
   const price = parseFloat(document.getElementById('p-price').value)||0;
