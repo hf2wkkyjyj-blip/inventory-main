@@ -103,6 +103,7 @@ db.exec(`
 try { db.exec('ALTER TABLE products ADD COLUMN quantity INTEGER DEFAULT 0'); } catch(e) {}
 try { db.exec('ALTER TABLE products ADD COLUMN source_url TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE products ADD COLUMN cost_price REAL'); } catch(e) {}
+try { db.exec('ALTER TABLE products ADD COLUMN coverage_sqft REAL'); } catch(e) {}
 try { db.exec('ALTER TABLE sales ADD COLUMN payment_method TEXT'); } catch(e) {}
 
 db.exec(`
@@ -223,20 +224,20 @@ app.post('/api/admin/login', (req, res) => {
 
 // ─── ADMIN PRODUCT ROUTES ─────────────────────────────────────────────────────
 app.post('/api/admin/products', auth, (req, res) => {
-  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price } = req.body;
+  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price, coverage_sqft } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   const n = v => (v === undefined || v === '') ? null : v;
-  const result = db.prepare(`INSERT INTO products (name,category,subcategory,description,price,price_unit,sku,source,stock,images,featured,sort_order,quantity,source_url,cost_price) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price)]);
+  const result = db.prepare(`INSERT INTO products (name,category,subcategory,description,price,price_unit,sku,source,stock,images,featured,sort_order,quantity,source_url,cost_price,coverage_sqft) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), n(coverage_sqft)]);
   res.json({ id: result.lastInsertRowid });
 });
 
 app.put('/api/admin/products/:id', auth, (req, res) => {
-  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price } = req.body;
+  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price, coverage_sqft } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   const n = v => (v === undefined || v === '') ? null : v;
-  db.prepare(`UPDATE products SET name=?,category=?,subcategory=?,description=?,price=?,price_unit=?,sku=?,source=?,stock=?,images=?,featured=?,sort_order=?,quantity=?,source_url=?,cost_price=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), req.params.id]);
+  db.prepare(`UPDATE products SET name=?,category=?,subcategory=?,description=?,price=?,price_unit=?,sku=?,source=?,stock=?,images=?,featured=?,sort_order=?,quantity=?,source_url=?,cost_price=?,coverage_sqft=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), n(coverage_sqft), req.params.id]);
   res.json({ success: true });
 });
 

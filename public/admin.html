@@ -397,6 +397,10 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       </div>
       <div class="form-group" style="margin:0"><label>Qty in Stock</label><input type="number" id="p-qty" placeholder="0" min="0" step="1"></div>
     </div>
+    <div class="form-group" style="margin-top:10px;">
+      <label>Coverage per Unit <span style="font-weight:400;color:var(--muted);">(sq ft — flooring only)</span></label>
+      <input type="number" id="p-coverage" placeholder="e.g. 20.1 for 20.1 sq ft/case" step="0.01" min="0" style="max-width:280px;">
+    </div>
 
     <div class="form-row">
       <div class="form-group" style="margin:0"><label>Stock Status</label>
@@ -682,6 +686,7 @@ function renderMiniPL(id, data) {
       <td>${fmtDate(tx.sold_at)}</td>
       <td>${tx.quantity_sold}</td>
       <td>$${Number(tx.sale_price).toFixed(2)}</td>
+      <td class="fw7">$${(tx.quantity_sold * tx.sale_price).toFixed(2)}</td>
       <td>${tx.payment_method||'—'}</td>
       <td class="text-muted fs11">${esc(tx.notes||'')}</td>
       <td style="color:${tx.profit>=0?'var(--green)':'var(--red)'};font-weight:700;">${tx.profit>=0?'+':''}\$${Number(tx.profit).toFixed(2)}</td>
@@ -689,7 +694,7 @@ function renderMiniPL(id, data) {
         <button class="btn btn-ghost btn-xs" onclick="openEditSaleModal(${tx.id},${id},${tx.sale_price},'${esc(tx.payment_method||'')}','${esc(tx.notes||'')}')"><i class="fa fa-pen"></i></button>
         <button class="btn btn-danger btn-xs" onclick="deleteSale(${tx.id},${id})"><i class="fa fa-trash"></i></button>
       </td>
-    </tr>`).join('') : `<tr><td colspan="7" class="text-muted" style="padding:12px;text-align:center;">No sales recorded yet</td></tr>`;
+    </tr>`).join('') : `<tr><td colspan="8" class="text-muted" style="padding:12px;text-align:center;">No sales recorded yet</td></tr>`;
 
   const restockRows = data.restocks.length ? data.restocks.map(r => `
     <tr>
@@ -714,7 +719,7 @@ function renderMiniPL(id, data) {
     </div>
     <div id="mini-sales-${id}">
       <table class="mini-table">
-        <thead><tr><th>Date</th><th>Qty</th><th>Price</th><th>Payment</th><th>Notes</th><th>Profit</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>Qty</th><th>Price</th><th>Total</th><th>Payment</th><th>Notes</th><th>Profit</th><th></th></tr></thead>
         <tbody>${salesRows}</tbody>
       </table>
     </div>
@@ -767,7 +772,7 @@ async function saveEditSale() {
 // ── PRODUCT MODAL ─────────────────────────────────────────────────────────────
 function openModal(data) {
   productImages = [];
-  const fields = ['p-id','p-name','p-subcat','p-sku','p-desc','p-price','p-cost-price','p-qty','p-source-url'];
+  const fields = ['p-id','p-name','p-subcat','p-sku','p-desc','p-price','p-cost-price','p-qty','p-source-url','p-coverage'];
   fields.forEach(id => document.getElementById(id).value = '');
   document.getElementById('p-cat').value = 'Flooring';
   document.getElementById('p-unit').value = 'each';
@@ -793,6 +798,7 @@ function openModal(data) {
     document.getElementById('p-featured').value = data.featured?'1':'0';
     document.getElementById('p-qty').value = data.quantity!=null?data.quantity:0;
     document.getElementById('p-source-url').value = data.source_url||'';
+    document.getElementById('p-coverage').value = data.coverage_sqft!=null?data.coverage_sqft:'';
     productImages = (() => { try { return JSON.parse(data.images||'[]'); } catch(e){ return []; } })();
     renderImagePreviews();
     updateProductMargin();
@@ -827,6 +833,7 @@ async function saveProduct() {
     featured: parseInt(document.getElementById('p-featured').value),
     quantity: parseInt(document.getElementById('p-qty').value)||0,
     source_url: n(document.getElementById('p-source-url').value.trim()),
+    coverage_sqft: document.getElementById('p-coverage').value!=='' ? parseFloat(document.getElementById('p-coverage').value) : null,
     images: productImages,
   };
   if (id) await api('PUT', '/admin/products/'+id, body);
