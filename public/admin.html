@@ -483,6 +483,28 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   </div>
 </div>
 
+<!-- ══ MODAL: EDIT SALE ══════════════════════════════════════════════════════ -->
+<div class="overlay" id="edit-sale-overlay">
+  <div class="modal" style="width:400px;">
+    <h2><i class="fa fa-pen" style="color:var(--accent)"></i> Edit Sale</h2>
+    <input type="hidden" id="edit-sale-id">
+    <input type="hidden" id="edit-sale-product-id">
+    <div class="form-row">
+      <div class="form-group" style="margin:0"><label>Sale Price ($)</label><input type="number" id="edit-sale-price" step="0.01" min="0"></div>
+      <div class="form-group" style="margin:0"><label>Payment Method</label>
+        <select id="edit-sale-payment">
+          <option>Cash</option><option>Zelle</option><option>Venmo</option><option>Check</option><option>Card</option><option>Other</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label>Notes</label><input type="text" id="edit-sale-notes" placeholder="Add or update notes…"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeEditSaleModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditSale()"><i class="fa fa-check"></i> Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ MODAL: EXPENSE ═══════════════════════════════════════════════════════ -->
 <div class="overlay" id="expense-overlay">
   <div class="modal" style="width:440px;">
@@ -656,7 +678,10 @@ function renderMiniPL(id, data) {
       <td>${tx.payment_method||'—'}</td>
       <td class="text-muted fs11">${esc(tx.notes||'')}</td>
       <td style="color:${tx.profit>=0?'var(--green)':'var(--red)'};font-weight:700;">${tx.profit>=0?'+':''}\$${Number(tx.profit).toFixed(2)}</td>
-      <td><button class="btn btn-danger btn-xs" onclick="deleteSale(${tx.id},${id})"><i class="fa fa-trash"></i></button></td>
+      <td style="display:flex;gap:4px;">
+        <button class="btn btn-ghost btn-xs" onclick="openEditSaleModal(${tx.id},${id},${tx.sale_price},'${esc(tx.payment_method||'')}','${esc(tx.notes||'')}')"><i class="fa fa-pen"></i></button>
+        <button class="btn btn-danger btn-xs" onclick="deleteSale(${tx.id},${id})"><i class="fa fa-trash"></i></button>
+      </td>
     </tr>`).join('') : `<tr><td colspan="7" class="text-muted" style="padding:12px;text-align:center;">No sales recorded yet</td></tr>`;
 
   const restockRows = data.restocks.length ? data.restocks.map(r => `
@@ -705,6 +730,30 @@ async function deleteSale(saleId, productId) {
   if (!confirm('Delete this sale?')) return;
   await api('DELETE', '/admin/sales/'+saleId);
   delete miniPLLoaded[productId];
+  adminLoadProducts();
+}
+function openEditSaleModal(saleId, productId, price, payment, notes) {
+  document.getElementById('edit-sale-id').value = saleId;
+  document.getElementById('edit-sale-product-id').value = productId;
+  document.getElementById('edit-sale-price').value = price;
+  document.getElementById('edit-sale-payment').value = payment || 'Cash';
+  document.getElementById('edit-sale-notes').value = notes || '';
+  document.getElementById('edit-sale-overlay').classList.add('open');
+}
+function closeEditSaleModal() { document.getElementById('edit-sale-overlay').classList.remove('open'); }
+document.getElementById('edit-sale-overlay').addEventListener('click', e => { if(e.target.id==='edit-sale-overlay') closeEditSaleModal(); });
+async function saveEditSale() {
+  const saleId = document.getElementById('edit-sale-id').value;
+  const productId = document.getElementById('edit-sale-product-id').value;
+  const price = parseFloat(document.getElementById('edit-sale-price').value);
+  if (!price) { alert('Price required'); return; }
+  await api('PUT', '/admin/sales/'+saleId, {
+    sale_price: price,
+    payment_method: document.getElementById('edit-sale-payment').value,
+    notes: document.getElementById('edit-sale-notes').value.trim()||null,
+  });
+  closeEditSaleModal();
+  delete miniPLLoaded[parseInt(productId)];
   adminLoadProducts();
 }
 
