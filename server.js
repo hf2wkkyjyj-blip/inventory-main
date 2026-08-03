@@ -552,12 +552,17 @@ app.post('/api/admin/restocks', auth, (req, res) => {
   } else {
     result = db.prepare('INSERT INTO restocks (product_id,product_name,quantity_added,cost_per_unit,notes) VALUES (?,?,?,?,?)').run(vals);
   }
-  const prod = db.prepare('SELECT quantity FROM products WHERE id=?').get([product_id]);
+  const prod = db.prepare('SELECT quantity, cost_price FROM products WHERE id=?').get([product_id]);
   if (prod) {
-    const newQty = (prod.quantity||0) + qty;
+    const oldQty = prod.quantity || 0;
+    const newQty = oldQty + qty;
     const newStock = newQty > 5 ? 'in_stock' : newQty > 0 ? 'low_stock' : 'out_stock';
-    if (update_cost && cpu) {
-      db.prepare('UPDATE products SET quantity=?,stock=?,cost_price=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run([newQty, newStock, cpu, product_id]);
+    if (cpu) {
+      // Weighted average cost
+      const avgCost = (oldQty > 0 && prod.cost_price)
+        ? ((oldQty * prod.cost_price) + (qty * cpu)) / newQty
+        : cpu;
+      db.prepare('UPDATE products SET quantity=?,stock=?,cost_price=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run([newQty, newStock, avgCost, product_id]);
     } else {
       db.prepare('UPDATE products SET quantity=?,stock=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run([newQty, newStock, product_id]);
     }
