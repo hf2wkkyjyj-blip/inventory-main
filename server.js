@@ -530,6 +530,17 @@ app.post('/api/admin/sales', auth, (req, res) => {
   res.json({ id: result.lastInsertRowid, sold_out });
 });
 
+app.put('/api/admin/sales/:id', auth, (req, res) => {
+  const { sale_price, payment_method, notes } = req.body;
+  const sale = db.prepare('SELECT * FROM sales WHERE id=?').get([req.params.id]);
+  if (!sale) return res.status(404).json({ error: 'Not found' });
+  const newPrice = parseFloat(sale_price) || sale.sale_price;
+  const profit = newPrice - (sale.cost_price || 0) * sale.quantity_sold;
+  db.prepare('UPDATE sales SET sale_price=?, profit=?, payment_method=?, notes=? WHERE id=?')
+    .run([newPrice, profit, payment_method || sale.payment_method, notes ?? sale.notes, req.params.id]);
+  res.json({ success: true });
+});
+
 app.delete('/api/admin/sales/:id', auth, (req, res) => {
   db.prepare('DELETE FROM sales WHERE id=?').run([req.params.id]);
   res.json({ success: true });
