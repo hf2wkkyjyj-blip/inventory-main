@@ -835,6 +835,16 @@
         <option>Lowe's</option>
         <option>Other</option>
       </select>
+      <select class="filter-select" id="subcat-filter" onchange="loadProducts()" style="display:none;">
+        <option value="">All Types</option>
+        <option value="Luxury Vinyl Plank">Luxury Vinyl Plank</option>
+        <option value="Laminate">Laminate</option>
+      </select>
+      <select class="filter-select" id="sort-filter" onchange="loadProducts()" style="display:none;">
+        <option value="">Default Order</option>
+        <option value="price_asc">Price: Low to High</option>
+        <option value="price_desc">Price: High to Low</option>
+      </select>
     </div>
     <span class="result-count" id="result-count"></span>
   </div>
@@ -954,6 +964,10 @@ async function loadProducts() {
   const grid = document.getElementById('product-grid');
   const search = document.getElementById('search-input').value.trim();
   const stock = document.getElementById('stock-filter').value;
+  const isFlooring = currentCat === 'Flooring';
+  document.getElementById('subcat-filter').style.display = isFlooring ? '' : 'none';
+  document.getElementById('sort-filter').style.display   = isFlooring ? '' : 'none';
+  if (!isFlooring) { document.getElementById('subcat-filter').value = ''; document.getElementById('sort-filter').value = ''; }
   const params = new URLSearchParams();
   if (currentCat && currentCat !== 'All') params.set('category', currentCat);
   if (search) params.set('search', search);
@@ -963,6 +977,11 @@ async function loadProducts() {
     let products = await res.json();
     const srcFilter = document.getElementById('source-filter').value;
     if (srcFilter) products = products.filter(p => p.source === srcFilter);
+    const subcatFilter = document.getElementById('subcat-filter').value;
+    if (subcatFilter) products = products.filter(p => (p.subcategory||'').toLowerCase() === subcatFilter.toLowerCase());
+    const sortFilter = document.getElementById('sort-filter').value;
+    if (sortFilter === 'price_asc')  products.sort((a,b) => (a.price||0) - (b.price||0));
+    if (sortFilter === 'price_desc') products.sort((a,b) => (b.price||0) - (a.price||0));
     document.getElementById('result-count').textContent = products.length + ' product' + (products.length !== 1 ? 's' : '');
     if (products.length === 0) {
       grid.innerHTML = `<div class="empty-state"><i class="fa fa-box-open"></i><p>No products found.</p></div>`;
