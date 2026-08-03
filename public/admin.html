@@ -898,7 +898,7 @@ function updateSubcatOptions(keepValue) {
 }
 function autoDetectSubcat() {
   const cat = document.getElementById('p-cat').value;
-  if (cat !== 'Flooring' && cat !== 'Vanity') return;
+  if (!['Flooring','Vanity','Appliances'].includes(cat)) return;
   const name = document.getElementById('p-name').value.toLowerCase();
   const sel = document.getElementById('p-subcat');
   let detected = '';
