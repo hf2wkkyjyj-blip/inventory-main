@@ -626,7 +626,8 @@ app.get('/api/admin/pl', auth, (req, res) => {
   const allTimeCogs= db.prepare('SELECT COALESCE(SUM(cost_price*quantity_sold),0) as total FROM sales').get();
   const total_invested = allTimeCogs.total + inv.value;
   const top = db.prepare(`SELECT product_name, SUM(quantity_sold) as units, SUM(sale_price*quantity_sold) as revenue, SUM(profit) as profit FROM sales ${sw} GROUP BY product_id,product_name ORDER BY revenue DESC LIMIT 5`).all(sp);
-  res.json({ revenue: s.revenue, cogs: s.cogs, gross_profit: s.gross_profit, transactions: s.transactions, total_expenses: e.total, net_profit: s.gross_profit - e.total, inventory_value: inv.value, total_invested, expense_breakdown: eCat, top_products: top });
+  const recentSales = db.prepare(`SELECT id, product_name, quantity_sold, sale_price, profit, payment_method, notes, sold_at FROM sales ${sw} ORDER BY sold_at DESC LIMIT 200`).all(sp);
+  res.json({ revenue: s.revenue, cogs: s.cogs, gross_profit: s.gross_profit, transactions: s.transactions, total_expenses: e.total, net_profit: s.gross_profit - e.total, inventory_value: inv.value, total_invested, expense_breakdown: eCat, top_products: top, recent_sales: recentSales });
 });
 
 // ─── START ───────────────────────────────────────────────────────────────────

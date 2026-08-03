@@ -977,8 +977,12 @@ async function loadProducts() {
 function renderCard(p) {
   const images = parseImages(p.images);
   const stockLabel = {in_stock:'In Stock',low_stock:'Low Stock',out_stock:'Out of Stock'}[p.stock] || p.stock;
+  const _cardCovM = (p.name||'').match(/([\d.]+)\s*sq\.?\s*ft\.?[^)]*(?:case|box|carton|pack)/i);
+  const _cardCov = p.coverage_sqft || (_cardCovM ? parseFloat(_cardCovM[1]) : null);
   const priceHtml = p.price != null
-    ? `<span class="card-price">$${Number(p.price).toFixed(2)}<span class="unit"> / ${p.price_unit||'each'}</span></span>`
+    ? (_cardCov
+      ? `<div><span class="card-price">$${(p.price/_cardCov).toFixed(2)}<span class="unit"> /sq. ft.</span></span><div style="font-size:11px;color:var(--muted);margin-top:1px;">($${Number(p.price).toFixed(2)} /${p.price_unit||'case'})</div></div>`
+      : `<span class="card-price">$${Number(p.price).toFixed(2)}<span class="unit"> / ${p.price_unit||'each'}</span></span>`)
     : `<span class="card-price" style="color:var(--muted);font-size:13px;font-weight:600;">Call for price</span>`;
   const srcDot = p.source==='Home Depot'?'hd':p.source==="Lowe's"?'lw':'ot';
 
@@ -1045,8 +1049,12 @@ async function openDetail(id) {
 
     const qty = p.quantity != null ? p.quantity : 0;
     const qtyColor = qty > 10 ? 'var(--green)' : qty > 0 ? 'var(--yellow)' : 'var(--red)';
+    const _detCovM = (p.name||'').match(/([\d.]+)\s*sq\.?\s*ft\.?[^)]*(?:case|box|carton|pack)/i);
+    const _detCov = p.coverage_sqft || (_detCovM ? parseFloat(_detCovM[1]) : null);
     const priceHtml = p.price != null
-      ? `<span class="detail-price">$${Number(p.price).toFixed(2)}<span class="unit"> / ${p.price_unit||'each'}</span></span>`
+      ? (_detCov
+        ? `<div><span class="detail-price">$${(p.price/_detCov).toFixed(2)}<span class="unit"> /sq. ft.</span></span><div style="font-size:13px;color:var(--muted);margin-top:3px;">($${Number(p.price).toFixed(2)} /${p.price_unit||'case'})</div></div>`
+        : `<span class="detail-price">$${Number(p.price).toFixed(2)}<span class="unit"> / ${p.price_unit||'each'}</span></span>`)
       : `<span class="detail-price no-price">Call for price</span>`;
 
     document.getElementById('detail-info').innerHTML = `
@@ -1065,6 +1073,18 @@ async function openDetail(id) {
         </div>
         <div class="detail-qty-value" style="color:${qtyColor}">${qty}</div>
       </div>
+      ${(()=>{ const m=(p.name||'').match(/([\d.]+)\s*sq\.?\s*ft\.?[^)]*(?:case|box|carton|pack)/i); const cov=p.coverage_sqft||(m?parseFloat(m[1]):null); if(!cov||!p.price||!qty)return''; return `<div style="display:flex;gap:10px;margin-top:10px;">
+        <div style="flex:1;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:14px 16px;">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Total Sq Ft Available</div>
+          <div style="font-size:22px;font-weight:900;color:var(--navy);">${(qty*cov).toLocaleString('en-US',{maximumFractionDigits:1})} <span style="font-size:13px;font-weight:500;color:var(--muted);">sq ft</span></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">${qty} ${p.price_unit||'boxes'} × ${cov} sq ft each</div>
+        </div>
+        <div style="flex:1;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:14px 16px;">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">Price per Sq Ft</div>
+          <div style="font-size:22px;font-weight:900;color:var(--navy);">$${(p.price/cov).toFixed(2)} <span style="font-size:13px;font-weight:500;color:var(--muted);">/ sq ft</span></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">$${Number(p.price).toFixed(2)} per ${p.price_unit||'box'}</div>
+        </div>
+      </div>`; })()}
       ${p.description?`<div class="detail-desc">${esc(p.description).replace(/\n/g,'<br>')}</div>`:''}
       ${p.source_url ? `<a href="${p.source_url}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--accent-light);border:1.5px solid #bfdbfe;border-radius:10px;color:var(--accent);text-decoration:none;font-size:13px;font-weight:700;transition:background .15s;" onmouseover="this.style.background='#dbeafe'" onmouseout="this.style.background='var(--accent-light)'"><i class="fa fa-external-link-alt"></i> View on ${esc(p.source)} for full specs &amp; reviews</a>` : ''}
       <div class="detail-cta">

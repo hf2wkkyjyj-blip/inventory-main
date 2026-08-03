@@ -324,6 +324,19 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       </div>
     </div>
   </div>
+
+  <!-- SALES LOG -->
+  <div class="pl-section" style="margin-top:16px;">
+    <div class="pl-section-title">📋 Sales Log</div>
+    <div id="pl-sales-log" style="max-height:380px;overflow-y:auto;">
+      <table class="mini-table" style="width:100%;">
+        <thead style="position:sticky;top:0;background:var(--card);z-index:1;">
+          <tr><th>Date / Time</th><th>Product</th><th>Qty</th><th>Price</th><th>Total</th><th>Profit</th><th>Payment</th><th>Notes</th></tr>
+        </thead>
+        <tbody id="pl-sales-log-body"><tr><td colspan="8" class="text-muted" style="padding:12px;text-align:center;">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <!-- ══ SETTINGS TAB ══════════════════════════════════════════════════════════ -->
@@ -1164,6 +1177,40 @@ function renderPL(d) {
 
   document.getElementById('pl-inv-value').textContent = '$'+(d.inventory_value||0).toFixed(2);
   document.getElementById('pl-total-invested').textContent = '$'+(d.total_invested||0).toFixed(2);
+
+  // Sales log
+  const logBody = document.getElementById('pl-sales-log-body');
+  if (!d.recent_sales || !d.recent_sales.length) {
+    logBody.innerHTML = '<tr><td colspan="8" class="text-muted" style="padding:12px;text-align:center;">No sales in this period</td></tr>';
+  } else {
+    const now = new Date();
+    const todayStr  = now.toDateString();
+    const yestStr   = new Date(now - 86400000).toDateString();
+    let lastLabel = '';
+    logBody.innerHTML = d.recent_sales.map(tx => {
+      const d2 = new Date(tx.sold_at);
+      const dStr = d2.toDateString();
+      let label = dStr === todayStr ? 'Today' : dStr === yestStr ? 'Yesterday' : d2.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+      const timeStr = d2.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+      let groupRow = '';
+      if (label !== lastLabel) {
+        lastLabel = label;
+        groupRow = `<tr><td colspan="8" style="padding:6px 8px 2px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);">${label}</td></tr>`;
+      }
+      const total = (tx.quantity_sold * tx.sale_price).toFixed(2);
+      const profitColor = tx.profit >= 0 ? 'var(--green)' : 'var(--red)';
+      return groupRow + `<tr>
+        <td class="text-muted fs11">${timeStr}</td>
+        <td style="font-size:12px;font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(tx.product_name)}</td>
+        <td>${tx.quantity_sold}</td>
+        <td>$${Number(tx.sale_price).toFixed(2)}</td>
+        <td class="fw7">$${total}</td>
+        <td style="color:${profitColor};font-weight:700;">${tx.profit>=0?'+':''}\$${Number(tx.profit).toFixed(2)}</td>
+        <td class="text-muted fs11">${tx.payment_method||'—'}</td>
+        <td class="text-muted fs11">${esc(tx.notes||'')}</td>
+      </tr>`;
+    }).join('');
+  }
 }
 
 function exportPLCsv() {
