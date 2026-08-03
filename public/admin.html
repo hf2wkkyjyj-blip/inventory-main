@@ -310,10 +310,17 @@ tr:hover>td{background:rgba(47,129,247,.03);}
           <tbody></tbody>
         </table>
       </div>
-      <div class="pl-section" style="margin-top:16px;">
-        <div class="pl-section-title">Inventory Value (Current Stock)</div>
-        <div id="pl-inv-value" style="font-size:28px;font-weight:700;color:var(--accent);">$0.00</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:4px;">total cost of unsold inventory</div>
+      <div style="display:flex;gap:16px;margin-top:16px;flex-wrap:wrap;">
+        <div class="pl-section" style="flex:1;min-width:180px;">
+          <div class="pl-section-title">Total Cost Paid</div>
+          <div id="pl-total-invested" style="font-size:28px;font-weight:700;color:var(--accent);">$0.00</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;">all money spent buying inventory (sold + unsold)</div>
+        </div>
+        <div class="pl-section" style="flex:1;min-width:180px;">
+          <div class="pl-section-title">Current Stock Value</div>
+          <div id="pl-inv-value" style="font-size:28px;font-weight:700;color:var(--orange);">$0.00</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px;">cost of unsold inventory on hand</div>
+        </div>
       </div>
     </div>
   </div>
@@ -1148,7 +1155,8 @@ function renderPL(d) {
       <td class="${p.profit>=0?'text-green':'text-red'} fw7">$${Number(p.profit).toFixed(2)}</td>
     </tr>`).join('') : '<tr><td colspan="4" class="text-muted" style="padding:12px;text-align:center;">No sales yet</td></tr>';
 
-  document.getElementById('pl-inv-value').textContent = '$'+d.inventory_value.toFixed(2);
+  document.getElementById('pl-inv-value').textContent = '$'+(d.inventory_value||0).toFixed(2);
+  document.getElementById('pl-total-invested').textContent = '$'+(d.total_invested||0).toFixed(2);
 }
 
 function exportPLCsv() {

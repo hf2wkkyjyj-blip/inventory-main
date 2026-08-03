@@ -621,9 +621,11 @@ app.get('/api/admin/pl', auth, (req, res) => {
   const s   = db.prepare(`SELECT COALESCE(SUM(sale_price*quantity_sold),0) as revenue, COALESCE(SUM(cost_price*quantity_sold),0) as cogs, COALESCE(SUM(profit),0) as gross_profit, COUNT(*) as transactions FROM sales ${sw}`).get(sp);
   const e   = db.prepare(`SELECT COALESCE(SUM(amount),0) as total FROM expenses ${ew}`).get(ep);
   const eCat= db.prepare(`SELECT category, COALESCE(SUM(amount),0) as total FROM expenses ${ew} GROUP BY category ORDER BY total DESC`).all(ep);
-  const inv = db.prepare('SELECT COALESCE(SUM(quantity*COALESCE(cost_price,0)),0) as value FROM products WHERE quantity>0').get();
+  const inv        = db.prepare('SELECT COALESCE(SUM(quantity*COALESCE(cost_price,0)),0) as value FROM products WHERE quantity>0').get();
+  const allTimeCogs= db.prepare('SELECT COALESCE(SUM(cost_price*quantity_sold),0) as total FROM sales').get();
+  const total_invested = allTimeCogs.total + inv.value;
   const top = db.prepare(`SELECT product_name, SUM(quantity_sold) as units, SUM(sale_price*quantity_sold) as revenue, SUM(profit) as profit FROM sales ${sw} GROUP BY product_id,product_name ORDER BY revenue DESC LIMIT 5`).all(sp);
-  res.json({ revenue: s.revenue, cogs: s.cogs, gross_profit: s.gross_profit, transactions: s.transactions, total_expenses: e.total, net_profit: s.gross_profit - e.total, inventory_value: inv.value, expense_breakdown: eCat, top_products: top });
+  res.json({ revenue: s.revenue, cogs: s.cogs, gross_profit: s.gross_profit, transactions: s.transactions, total_expenses: e.total, net_profit: s.gross_profit - e.total, inventory_value: inv.value, total_invested, expense_breakdown: eCat, top_products: top });
 });
 
 // ─── START ───────────────────────────────────────────────────────────────────
