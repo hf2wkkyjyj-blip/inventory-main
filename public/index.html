@@ -829,12 +829,6 @@
         <option value="low_stock">Low Stock</option>
         <option value="out_stock">Out of Stock</option>
       </select>
-      <select class="filter-select" id="source-filter" onchange="loadProducts()">
-        <option value="">All Sources</option>
-        <option>Home Depot</option>
-        <option>Lowe's</option>
-        <option>Other</option>
-      </select>
       <select class="filter-select" id="subcat-filter" onchange="loadProducts()" style="display:none;">
         <option value="">All Types</option>
         <option value="Luxury Vinyl Plank">Luxury Vinyl Plank</option>
@@ -975,8 +969,6 @@ async function loadProducts() {
   try {
     const res = await fetch('/api/products?' + params.toString());
     let products = await res.json();
-    const srcFilter = document.getElementById('source-filter').value;
-    if (srcFilter) products = products.filter(p => p.source === srcFilter);
     const subcatFilter = document.getElementById('subcat-filter').value;
     if (subcatFilter) products = products.filter(p => (p.subcategory||'').toLowerCase() === subcatFilter.toLowerCase());
     const sortFilter = document.getElementById('sort-filter').value;
