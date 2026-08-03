@@ -210,7 +210,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 <div id="tabs">
   <div class="tab active" onclick="showTab('products')"><i class="fa fa-box"></i> Products</div>
   <div class="tab" onclick="showTab('expenses')"><i class="fa fa-receipt"></i> Expenses</div>
-  <div class="tab" onclick="showTab('pl')"><i class="fa fa-chart-line"></i> P&amp;L</div>
+  <div class="tab" id="tab-pl-nav" onclick="showTab('pl')"><i class="fa fa-chart-line"></i> P&amp;L</div>
   <div class="tab" onclick="showTab('settings')"><i class="fa fa-cog"></i> Business Info</div>
 </div>
 
@@ -354,6 +354,19 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     </div>
     <button class="btn btn-primary" onclick="saveSettings()"><i class="fa fa-save"></i> Save Settings</button>
     <div class="settings-msg" id="settings-msg">✅ Settings saved!</div>
+  </div>
+
+  <div class="panel" style="padding:22px;margin-top:16px;">
+    <h3 style="font-size:14px;font-weight:700;margin-bottom:6px;"><i class="fa fa-user-shield" style="color:var(--accent);margin-right:8px;"></i>Staff Access</h3>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:16px;">Set a separate password for employees. They can view Products &amp; Expenses and import products, but cannot record sales or see P&amp;L.</p>
+    <div style="display:flex;gap:10px;align-items:flex-end;max-width:420px;">
+      <div class="form-group" style="flex:1;margin:0;">
+        <label>Employee Password</label>
+        <input type="password" id="s-emp-pw" placeholder="Set a staff password…" autocomplete="new-password">
+      </div>
+      <button class="btn btn-primary" onclick="saveEmployeePassword()" style="white-space:nowrap;"><i class="fa fa-save"></i> Save</button>
+    </div>
+    <div style="font-size:12px;margin-top:8px;display:none;" id="emp-pw-msg"></div>
   </div>
 </div>
 
@@ -560,6 +573,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 
 <script>
 let TOKEN = localStorage.getItem('inv_admin_token');
+let ROLE  = localStorage.getItem('inv_admin_role') || 'admin';
 let productImages = [];
 let allProductsCache = [];
 let salesByProductCache = {};
@@ -571,15 +585,23 @@ async function doLogin() {
   const data = await res.json();
   if (data.token) {
     TOKEN = data.token;
+    ROLE  = data.role || 'admin';
     localStorage.setItem('inv_admin_token', TOKEN);
+    localStorage.setItem('inv_admin_role', ROLE);
     document.getElementById('login-screen').style.display = 'none';
+    applyRoleUI();
     adminLoadProducts();
     loadSettings();
   } else {
     document.getElementById('login-err').textContent = data.error || 'Wrong password';
   }
 }
-function doLogout() { localStorage.removeItem('inv_admin_token'); location.reload(); }
+function doLogout() { localStorage.removeItem('inv_admin_token'); localStorage.removeItem('inv_admin_role'); location.reload(); }
+function applyRoleUI() {
+  if (ROLE === 'employee') {
+    document.getElementById('tab-pl-nav').style.display = 'none';
+  }
+}
 
 async function api(method, path, body) {
   const opts = { method, headers: { 'Content-Type':'application/json', 'Authorization':'Bearer '+TOKEN } };
@@ -591,6 +613,7 @@ async function api(method, path, body) {
 
 if (TOKEN) {
   document.getElementById('login-screen').style.display = 'none';
+  applyRoleUI();
   adminLoadProducts();
   loadSettings();
 }
@@ -660,11 +683,11 @@ async function adminLoadProducts() {
       <td class="fw7">${invVal}</td>
       <td>
         <div style="display:flex;gap:4px;flex-wrap:wrap;">
-          <button class="btn btn-ghost btn-xs" onclick="toggleMiniPL(${p.id})" title="Sales History"><i class="fa fa-chart-bar"></i></button>
-          <button class="btn btn-green btn-xs" onclick="openSaleModal(${p.id})" title="Record Sale"><i class="fa fa-dollar-sign"></i> Sale</button>
+          ${ROLE==='admin'?`<button class="btn btn-ghost btn-xs" onclick="toggleMiniPL(${p.id})" title="Sales History"><i class="fa fa-chart-bar"></i></button>`:''}
+          ${ROLE==='admin'?`<button class="btn btn-green btn-xs" onclick="openSaleModal(${p.id})" title="Record Sale"><i class="fa fa-dollar-sign"></i> Sale</button>`:''}
           <button class="btn btn-orange btn-xs" onclick="openRestockModal(${p.id})" title="Restock"><i class="fa fa-plus"></i></button>
           <button class="btn btn-ghost btn-xs" onclick="editProduct(${p.id})" title="Edit"><i class="fa fa-edit"></i></button>
-          <button class="btn btn-danger btn-xs" onclick="deleteProduct(${p.id},'${esc(p.name).replace(/'/g,"\\'")}')"><i class="fa fa-trash"></i></button>
+          ${ROLE==='admin'?`<button class="btn btn-danger btn-xs" onclick="deleteProduct(${p.id},'${esc(p.name).replace(/'/g,"\\'")}')"><i class="fa fa-trash"></i></button>`:''}
         </div>
       </td>
     </tr>
@@ -1253,6 +1276,16 @@ async function saveSettings() {
   const msg = document.getElementById('settings-msg');
   msg.className = 'settings-msg ok'; msg.style.display = 'block';
   setTimeout(() => msg.style.display='none', 3000);
+}
+async function saveEmployeePassword() {
+  const pw = document.getElementById('s-emp-pw').value.trim();
+  const msg = document.getElementById('emp-pw-msg');
+  if (!pw) { msg.style.cssText='display:block;color:var(--red)'; msg.textContent='Enter a password first.'; return; }
+  await api('PUT', '/admin/settings', { employee_password: pw });
+  document.getElementById('s-emp-pw').value = '';
+  msg.style.cssText='display:block;color:var(--green)';
+  msg.textContent = '✅ Employee password saved! Share it with your staff.';
+  setTimeout(() => msg.style.display='none', 4000);
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────

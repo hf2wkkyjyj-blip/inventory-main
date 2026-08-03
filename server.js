@@ -27,7 +27,8 @@ function findChrome() {
 const app = express();
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || 'inventory-site-secret';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const ADMIN_PASSWORD    = process.env.ADMIN_PASSWORD    || 'admin123';
+const EMPLOYEE_PASSWORD = process.env.EMPLOYEE_PASSWORD || '';
 // Auto-detect persistent volume: use DATA_DIR env var, or fallback to /data if it exists
 const DATA_DIR = process.env.DATA_DIR || (fs.existsSync('/data') ? '/data' : null);
 console.log(`📂 DATA_DIR: ${DATA_DIR || 'none (using app folder)'}`);
@@ -181,6 +182,11 @@ function auth(req, res, next) {
   try { req.admin = jwt.verify(token, JWT_SECRET); next(); }
   catch(e) { res.status(401).json({ error: 'Invalid token' }); }
 }
+function adminOnly(req, res, next) {
+  // Support legacy tokens (admin:true) and new role-based tokens
+  if (req.admin && (req.admin.admin === true || req.admin.role === 'admin')) return next();
+  res.status(403).json({ error: 'Admin access required' });
+}
 
 // ─── PUBLIC ROUTES ────────────────────────────────────────────────────────────
 app.get('/api/products', (req, res) => {
@@ -204,7 +210,7 @@ app.get('/api/products/:id', (req, res) => {
 app.get('/api/settings', (req, res) => {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const obj = {};
-  rows.forEach(r => { obj[r.key] = r.value; });
+  rows.forEach(r => { if (r.key !== 'employee_password') obj[r.key] = r.value; });
   res.json(obj);
 });
 
@@ -217,9 +223,16 @@ app.get('/api/categories', (req, res) => {
 app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: 'Password required' });
-  if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Wrong password' });
-  const token = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: '24h' });
-  res.json({ token });
+  let role = null;
+  if (password === ADMIN_PASSWORD) role = 'admin';
+  else {
+    const empPwRow = db.prepare("SELECT value FROM settings WHERE key='employee_password'").get();
+    const empPw = (empPwRow && empPwRow.value) || EMPLOYEE_PASSWORD;
+    if (empPw && password === empPw) role = 'employee';
+  }
+  if (!role) return res.status(401).json({ error: 'Wrong password' });
+  const token = jwt.sign({ role }, JWT_SECRET, { expiresIn: '24h' });
+  res.json({ token, role });
 });
 
 // ─── ADMIN PRODUCT ROUTES ─────────────────────────────────────────────────────
@@ -504,7 +517,7 @@ app.get('/api/admin/sales', auth, (req, res) => {
 });
 
 // Record a sale — auto-reduces stock, returns sold_out flag
-app.post('/api/admin/sales', auth, (req, res) => {
+app.post('/api/admin/sales', auth, adminOnly, (req, res) => {
   const { product_id, product_name, quantity_sold, sale_price, cost_price, notes, payment_method, sold_at } = req.body;
   if (!product_name || !quantity_sold || sale_price == null) return res.status(400).json({ error: 'Missing required fields' });
   const qty = parseInt(quantity_sold) || 1;
@@ -531,7 +544,7 @@ app.post('/api/admin/sales', auth, (req, res) => {
   res.json({ id: result.lastInsertRowid, sold_out });
 });
 
-app.put('/api/admin/sales/:id', auth, (req, res) => {
+app.put('/api/admin/sales/:id', auth, adminOnly, (req, res) => {
   const { sale_price, payment_method, notes } = req.body;
   const sale = db.prepare('SELECT * FROM sales WHERE id=?').get([req.params.id]);
   if (!sale) return res.status(404).json({ error: 'Not found' });
@@ -542,7 +555,7 @@ app.put('/api/admin/sales/:id', auth, (req, res) => {
   res.json({ success: true });
 });
 
-app.delete('/api/admin/sales/:id', auth, (req, res) => {
+app.delete('/api/admin/sales/:id', auth, adminOnly, (req, res) => {
   db.prepare('DELETE FROM sales WHERE id=?').run([req.params.id]);
   res.json({ success: true });
 });
