@@ -238,7 +238,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <th style="width:52px">Img</th>
         <th>Product</th>
         <th>Category</th>
-        <th>Price / Cost / Margin</th>
+        <th>Price / Cost / ROI</th>
         <th>Stock</th>
         <th>Inv. Value</th>
         <th style="width:180px">Actions</th>
@@ -374,7 +374,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="form-row three">
       <div class="form-group" style="margin:0"><label>Sale Price ($)</label><input type="number" id="p-price" placeholder="0.00" step="0.01" min="0" oninput="updateProductMargin()"></div>
       <div class="form-group" style="margin:0"><label>Cost Price ($)</label><input type="number" id="p-cost-price" placeholder="0.00" step="0.01" min="0" oninput="updateProductMargin()"></div>
-      <div class="form-group" style="margin:0"><label>Margin % (auto)</label><input type="text" id="p-margin" readonly style="background:var(--surface);font-weight:700;color:var(--green);"></div>
+      <div class="form-group" style="margin:0"><label>ROI % (auto)</label><input type="text" id="p-margin" readonly style="background:var(--surface);font-weight:700;color:var(--green);"></div>
     </div>
 
     <div class="form-row three">
@@ -597,8 +597,8 @@ async function adminLoadProducts() {
     const stockBadge = {in_stock:'<span class="badge in_stock">In Stock</span>',low_stock:'<span class="badge low_stock">Low</span>',out_stock:'<span class="badge out_stock">Out</span>'}[p.stock]||'';
     const priceStr = p.price != null ? `$${Number(p.price).toFixed(2)}<span class="text-muted fs11"> /${p.price_unit||'ea'}</span>` : '<span class="text-muted">—</span>';
     const costStr  = p.cost_price != null ? `<span class="text-muted fs12">Cost $${Number(p.cost_price).toFixed(2)}</span>` : '<span class="text-muted fs12">—</span>';
-    const margin   = (p.price && p.cost_price) ? ((p.price - p.cost_price)/p.price*100) : null;
-    const marginStr= margin != null ? `<span class="${margin>=0?'text-green':'text-red'} fs11 fw7">${margin.toFixed(0)}%</span>` : '<span class="text-muted fs11">—</span>';
+    const margin   = (p.price && p.cost_price) ? ((p.price - p.cost_price)/p.cost_price*100) : null;
+    const marginStr= margin != null ? `<span class="${margin>=0?'text-green':'text-red'} fs11 fw7">${margin.toFixed(0)}% ROI</span>` : '<span class="text-muted fs11">—</span>';
     const invVal   = (p.quantity && p.cost_price) ? `$${(p.quantity * p.cost_price).toFixed(2)}` : '<span class="text-muted">—</span>';
     const topBadge = (topId && p.id === topId) ? `<span class="top-badge">🏆 TOP</span> ` : '';
     const qty      = p.quantity != null ? p.quantity : '—';
@@ -673,7 +673,7 @@ function renderMiniPL(id, data) {
       <div class="mini-stat"><div class="mini-stat-val text-accent">$${Number(s.revenue).toFixed(2)}</div><div class="mini-stat-lbl">Revenue</div></div>
       <div class="mini-stat"><div class="mini-stat-val">$${Number(s.cogs).toFixed(2)}</div><div class="mini-stat-lbl">COGS</div></div>
       <div class="mini-stat"><div class="mini-stat-val" style="color:${profitColor}">$${Number(s.gross_profit).toFixed(2)}</div><div class="mini-stat-lbl">Gross Profit</div></div>
-      <div class="mini-stat"><div class="mini-stat-val" style="color:${marginColor}">${s.margin_pct.toFixed(1)}%</div><div class="mini-stat-lbl">Margin</div></div>
+      <div class="mini-stat"><div class="mini-stat-val" style="color:${marginColor}">${s.margin_pct.toFixed(1)}%</div><div class="mini-stat-lbl">ROI</div></div>
       <div class="mini-stat"><div class="mini-stat-val text-orange">$${Number(s.inventory_value).toFixed(2)}</div><div class="mini-stat-lbl">Inv. Value</div></div>
     </div>
     <div class="mini-tabs">
@@ -782,8 +782,8 @@ function updateProductMargin() {
   const price = parseFloat(document.getElementById('p-price').value)||0;
   const cost  = parseFloat(document.getElementById('p-cost-price').value)||0;
   const el = document.getElementById('p-margin');
-  if (price > 0 && cost >= 0) {
-    const m = ((price-cost)/price*100);
+  if (price > 0 && cost > 0) {
+    const m = ((price-cost)/cost*100);
     el.value = m.toFixed(1)+'%';
     el.style.color = m>=0 ? 'var(--green)' : 'var(--red)';
   } else {
