@@ -304,13 +304,15 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <span style="font-size:15px;font-weight:700;">Profit &amp; Loss</span>
     <div style="flex:1"></div>
     <select id="pl-period" onchange="loadPL()">
+      <option value="last7">Last 7 Days</option>
+      <option value="last30">Last 30 Days</option>
       <option value="month">This Month</option>
       <option value="quarter">This Quarter</option>
       <option value="year">This Year</option>
       <option value="all">All Time</option>
       <option value="custom">Custom Range</option>
     </select>
-    <div id="pl-custom" style="display:none;gap:8px;display:none;align-items:center;">
+    <div id="pl-custom" style="display:none;gap:8px;align-items:center;">
       <input type="date" id="pl-from" onchange="loadPL()" style="padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;">
       <span style="color:var(--muted);">to</span>
       <input type="date" id="pl-to" onchange="loadPL()" style="padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px;">
@@ -1211,10 +1213,6 @@ async function deleteExpense(id) {
 }
 
 // ── P&L TAB ──────────────────────────────────────────────────────────────────
-document.getElementById('pl-period').addEventListener('change', function() {
-  document.getElementById('pl-custom').style.display = this.value==='custom' ? 'flex' : 'none';
-  loadPL();
-});
 
 async function loadDashboard() {
   const now = new Date();
@@ -1252,8 +1250,14 @@ async function loadDashboard() {
 async function loadPL() {
   const period = document.getElementById('pl-period').value;
   const now = new Date();
+  const fmt = d => d.toISOString().split('T')[0];
   let from = '', to = '';
-  if (period==='month') {
+  document.getElementById('pl-custom').style.display = period==='custom' ? 'flex' : 'none';
+  if (period==='last7') {
+    from = fmt(new Date(now - 7*86400000)); to = fmt(now);
+  } else if (period==='last30') {
+    from = fmt(new Date(now - 30*86400000)); to = fmt(now);
+  } else if (period==='month') {
     from = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
     to   = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-31`;
   } else if (period==='quarter') {
