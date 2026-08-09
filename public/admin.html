@@ -163,6 +163,9 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 
 /* P&L */
 .pl-section{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:16px;}
+.dash-tab{padding:5px 12px;font-size:12px;font-weight:600;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;transition:all .15s;}
+.dash-tab:hover{color:var(--text);border-color:var(--accent);}
+.dash-tab.active{background:var(--accent);color:#fff;border-color:var(--accent);}
 .pl-section-title{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;}
 .pl-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid rgba(48,54,61,.4);font-size:13px;}
 .pl-row:last-child{border-bottom:none;}
@@ -272,31 +275,41 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 <div id="tab-pl" style="display:none;">
 
   <!-- QUICK DASHBOARD -->
-  <div style="margin-bottom:20px;">
-    <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text);">📊 Sales Dashboard</div>
-
-    <div class="pl-section" style="border-left:4px solid var(--accent);margin-bottom:10px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div class="pl-section-title" style="margin:0;">Last 7 Days</div>
-        <div id="dash-7d-dates" style="font-size:11px;color:var(--muted);"></div>
+  <div class="pl-section" style="margin-bottom:20px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+      <div style="font-size:14px;font-weight:700;">📊 Sales Dashboard</div>
+      <div style="display:flex;gap:6px;">
+        <button class="dash-tab active" data-p="today" onclick="switchDashTab(this)">Today</button>
+        <button class="dash-tab" data-p="7" onclick="switchDashTab(this)">7 Days</button>
+        <button class="dash-tab" data-p="30" onclick="switchDashTab(this)">30 Days</button>
+        <button class="dash-tab" data-p="year" onclick="switchDashTab(this)">This Year</button>
       </div>
-      <div class="stat-grid" id="dash-7d"><div style="color:var(--muted);font-size:12px;">Loading…</div></div>
     </div>
-
-    <div class="pl-section" style="border-left:4px solid var(--green);margin-bottom:10px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div class="pl-section-title" style="margin:0;">Last 30 Days</div>
-        <div id="dash-30d-dates" style="font-size:11px;color:var(--muted);"></div>
+    <div id="dash-loading" style="color:var(--muted);font-size:12px;padding:8px 0;">Loading…</div>
+    <div id="dash-body" style="display:none;">
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px;">
+        <div id="dash-revenue" style="font-size:32px;font-weight:700;color:var(--accent);">$0.00</div>
+        <div style="font-size:12px;color:var(--muted);">Revenue</div>
       </div>
-      <div class="stat-grid" id="dash-30d"><div style="color:var(--muted);font-size:12px;">Loading…</div></div>
-    </div>
-
-    <div class="pl-section" style="border-left:4px solid var(--orange);">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div class="pl-section-title" style="margin:0;">This Year</div>
-        <div id="dash-yr-dates" style="font-size:11px;color:var(--muted);"></div>
+      <div id="dash-period-label" style="font-size:11px;color:var(--muted);margin-bottom:16px;"></div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;">
+          <div id="dash-txn" style="font-size:18px;font-weight:700;color:var(--text);">0</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Transactions</div>
+        </div>
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;">
+          <div id="dash-cogs" style="font-size:18px;font-weight:700;color:var(--muted);">$0.00</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Cost of Goods</div>
+        </div>
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;">
+          <div id="dash-gp" style="font-size:18px;font-weight:700;">$0.00</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Gross Profit</div>
+        </div>
+        <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;">
+          <div id="dash-np" style="font-size:18px;font-weight:700;">$0.00</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Net Profit</div>
+        </div>
       </div>
-      <div class="stat-grid" id="dash-yr"><div style="color:var(--muted);font-size:12px;">Loading…</div></div>
     </div>
   </div>
 
@@ -642,7 +655,9 @@ async function api(method, path, body) {
   if (body !== undefined) opts.body = JSON.stringify(body);
   const res = await fetch('/api' + path, opts);
   if (res.status === 401) { doLogout(); return null; }
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) return null;
+  return data;
 }
 
 if (TOKEN) {
@@ -1214,37 +1229,48 @@ async function deleteExpense(id) {
 
 // ── P&L TAB ──────────────────────────────────────────────────────────────────
 
-async function loadDashboard() {
+function switchDashTab(btn) {
+  document.querySelectorAll('.dash-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadDashboard(btn.dataset.p);
+}
+
+async function loadDashboard(period) {
+  period = period || 'today';
   const now = new Date();
   const fmt = d => d.toISOString().split('T')[0];
   const today = fmt(now);
-  const d7from  = fmt(new Date(now - 7*86400000));
-  const d30from = fmt(new Date(now - 30*86400000));
-  const yrFrom  = `${now.getFullYear()}-01-01`;
-  const yrTo    = `${now.getFullYear()}-12-31`;
-
-  const [d7, d30, yr] = await Promise.all([
-    api('GET', `/admin/pl?from=${d7from}&to=${today}`),
-    api('GET', `/admin/pl?from=${d30from}&to=${today}`),
-    api('GET', `/admin/pl?from=${yrFrom}&to=${yrTo}`),
-  ]);
-
-  function renderDash(gridId, datesId, data, fromDate, toDate) {
-    if (!data) return;
-    const roi = data.cogs > 0 ? (data.gross_profit / data.cogs * 100) : 0;
-    const pc = s => `color:${s>=0?'var(--green)':'var(--red)'}`;
-    document.getElementById(datesId).textContent = `${fromDate} → ${toDate}`;
-    document.getElementById(gridId).innerHTML = `
-      <div class="stat-card"><div class="stat-val text-accent">$${Number(data.revenue).toFixed(2)}</div><div class="stat-label">Revenue</div><div class="stat-sub">${data.transactions} sale${data.transactions!==1?'s':''}</div></div>
-      <div class="stat-card"><div class="stat-val" style="color:var(--muted)">$${Number(data.cogs).toFixed(2)}</div><div class="stat-label">COGS</div></div>
-      <div class="stat-card"><div class="stat-val" style="${pc(data.gross_profit)}">$${Number(data.gross_profit).toFixed(2)}</div><div class="stat-label">Gross Profit</div><div class="stat-sub">${roi.toFixed(1)}% ROI</div></div>
-      <div class="stat-card"><div class="stat-val" style="${pc(data.net_profit)}">$${Number(data.net_profit).toFixed(2)}</div><div class="stat-label">Net Profit</div><div class="stat-sub">after expenses</div></div>
-    `;
+  let from, to, label;
+  if (period === 'today') {
+    from = today; to = today; label = 'Today so far';
+  } else if (period === '7') {
+    from = fmt(new Date(now - 6*86400000)); to = today; label = 'Last 7 days';
+  } else if (period === '30') {
+    from = fmt(new Date(now - 29*86400000)); to = today; label = 'Last 30 days';
+  } else {
+    from = `${now.getFullYear()}-01-01`; to = `${now.getFullYear()}-12-31`; label = `Jan 1 – Dec 31, ${now.getFullYear()}`;
   }
-
-  renderDash('dash-7d',  'dash-7d-dates',  d7,  d7from,  today);
-  renderDash('dash-30d', 'dash-30d-dates', d30, d30from, today);
-  renderDash('dash-yr',  'dash-yr-dates',  yr,  yrFrom,  yrTo);
+  document.getElementById('dash-loading').style.display = 'block';
+  document.getElementById('dash-body').style.display = 'none';
+  const data = await api('GET', `/admin/pl?from=${from}&to=${to}`);
+  document.getElementById('dash-loading').style.display = 'none';
+  if (!data) return;
+  const rev = Number(data.revenue) || 0;
+  const cogs = Number(data.cogs) || 0;
+  const gp = Number(data.gross_profit) || 0;
+  const np = Number(data.net_profit) || 0;
+  const txn = Number(data.transactions) || 0;
+  document.getElementById('dash-revenue').textContent = '$' + rev.toFixed(2);
+  document.getElementById('dash-period-label').textContent = label + ' · ' + from + (from!==to?' → '+to:'');
+  document.getElementById('dash-txn').textContent = txn + ' sale' + (txn!==1?'s':'');
+  document.getElementById('dash-cogs').textContent = '$' + cogs.toFixed(2);
+  const gpEl = document.getElementById('dash-gp');
+  gpEl.textContent = (gp>=0?'+':'') + '$' + Math.abs(gp).toFixed(2);
+  gpEl.style.color = gp >= 0 ? 'var(--green)' : 'var(--red)';
+  const npEl = document.getElementById('dash-np');
+  npEl.textContent = (np>=0?'+':'') + '$' + Math.abs(np).toFixed(2);
+  npEl.style.color = np >= 0 ? 'var(--green)' : 'var(--red)';
+  document.getElementById('dash-body').style.display = 'block';
 }
 
 async function loadPL() {
