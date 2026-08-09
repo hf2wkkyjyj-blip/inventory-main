@@ -270,6 +270,36 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 
 <!-- ══ P&L TAB ═══════════════════════════════════════════════════════════════ -->
 <div id="tab-pl" style="display:none;">
+
+  <!-- QUICK DASHBOARD -->
+  <div style="margin-bottom:20px;">
+    <div style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text);">📊 Sales Dashboard</div>
+
+    <div class="pl-section" style="border-left:4px solid var(--accent);margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div class="pl-section-title" style="margin:0;">Last 7 Days</div>
+        <div id="dash-7d-dates" style="font-size:11px;color:var(--muted);"></div>
+      </div>
+      <div class="stat-grid" id="dash-7d"><div style="color:var(--muted);font-size:12px;">Loading…</div></div>
+    </div>
+
+    <div class="pl-section" style="border-left:4px solid var(--green);margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div class="pl-section-title" style="margin:0;">Last 30 Days</div>
+        <div id="dash-30d-dates" style="font-size:11px;color:var(--muted);"></div>
+      </div>
+      <div class="stat-grid" id="dash-30d"><div style="color:var(--muted);font-size:12px;">Loading…</div></div>
+    </div>
+
+    <div class="pl-section" style="border-left:4px solid var(--orange);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div class="pl-section-title" style="margin:0;">This Year</div>
+        <div id="dash-yr-dates" style="font-size:11px;color:var(--muted);"></div>
+      </div>
+      <div class="stat-grid" id="dash-yr"><div style="color:var(--muted);font-size:12px;">Loading…</div></div>
+    </div>
+  </div>
+
   <div class="toolbar" style="margin-bottom:16px;">
     <span style="font-size:15px;font-weight:700;">Profit &amp; Loss</span>
     <div style="flex:1"></div>
@@ -628,7 +658,7 @@ function showTab(name) {
   const idx = {products:0,expenses:1,pl:2,settings:3};
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', i===idx[name]));
   if (name==='expenses') loadExpenses();
-  if (name==='pl') loadPL();
+  if (name==='pl') { loadPL(); loadDashboard(); }
 }
 
 // ── PRODUCTS ─────────────────────────────────────────────────────────────────
@@ -1185,6 +1215,39 @@ document.getElementById('pl-period').addEventListener('change', function() {
   document.getElementById('pl-custom').style.display = this.value==='custom' ? 'flex' : 'none';
   loadPL();
 });
+
+async function loadDashboard() {
+  const now = new Date();
+  const fmt = d => d.toISOString().split('T')[0];
+  const today = fmt(now);
+  const d7from  = fmt(new Date(now - 7*86400000));
+  const d30from = fmt(new Date(now - 30*86400000));
+  const yrFrom  = `${now.getFullYear()}-01-01`;
+  const yrTo    = `${now.getFullYear()}-12-31`;
+
+  const [d7, d30, yr] = await Promise.all([
+    api('GET', `/admin/pl?from=${d7from}&to=${today}`),
+    api('GET', `/admin/pl?from=${d30from}&to=${today}`),
+    api('GET', `/admin/pl?from=${yrFrom}&to=${yrTo}`),
+  ]);
+
+  function renderDash(gridId, datesId, data, fromDate, toDate) {
+    if (!data) return;
+    const roi = data.cogs > 0 ? (data.gross_profit / data.cogs * 100) : 0;
+    const pc = s => `color:${s>=0?'var(--green)':'var(--red)'}`;
+    document.getElementById(datesId).textContent = `${fromDate} → ${toDate}`;
+    document.getElementById(gridId).innerHTML = `
+      <div class="stat-card"><div class="stat-val text-accent">$${Number(data.revenue).toFixed(2)}</div><div class="stat-label">Revenue</div><div class="stat-sub">${data.transactions} sale${data.transactions!==1?'s':''}</div></div>
+      <div class="stat-card"><div class="stat-val" style="color:var(--muted)">$${Number(data.cogs).toFixed(2)}</div><div class="stat-label">COGS</div></div>
+      <div class="stat-card"><div class="stat-val" style="${pc(data.gross_profit)}">$${Number(data.gross_profit).toFixed(2)}</div><div class="stat-label">Gross Profit</div><div class="stat-sub">${roi.toFixed(1)}% ROI</div></div>
+      <div class="stat-card"><div class="stat-val" style="${pc(data.net_profit)}">$${Number(data.net_profit).toFixed(2)}</div><div class="stat-label">Net Profit</div><div class="stat-sub">after expenses</div></div>
+    `;
+  }
+
+  renderDash('dash-7d',  'dash-7d-dates',  d7,  d7from,  today);
+  renderDash('dash-30d', 'dash-30d-dates', d30, d30from, today);
+  renderDash('dash-yr',  'dash-yr-dates',  yr,  yrFrom,  yrTo);
+}
 
 async function loadPL() {
   const period = document.getElementById('pl-period').value;
