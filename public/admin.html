@@ -480,9 +480,15 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <div class="form-group" style="margin:0"><label>Cost Price ($)</label><input type="number" id="p-cost-price" placeholder="0.00" step="0.01" min="0" oninput="updateProductMargin()"></div>
       <div class="form-group" style="margin:0"><label>ROI % (auto)</label><input type="text" id="p-margin" readonly style="background:var(--surface);font-weight:700;color:var(--green);"></div>
     </div>
-    <div class="form-group" style="margin-top:10px;">
-      <label>💳 Paid by <span style="font-size:11px;color:var(--muted);font-weight:400;">(leave as "Me" if you paid)</span></label>
-      <select id="p-member"><option value="">— Me (owner) —</option></select>
+    <div class="form-row" style="margin-top:10px;">
+      <div class="form-group" style="margin:0;flex:2;">
+        <label>💳 Paid by <span style="font-size:11px;color:var(--muted);font-weight:400;">(leave as "Me" if you paid)</span></label>
+        <select id="p-member" onchange="updateMemberQtyVisibility()"><option value="">— Me (owner) —</option></select>
+      </div>
+      <div class="form-group" style="margin:0;flex:1;" id="p-member-qty-group">
+        <label>Their qty <span style="font-size:11px;color:var(--muted);font-weight:400;">(of total)</span></label>
+        <input type="number" id="p-member-qty" placeholder="0" min="0" step="1">
+      </div>
     </div>
 
     <div class="form-row three">
@@ -578,6 +584,16 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="form-row">
       <div class="form-group" style="margin:0"><label>Qty Added *</label><input type="number" id="restock-qty" placeholder="0" min="1" step="1" oninput="updateRestockPreview()"></div>
       <div class="form-group" style="margin:0"><label>Cost per Unit ($)</label><input type="number" id="restock-cost" placeholder="0.00" step="0.01" min="0" oninput="updateRestockPreview()"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group" style="margin:0;flex:2;">
+        <label>💳 Who paid? <span style="font-size:11px;color:var(--muted);">(optional)</span></label>
+        <select id="restock-member" onchange="updateRestockMemberQtyVisibility()"><option value="">— Me (owner) —</option></select>
+      </div>
+      <div class="form-group" style="margin:0;flex:1;" id="restock-member-qty-group" style="display:none;">
+        <label>Their qty</label>
+        <input type="number" id="restock-member-qty" placeholder="0" min="0" step="1">
+      </div>
     </div>
     <div id="restock-avg-preview" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:14px;">
       <span style="color:var(--muted);">New weighted avg cost: </span>
@@ -766,7 +782,7 @@ async function adminLoadProducts() {
       </td>
       <td style="font-size:12px;">${esc(p.category)}${p.subcategory?`<br><span class="text-muted fs11">${esc(p.subcategory)}</span>`:''}</td>
       <td>${priceStr}<br>${costStr} ${marginStr}</td>
-      <td>${stockBadge}<br><span class="text-muted fs11">Qty: ${qty}</span></td>
+      <td>${stockBadge}<br><span class="text-muted fs11">Qty: ${qty}${p.member_qty > 0 ? ` <span style="color:var(--orange)">(${p.quantity - p.member_qty} mine / ${p.member_qty} ${esc(p.member_name||'member')})</span>` : ''}</span></td>
       <td class="fw7">${invVal}</td>
       <td>
         <div style="display:flex;gap:4px;flex-wrap:wrap;">
@@ -899,6 +915,8 @@ function openModal(data) {
   fields.forEach(id => document.getElementById(id).value = '');
   // Populate member dropdown
   populateMemberDropdown('p-member', data ? data.member_id : null);
+  document.getElementById('p-member-qty').value = '';
+  updateMemberQtyVisibility();
   document.getElementById('p-cat').value = 'Flooring';
   updateSubcatOptions();
   document.getElementById('p-unit').value = 'each';
@@ -926,9 +944,11 @@ function openModal(data) {
     document.getElementById('p-qty').value = data.quantity!=null?data.quantity:0;
     document.getElementById('p-source-url').value = data.source_url||'';
     document.getElementById('p-coverage').value = data.coverage_sqft!=null?data.coverage_sqft:'';
+    document.getElementById('p-member-qty').value = data.member_qty != null && data.member_qty > 0 ? data.member_qty : '';
     productImages = (() => { try { return JSON.parse(data.images||'[]'); } catch(e){ return []; } })();
     renderImagePreviews();
     updateProductMargin();
+    updateMemberQtyVisibility();
   }
   document.getElementById('product-overlay').classList.add('open');
   document.getElementById('import-msg').style.display = 'none';
@@ -962,6 +982,7 @@ async function saveProduct() {
     source_url: n(document.getElementById('p-source-url').value.trim()),
     coverage_sqft: document.getElementById('p-coverage').value!=='' ? parseFloat(document.getElementById('p-coverage').value) : null,
     member_id: document.getElementById('p-member').value !== '' ? parseInt(document.getElementById('p-member').value) : null,
+    member_qty: document.getElementById('p-member-qty').value !== '' ? parseInt(document.getElementById('p-member-qty').value) : 0,
     images: productImages,
   };
   if (id) await api('PUT', '/admin/products/'+id, body);
@@ -1164,6 +1185,10 @@ function openRestockModal(productId) {
   document.getElementById('restock-date').value = todayStr();
   document.getElementById('restock-notes').value = '';
   document.getElementById('restock-avg-preview').style.display = 'none';
+  // Populate member dropdown, pre-select if product already has a member
+  populateMemberDropdown('restock-member', p.member_id || null);
+  document.getElementById('restock-member-qty').value = '';
+  updateRestockMemberQtyVisibility();
   document.getElementById('restock-overlay').classList.add('open');
 }
 function updateRestockPreview() {
@@ -1190,6 +1215,8 @@ async function saveRestock() {
   const pid = parseInt(document.getElementById('restock-product-id').value);
   const qty = parseInt(document.getElementById('restock-qty').value)||0;
   if (!qty) { alert('Quantity required'); return; }
+  const mId  = document.getElementById('restock-member').value || null;
+  const mQty = mId ? (parseInt(document.getElementById('restock-member-qty').value)||0) : 0;
   const body = {
     product_id: pid,
     product_name: document.getElementById('restock-product-name').value,
@@ -1197,6 +1224,8 @@ async function saveRestock() {
     cost_per_unit: parseFloat(document.getElementById('restock-cost').value)||null,
     notes: document.getElementById('restock-notes').value.trim()||null,
     restocked_at: document.getElementById('restock-date').value||null,
+    member_id: mId ? parseInt(mId) : null,
+    member_qty: mQty,
   };
   await api('POST', '/admin/restocks', body);
   closeRestockModal();
@@ -1432,6 +1461,17 @@ function exportPLCsv() {
 
 // ── MEMBERS ──────────────────────────────────────────────────────────────────
 let _membersCache = [];
+
+function updateMemberQtyVisibility() {
+  const hasMember = document.getElementById('p-member').value !== '';
+  document.getElementById('p-member-qty-group').style.display = hasMember ? '' : 'none';
+  if (!hasMember) document.getElementById('p-member-qty').value = '';
+}
+function updateRestockMemberQtyVisibility() {
+  const hasMember = document.getElementById('restock-member').value !== '';
+  document.getElementById('restock-member-qty-group').style.display = hasMember ? '' : 'none';
+  if (!hasMember) document.getElementById('restock-member-qty').value = '';
+}
 
 async function loadMembers() {
   const members = await api('GET', '/admin/members');
