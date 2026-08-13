@@ -721,7 +721,7 @@ app.get('/api/admin/members', auth, (req, res) => {
 });
 
 app.get('/api/admin/members/:id/products', auth, (req, res) => {
-  const products = db.prepare('SELECT id,name,quantity,cost_price,price,stock FROM products WHERE member_id=? ORDER BY name').all([req.params.id]);
+  const products = db.prepare('SELECT id,name,quantity,member_qty,cost_price,price,stock FROM products WHERE member_id=? ORDER BY name').all([req.params.id]);
   res.json(products);
 });
 

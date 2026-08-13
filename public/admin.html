@@ -1536,7 +1536,7 @@ async function toggleMemberProducts(id) {
       </tr></thead>
       <tbody>${prods.map(p=>`<tr style="border-top:1px solid var(--border);">
         <td style="padding:5px 8px;font-weight:600;">${esc(p.name)}</td>
-        <td style="padding:5px 8px;">${p.quantity}</td>
+        <td style="padding:5px 8px;">${p.member_qty || 0}</td>
         <td style="padding:5px 8px;color:var(--muted);">$${Number(p.cost_price||0).toFixed(2)}</td>
         <td style="padding:5px 8px;color:var(--accent);">$${Number(p.price||0).toFixed(2)}</td>
         <td style="padding:5px 8px;">${p.stock}</td>
