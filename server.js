@@ -105,7 +105,19 @@ try { db.exec('ALTER TABLE products ADD COLUMN quantity INTEGER DEFAULT 0'); } c
 try { db.exec('ALTER TABLE products ADD COLUMN source_url TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE products ADD COLUMN cost_price REAL'); } catch(e) {}
 try { db.exec('ALTER TABLE products ADD COLUMN coverage_sqft REAL'); } catch(e) {}
+try { db.exec('ALTER TABLE products ADD COLUMN member_id INTEGER'); } catch(e) {}
 try { db.exec('ALTER TABLE sales ADD COLUMN payment_method TEXT'); } catch(e) {}
+try { db.exec('ALTER TABLE sales ADD COLUMN member_id INTEGER'); } catch(e) {}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS members (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    phone      TEXT,
+    notes      TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS sales (
@@ -191,13 +203,13 @@ function adminOnly(req, res, next) {
 // ─── PUBLIC ROUTES ────────────────────────────────────────────────────────────
 app.get('/api/products', (req, res) => {
   const { category, search, stock, featured } = req.query;
-  let sql = 'SELECT * FROM products WHERE 1=1';
+  let sql = 'SELECT p.*, m.name as member_name FROM products p LEFT JOIN members m ON p.member_id=m.id WHERE 1=1';
   const params = [];
-  if (category && category !== 'All') { sql += ' AND category=?'; params.push(category); }
-  if (search) { sql += ' AND (name LIKE ? OR description LIKE ? OR subcategory LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
-  if (stock) { sql += ' AND stock=?'; params.push(stock); }
-  if (featured === '1') { sql += ' AND featured=1'; }
-  sql += ' ORDER BY featured DESC, sort_order ASC, created_at DESC';
+  if (category && category !== 'All') { sql += ' AND p.category=?'; params.push(category); }
+  if (search) { sql += ' AND (p.name LIKE ? OR p.description LIKE ? OR p.subcategory LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+  if (stock) { sql += ' AND p.stock=?'; params.push(stock); }
+  if (featured === '1') { sql += ' AND p.featured=1'; }
+  sql += ' ORDER BY p.featured DESC, p.sort_order ASC, p.created_at DESC';
   res.json(db.prepare(sql).all(params));
 });
 
@@ -237,20 +249,20 @@ app.post('/api/admin/login', (req, res) => {
 
 // ─── ADMIN PRODUCT ROUTES ─────────────────────────────────────────────────────
 app.post('/api/admin/products', auth, (req, res) => {
-  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price, coverage_sqft } = req.body;
+  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price, coverage_sqft, member_id } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   const n = v => (v === undefined || v === '') ? null : v;
-  const result = db.prepare(`INSERT INTO products (name,category,subcategory,description,price,price_unit,sku,source,stock,images,featured,sort_order,quantity,source_url,cost_price,coverage_sqft) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), n(coverage_sqft)]);
+  const result = db.prepare(`INSERT INTO products (name,category,subcategory,description,price,price_unit,sku,source,stock,images,featured,sort_order,quantity,source_url,cost_price,coverage_sqft,member_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), n(coverage_sqft), n(member_id)]);
   res.json({ id: result.lastInsertRowid });
 });
 
 app.put('/api/admin/products/:id', auth, (req, res) => {
-  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price, coverage_sqft } = req.body;
+  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price, coverage_sqft, member_id } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   const n = v => (v === undefined || v === '') ? null : v;
-  db.prepare(`UPDATE products SET name=?,category=?,subcategory=?,description=?,price=?,price_unit=?,sku=?,source=?,stock=?,images=?,featured=?,sort_order=?,quantity=?,source_url=?,cost_price=?,coverage_sqft=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), n(coverage_sqft), req.params.id]);
+  db.prepare(`UPDATE products SET name=?,category=?,subcategory=?,description=?,price=?,price_unit=?,sku=?,source=?,stock=?,images=?,featured=?,sort_order=?,quantity=?,source_url=?,cost_price=?,coverage_sqft=?,member_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), n(coverage_sqft), n(member_id), req.params.id]);
   res.json({ success: true });
 });
 
@@ -524,12 +536,18 @@ app.post('/api/admin/sales', auth, adminOnly, (req, res) => {
   const sp  = parseFloat(sale_price)  || 0;
   const cp  = parseFloat(cost_price)  || 0;
   const profit = (sp - cp) * qty;
-  const vals = [product_id||null, product_name, qty, sp, cp, profit, notes||null, payment_method||null];
+  // Lookup the product's member_id so we can track it on the sale
+  let member_id = null;
+  if (product_id) {
+    const prod = db.prepare('SELECT member_id FROM products WHERE id=?').get([product_id]);
+    if (prod) member_id = prod.member_id || null;
+  }
+  const vals = [product_id||null, product_name, qty, sp, cp, profit, notes||null, payment_method||null, member_id];
   let result;
   if (sold_at) {
-    result = db.prepare('INSERT INTO sales (product_id,product_name,quantity_sold,sale_price,cost_price,profit,notes,payment_method,sold_at) VALUES (?,?,?,?,?,?,?,?,?)').run([...vals, sold_at]);
+    result = db.prepare('INSERT INTO sales (product_id,product_name,quantity_sold,sale_price,cost_price,profit,notes,payment_method,member_id,sold_at) VALUES (?,?,?,?,?,?,?,?,?,?)').run([...vals, sold_at]);
   } else {
-    result = db.prepare('INSERT INTO sales (product_id,product_name,quantity_sold,sale_price,cost_price,profit,notes,payment_method) VALUES (?,?,?,?,?,?,?,?)').run(vals);
+    result = db.prepare('INSERT INTO sales (product_id,product_name,quantity_sold,sale_price,cost_price,profit,notes,payment_method,member_id) VALUES (?,?,?,?,?,?,?,?,?)').run(vals);
   }
   let sold_out = false;
   if (product_id) {
@@ -632,15 +650,69 @@ app.get('/api/admin/pl', auth, (req, res) => {
   if (to)   { sf.push('date(sold_at)<=?'); sp.push(to);   ef.push('expense_date<=?'); ep.push(to); }
   const sw = sf.length ? 'WHERE '+sf.join(' AND ') : '';
   const ew = ef.length ? 'WHERE '+ef.join(' AND ') : '';
-  const s   = db.prepare(`SELECT COALESCE(SUM(sale_price*quantity_sold),0) as revenue, COALESCE(SUM(cost_price*quantity_sold),0) as cogs, COALESCE(SUM(profit),0) as gross_profit, COUNT(*) as transactions FROM sales ${sw}`).get(sp);
-  const e   = db.prepare(`SELECT COALESCE(SUM(amount),0) as total FROM expenses ${ew}`).get(ep);
-  const eCat= db.prepare(`SELECT category, COALESCE(SUM(amount),0) as total FROM expenses ${ew} GROUP BY category ORDER BY total DESC`).all(ep);
-  const inv        = db.prepare('SELECT COALESCE(SUM(quantity*COALESCE(cost_price,0)),0) as value FROM products WHERE quantity>0').get();
-  const allTimeCogs= db.prepare('SELECT COALESCE(SUM(cost_price*quantity_sold),0) as total FROM sales').get();
-  const total_invested = allTimeCogs.total + inv.value;
-  const top = db.prepare(`SELECT product_name, SUM(quantity_sold) as units, SUM(sale_price*quantity_sold) as revenue, SUM(profit) as profit FROM sales ${sw} GROUP BY product_id,product_name ORDER BY revenue DESC LIMIT 5`).all(sp);
-  const recentSales = db.prepare(`SELECT id, product_name, quantity_sold, sale_price, profit, payment_method, notes, sold_at FROM sales ${sw} ORDER BY sold_at DESC LIMIT 200`).all(sp);
-  res.json({ revenue: s.revenue, cogs: s.cogs, gross_profit: s.gross_profit, transactions: s.transactions, total_expenses: e.total, net_profit: s.gross_profit - e.total, inventory_value: inv.value, total_invested, expense_breakdown: eCat, top_products: top, recent_sales: recentSales });
+  // Split COGS: mine vs member-funded
+  const sw_mine   = sw ? sw + ' AND member_id IS NULL' : 'WHERE member_id IS NULL';
+  const sp_mine   = [...sp];
+  const s         = db.prepare(`SELECT COALESCE(SUM(sale_price*quantity_sold),0) as revenue, COALESCE(SUM(cost_price*quantity_sold),0) as cogs, COALESCE(SUM(profit),0) as gross_profit, COUNT(*) as transactions FROM sales ${sw}`).get(sp);
+  const s_mine    = db.prepare(`SELECT COALESCE(SUM(cost_price*quantity_sold),0) as cogs FROM sales ${sw_mine}`).get(sp_mine);
+  const member_cogs = s.cogs - s_mine.cogs;
+  const my_gross_profit = s.revenue - s_mine.cogs;
+  const e         = db.prepare(`SELECT COALESCE(SUM(amount),0) as total FROM expenses ${ew}`).get(ep);
+  const eCat      = db.prepare(`SELECT category, COALESCE(SUM(amount),0) as total FROM expenses ${ew} GROUP BY category ORDER BY total DESC`).all(ep);
+  // Inventory: mine vs member
+  const inv       = db.prepare('SELECT COALESCE(SUM(quantity*COALESCE(cost_price,0)),0) as value FROM products WHERE quantity>0 AND member_id IS NULL').get();
+  const inv_all   = db.prepare('SELECT COALESCE(SUM(quantity*COALESCE(cost_price,0)),0) as value FROM products WHERE quantity>0').get();
+  const allTimeMyCogs = db.prepare('SELECT COALESCE(SUM(cost_price*quantity_sold),0) as total FROM sales WHERE member_id IS NULL').get();
+  const total_invested = allTimeMyCogs.total + inv.value;
+  const top       = db.prepare(`SELECT product_name, SUM(quantity_sold) as units, SUM(sale_price*quantity_sold) as revenue, SUM(profit) as profit FROM sales ${sw} GROUP BY product_id,product_name ORDER BY revenue DESC LIMIT 5`).all(sp);
+  // Build WHERE clause using s.* prefix for the JOIN query
+  const rsf = [];
+  if (from) rsf.push(`date(s.sold_at)>=?`);
+  if (to)   rsf.push(`date(s.sold_at)<=?`);
+  const rsw = rsf.length ? 'WHERE ' + rsf.join(' AND ') : '';
+  const recentSales = db.prepare(`SELECT s.id, s.product_name, s.quantity_sold, s.sale_price, s.profit, s.payment_method, s.notes, s.sold_at, s.member_id, m.name as member_name FROM sales s LEFT JOIN members m ON s.member_id=m.id ${rsw} ORDER BY s.sold_at DESC LIMIT 200`).all(sp);
+  res.json({ revenue: s.revenue, cogs: s_mine.cogs, member_cogs, gross_profit: my_gross_profit, transactions: s.transactions, total_expenses: e.total, net_profit: my_gross_profit - e.total, inventory_value: inv.value, inventory_value_all: inv_all.value, total_invested, expense_breakdown: eCat, top_products: top, recent_sales: recentSales });
+});
+
+// ─── MEMBERS ─────────────────────────────────────────────────────────────────
+app.get('/api/admin/members', auth, (req, res) => {
+  const members = db.prepare('SELECT * FROM members ORDER BY name').all();
+  // For each member, attach stats
+  const result = members.map(m => {
+    const stock   = db.prepare('SELECT COALESCE(SUM(quantity*COALESCE(cost_price,0)),0) as value, COUNT(*) as products FROM products WHERE member_id=? AND quantity>0').get([m.id]);
+    const allProd = db.prepare('SELECT COUNT(*) as total, COALESCE(SUM(COALESCE(cost_price,0)*quantity),0) as stock_cost FROM products WHERE member_id=?').get([m.id]);
+    const sold    = db.prepare('SELECT COALESCE(SUM(cost_price*quantity_sold),0) as total_cost, COALESCE(SUM(sale_price*quantity_sold),0) as total_revenue FROM sales WHERE member_id=?').get([m.id]);
+    const total_fronted = sold.total_cost + stock.value;
+    const owed_back     = sold.total_cost; // cost of items already sold — revenue came in, member needs to be paid back
+    return { ...m, stock_value: stock.value, active_products: stock.products, total_products: allProd.total, total_fronted, sold_cost: sold.total_cost, sold_revenue: sold.total_revenue, owed_back };
+  });
+  res.json(result);
+});
+
+app.get('/api/admin/members/:id/products', auth, (req, res) => {
+  const products = db.prepare('SELECT id,name,quantity,cost_price,price,stock FROM products WHERE member_id=? ORDER BY name').all([req.params.id]);
+  res.json(products);
+});
+
+app.post('/api/admin/members', auth, adminOnly, (req, res) => {
+  const { name, phone, notes } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name required' });
+  const r = db.prepare('INSERT INTO members (name,phone,notes) VALUES (?,?,?)').run([name, phone||null, notes||null]);
+  res.json({ id: r.lastInsertRowid });
+});
+
+app.put('/api/admin/members/:id', auth, adminOnly, (req, res) => {
+  const { name, phone, notes } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name required' });
+  db.prepare('UPDATE members SET name=?,phone=?,notes=? WHERE id=?').run([name, phone||null, notes||null, req.params.id]);
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/members/:id', auth, adminOnly, (req, res) => {
+  // Unlink their products before deleting
+  db.prepare('UPDATE products SET member_id=NULL WHERE member_id=?').run([req.params.id]);
+  db.prepare('DELETE FROM members WHERE id=?').run([req.params.id]);
+  res.json({ success: true });
 });
 
 // ─── START ───────────────────────────────────────────────────────────────────

@@ -214,6 +214,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   <div class="tab active" onclick="showTab('products')"><i class="fa fa-box"></i> Products</div>
   <div class="tab" onclick="showTab('expenses')"><i class="fa fa-receipt"></i> Expenses</div>
   <div class="tab" id="tab-pl-nav" onclick="showTab('pl')"><i class="fa fa-chart-line"></i> P&amp;L</div>
+  <div class="tab" id="tab-members-nav" onclick="showTab('members')"><i class="fa fa-users"></i> Members</div>
   <div class="tab" onclick="showTab('settings')"><i class="fa fa-cog"></i> Business Info</div>
 </div>
 
@@ -384,6 +385,29 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   </div>
 </div>
 
+<!-- ══ MEMBERS TAB ═══════════════════════════════════════════════════════════ -->
+<div id="tab-members" style="display:none;">
+
+  <!-- Add Member Form -->
+  <div class="panel" style="padding:20px;margin-bottom:16px;">
+    <div style="font-size:13px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px;"><i class="fa fa-user-plus" style="color:var(--accent);"></i> Add Member</div>
+    <div class="form-row three" style="margin-bottom:12px;">
+      <div class="form-group" style="margin:0;"><label>Name *</label><input type="text" id="mbr-name" placeholder="e.g. John"></div>
+      <div class="form-group" style="margin:0;"><label>Phone</label><input type="text" id="mbr-phone" placeholder="(555) 000-0000"></div>
+      <div class="form-group" style="margin:0;"><label>Notes</label><input type="text" id="mbr-notes" placeholder="Optional notes"></div>
+    </div>
+    <input type="hidden" id="mbr-id">
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-primary btn-sm" onclick="saveMember()"><i class="fa fa-save"></i> Save Member</button>
+      <button class="btn btn-ghost btn-sm" onclick="cancelMemberEdit()" id="mbr-cancel" style="display:none;">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Member List -->
+  <div id="member-list"></div>
+
+</div>
+
 <!-- ══ SETTINGS TAB ══════════════════════════════════════════════════════════ -->
 <div id="tab-settings" style="display:none;">
   <div class="panel" style="padding:22px;">
@@ -455,6 +479,10 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <div class="form-group" style="margin:0"><label>Sale Price ($)</label><input type="number" id="p-price" placeholder="0.00" step="0.01" min="0" oninput="updateProductMargin()"></div>
       <div class="form-group" style="margin:0"><label>Cost Price ($)</label><input type="number" id="p-cost-price" placeholder="0.00" step="0.01" min="0" oninput="updateProductMargin()"></div>
       <div class="form-group" style="margin:0"><label>ROI % (auto)</label><input type="text" id="p-margin" readonly style="background:var(--surface);font-weight:700;color:var(--green);"></div>
+    </div>
+    <div class="form-group" style="margin-top:10px;">
+      <label>💳 Paid by <span style="font-size:11px;color:var(--muted);font-weight:400;">(leave as "Me" if you paid)</span></label>
+      <select id="p-member"><option value="">— Me (owner) —</option></select>
     </div>
 
     <div class="form-row three">
@@ -647,6 +675,7 @@ function doLogout() { localStorage.removeItem('inv_admin_token'); localStorage.r
 function applyRoleUI() {
   if (ROLE === 'employee') {
     document.getElementById('tab-pl-nav').style.display = 'none';
+    document.getElementById('tab-members-nav').style.display = 'none';
   }
 }
 
@@ -669,13 +698,21 @@ if (TOKEN) {
 
 // ── TABS ──────────────────────────────────────────────────────────────────────
 function showTab(name) {
-  ['products','expenses','pl','settings'].forEach(t => {
+  ['products','expenses','pl','members','settings'].forEach(t => {
     document.getElementById('tab-'+t).style.display = t===name ? 'block' : 'none';
   });
-  const idx = {products:0,expenses:1,pl:2,settings:3};
-  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', i===idx[name]));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const nav = name==='members' ? document.getElementById('tab-members-nav') :
+              name==='pl'      ? document.getElementById('tab-pl-nav')      : null;
+  if (nav) { nav.classList.add('active'); }
+  else {
+    const idx = {products:0,expenses:1,settings:4};
+    const allTabs = document.querySelectorAll('.tab');
+    if (allTabs[idx[name]]) allTabs[idx[name]].classList.add('active');
+  }
   if (name==='expenses') loadExpenses();
   if (name==='pl') { loadPL(); loadDashboard(); }
+  if (name==='members') loadMembers();
 }
 
 // ── PRODUCTS ─────────────────────────────────────────────────────────────────
@@ -725,6 +762,7 @@ async function adminLoadProducts() {
       <td>
         <div style="font-weight:600;font-size:13px;">${topBadge}${esc(p.name)}</div>
         ${p.sku ? `<div class="text-muted fs11">SKU: ${esc(p.sku)}</div>` : ''}
+        ${p.member_id ? `<div style="font-size:10px;color:var(--orange);font-weight:600;margin-top:2px;"><i class="fa fa-credit-card"></i> ${esc(p.member_name||'Member')}</div>` : ''}
       </td>
       <td style="font-size:12px;">${esc(p.category)}${p.subcategory?`<br><span class="text-muted fs11">${esc(p.subcategory)}</span>`:''}</td>
       <td>${priceStr}<br>${costStr} ${marginStr}</td>
@@ -859,6 +897,8 @@ function openModal(data) {
   productImages = [];
   const fields = ['p-id','p-name','p-sku','p-desc','p-price','p-cost-price','p-qty','p-source-url','p-coverage'];
   fields.forEach(id => document.getElementById(id).value = '');
+  // Populate member dropdown
+  populateMemberDropdown('p-member', data ? data.member_id : null);
   document.getElementById('p-cat').value = 'Flooring';
   updateSubcatOptions();
   document.getElementById('p-unit').value = 'each';
@@ -921,6 +961,7 @@ async function saveProduct() {
     quantity: parseInt(document.getElementById('p-qty').value)||0,
     source_url: n(document.getElementById('p-source-url').value.trim()),
     coverage_sqft: document.getElementById('p-coverage').value!=='' ? parseFloat(document.getElementById('p-coverage').value) : null,
+    member_id: document.getElementById('p-member').value !== '' ? parseInt(document.getElementById('p-member').value) : null,
     images: productImages,
   };
   if (id) await api('PUT', '/admin/products/'+id, body);
@@ -1387,6 +1428,133 @@ function exportPLCsv() {
   a.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
   a.download = 'pl_report.csv';
   a.click();
+}
+
+// ── MEMBERS ──────────────────────────────────────────────────────────────────
+let _membersCache = [];
+
+async function loadMembers() {
+  const members = await api('GET', '/admin/members');
+  if (!members) return;
+  _membersCache = members;
+  const el = document.getElementById('member-list');
+  if (!members.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px;">No members yet. Add someone above.</div>';
+    return;
+  }
+  el.innerHTML = members.map(m => {
+    const owed = Number(m.owed_back)||0;
+    const fronted = Number(m.total_fronted)||0;
+    const stockVal = Number(m.stock_value)||0;
+    return `
+    <div class="pl-section" style="margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div>
+          <div style="font-size:15px;font-weight:700;">${esc(m.name)}</div>
+          ${m.phone?`<div style="font-size:12px;color:var(--muted);">${esc(m.phone)}</div>`:''}
+          ${m.notes?`<div style="font-size:12px;color:var(--muted);font-style:italic;">${esc(m.notes)}</div>`:''}
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-ghost btn-sm" onclick="editMember(${m.id})"><i class="fa fa-pen"></i></button>
+          <button class="btn btn-danger btn-sm" onclick="deleteMember(${m.id},'${esc(m.name)}')"><i class="fa fa-trash"></i></button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;">
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;">
+          <div style="font-size:16px;font-weight:700;color:var(--text);">${m.total_products}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Products Fronted</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;">
+          <div style="font-size:16px;font-weight:700;color:var(--muted);">$${fronted.toFixed(2)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Total Fronted</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;">
+          <div style="font-size:16px;font-weight:700;color:var(--accent);">$${stockVal.toFixed(2)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Current Stock Value</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;border-color:${owed>0?'rgba(240,136,62,.4)':'var(--border)'};">
+          <div style="font-size:16px;font-weight:700;color:${owed>0?'var(--orange)':'var(--green)'};">$${owed.toFixed(2)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">You Owe Back</div>
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="toggleMemberProducts(${m.id})"><i class="fa fa-list"></i> View Products</button>
+      <div id="mbr-products-${m.id}" style="display:none;margin-top:10px;"></div>
+    </div>`;
+  }).join('');
+}
+
+async function toggleMemberProducts(id) {
+  const el = document.getElementById('mbr-products-'+id);
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  const prods = await api('GET', '/admin/members/'+id+'/products');
+  if (!prods || !prods.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px;">No products.</div>'; }
+  else {
+    el.innerHTML = `<table style="width:100%;font-size:12px;border-collapse:collapse;">
+      <thead><tr style="color:var(--muted);text-align:left;">
+        <th style="padding:4px 8px;">Product</th><th style="padding:4px 8px;">Qty</th>
+        <th style="padding:4px 8px;">Cost</th><th style="padding:4px 8px;">Sale Price</th><th style="padding:4px 8px;">Stock</th>
+      </tr></thead>
+      <tbody>${prods.map(p=>`<tr style="border-top:1px solid var(--border);">
+        <td style="padding:5px 8px;font-weight:600;">${esc(p.name)}</td>
+        <td style="padding:5px 8px;">${p.quantity}</td>
+        <td style="padding:5px 8px;color:var(--muted);">$${Number(p.cost_price||0).toFixed(2)}</td>
+        <td style="padding:5px 8px;color:var(--accent);">$${Number(p.price||0).toFixed(2)}</td>
+        <td style="padding:5px 8px;">${p.stock}</td>
+      </tr>`).join('')}</tbody></table>`;
+  }
+  el.style.display = 'block';
+}
+
+async function populateMemberDropdown(selectId, selectedId) {
+  const sel = document.getElementById(selectId);
+  sel.innerHTML = '<option value="">— Me (owner) —</option>';
+  if (!_membersCache.length) {
+    const members = await api('GET', '/admin/members');
+    if (members) _membersCache = members;
+  }
+  _membersCache.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    opt.textContent = m.name;
+    if (selectedId && m.id == selectedId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+async function saveMember() {
+  const id   = document.getElementById('mbr-id').value;
+  const name = document.getElementById('mbr-name').value.trim();
+  if (!name) { alert('Name required'); return; }
+  const body = { name, phone: document.getElementById('mbr-phone').value.trim()||null, notes: document.getElementById('mbr-notes').value.trim()||null };
+  if (id) await api('PUT', '/admin/members/'+id, body);
+  else    await api('POST', '/admin/members', body);
+  cancelMemberEdit();
+  loadMembers();
+}
+
+function editMember(id) {
+  const m = _membersCache.find(x => x.id === id);
+  if (!m) return;
+  document.getElementById('mbr-id').value    = m.id;
+  document.getElementById('mbr-name').value  = m.name;
+  document.getElementById('mbr-phone').value = m.phone||'';
+  document.getElementById('mbr-notes').value = m.notes||'';
+  document.getElementById('mbr-cancel').style.display = '';
+  document.getElementById('mbr-name').focus();
+}
+
+function cancelMemberEdit() {
+  document.getElementById('mbr-id').value = '';
+  document.getElementById('mbr-name').value = '';
+  document.getElementById('mbr-phone').value = '';
+  document.getElementById('mbr-notes').value = '';
+  document.getElementById('mbr-cancel').style.display = 'none';
+}
+
+async function deleteMember(id, name) {
+  if (!confirm(`Remove "${name}"? Their products will be set back to "paid by me".`)) return;
+  await api('DELETE', '/admin/members/'+id);
+  loadMembers();
 }
 
 // ── SETTINGS ─────────────────────────────────────────────────────────────────
