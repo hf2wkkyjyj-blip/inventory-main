@@ -589,6 +589,17 @@ app.put('/api/admin/sales/:id', auth, adminOnly, (req, res) => {
 });
 
 app.delete('/api/admin/sales/:id', auth, adminOnly, (req, res) => {
+  const sale = db.prepare('SELECT * FROM sales WHERE id=?').get([req.params.id]);
+  if (!sale) return res.status(404).json({ error: 'Sale not found' });
+  if (sale.product_id) {
+    const prod = db.prepare('SELECT quantity, member_qty FROM products WHERE id=?').get([sale.product_id]);
+    if (prod) {
+      const newQty = (prod.quantity || 0) + (sale.quantity_sold || 0);
+      const newMemberQty = Math.min(newQty, (prod.member_qty || 0) + (sale.member_qty_sold || 0));
+      const newStock = newQty === 0 ? 'out_stock' : newQty <= 5 ? 'low_stock' : 'in_stock';
+      db.prepare('UPDATE products SET quantity=?,member_qty=?,stock=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run([newQty, newMemberQty, newStock, sale.product_id]);
+    }
+  }
   db.prepare('DELETE FROM sales WHERE id=?').run([req.params.id]);
   res.json({ success: true });
 });
