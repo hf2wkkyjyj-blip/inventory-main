@@ -410,11 +410,25 @@
   .stock-badge.low_stock { background: var(--yellow-bg); color: var(--yellow); }
   .stock-badge.out_stock { background: var(--red-bg); color: var(--red); }
 
-  .card-body { padding: 16px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .card-body { padding: 16px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
   .card-cat { font-size: 10px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: .8px; }
+  .card-brand {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--text);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    opacity: .5;
+  }
+  .card-sku {
+    font-size: 10px;
+    color: var(--muted);
+    font-weight: 500;
+    margin-top: 2px;
+  }
   .card-name {
-    font-size: 14px;
-    font-weight: 700;
+    font-size: 13px;
+    font-weight: 600;
     color: var(--text);
     line-height: 1.4;
     display: -webkit-box;
@@ -985,6 +999,14 @@ async function loadProducts() {
   }
 }
 
+function extractBrand(name) {
+  if (!name) return { brand: '', rest: name || '' };
+  // Everything before the first digit is the brand (e.g. "Bannister 25 in..." → "Bannister")
+  const m = name.match(/^([A-Za-z][A-Za-z\s&.'"\-]+?)\s+(\d[\s\S]*)$/);
+  if (m) return { brand: m[1].trim(), rest: m[2].trim() };
+  return { brand: '', rest: name };
+}
+
 function renderCard(p) {
   const images = parseImages(p.images);
   const stockLabel = {in_stock:'In Stock',low_stock:'Low Stock',out_stock:'Out of Stock'}[p.stock] || p.stock;
@@ -996,6 +1018,7 @@ function renderCard(p) {
       : `<span class="card-price">$${Number(p.price).toFixed(2)}<span class="unit"> / ${p.price_unit||'each'}</span></span>`)
     : `<span class="card-price" style="color:var(--muted);font-size:13px;font-weight:600;">Call for price</span>`;
   const srcDot = p.source==='Home Depot'?'hd':p.source==="Lowe's"?'lw':'ot';
+  const { brand, rest } = extractBrand(p.name);
 
   const imgHtml = images[0]
     ? `<img src="${images[0]}" alt="${esc(p.name)}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'card-placeholder\\'><i class=\\'fa fa-${catFaIcon(p.category)}\\'></i><span>${esc(p.category)}</span></div>'">`
@@ -1009,7 +1032,9 @@ function renderCard(p) {
     </div>
     <div class="card-body">
       <div class="card-cat">${esc(p.category)}${p.subcategory?' · '+esc(p.subcategory):''}</div>
-      <div class="card-name">${esc(p.name)}</div>
+      ${brand ? `<div class="card-brand">${esc(brand)}</div>` : ''}
+      <div class="card-name">${esc(rest || p.name)}</div>
+      ${p.sku ? `<div class="card-sku">SKU: ${esc(p.sku)}</div>` : ''}
       <div class="card-footer">
         ${priceHtml}
         <span class="card-source"><span class="source-dot ${srcDot}"></span>${esc(p.source||'')}</span>
