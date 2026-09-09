@@ -130,6 +130,8 @@ try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); 
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE status='delivered' OR status='out_for_delivery'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Cancelled' WHERE status='cancelled'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Unship' WHERE status='Delayed' OR status='delayed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE order_number IN ('25293','25164','24662')"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE order_number='902003606387023'"); } catch(e) {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS members (
@@ -809,6 +811,24 @@ app.delete('/api/admin/member-payments/:id', auth, adminOnly, (req, res) => {
 
 // ─── BOT ORDERS ──────────────────────────────────────────────────────────────
 const BOT_API_KEY = process.env.BOT_API_KEY || 'bot-ss-2026';
+
+// GET pending orders so the bot can check for status updates
+app.get('/api/bot/orders', (req, res) => {
+  const key = req.headers['x-bot-key'];
+  if (key !== BOT_API_KEY) return res.status(401).json({ error: 'Unauthorized' });
+  const pending = db.prepare("SELECT id,order_number,retailer,status,order_date FROM bot_orders WHERE status NOT IN ('Delivered','Cancelled','Refunded') ORDER BY order_date DESC").all();
+  res.json(pending);
+});
+
+// Update a single order status via bot key
+app.patch('/api/bot/orders/:id', (req, res) => {
+  const key = req.headers['x-bot-key'];
+  if (key !== BOT_API_KEY) return res.status(401).json({ error: 'Unauthorized' });
+  const { status, delivered_date, notes } = req.body;
+  db.prepare('UPDATE bot_orders SET status=COALESCE(?,status), delivered_date=COALESCE(?,delivered_date), notes=COALESCE(?,notes) WHERE id=?')
+    .run([status||null, delivered_date||null, notes||null, req.params.id]);
+  res.json({ success: true });
+});
 
 app.post('/api/bot/orders', (req, res) => {
   const key = req.headers['x-bot-key'];
