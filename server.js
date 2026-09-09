@@ -172,6 +172,29 @@ db.exec(`
   );
 `);
 
+// ── One-time bot_orders import (runs once on deploy, then renames the file) ──
+const importFile = path.join(__dirname, 'bot_orders_import.json');
+if (fs.existsSync(importFile)) {
+  try {
+    const importData = JSON.parse(fs.readFileSync(importFile, 'utf8'));
+    const importOrders = importData.orders || [];
+    let imported = 0;
+    for (const o of importOrders) {
+      try {
+        db.prepare(`INSERT OR IGNORE INTO bot_orders
+          (email_id,subject,from_email,category,retailer,order_number,account_email,order_date,delivered_date,shipping_name,shipping_address,status,items,order_total,refunded_amount,notes,raw_snippet,received_at)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .run([o.email_id||null,o.subject||null,o.from_email||null,o.category||'Other',o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||'Confirmed',JSON.stringify(o.items||[]),o.order_total||0,o.refunded_amount||0,o.notes||null,o.raw_snippet||null,o.received_at||null]);
+        imported++;
+      } catch(e) {}
+    }
+    fs.renameSync(importFile, importFile + '.done');
+    console.log(`✅ Imported ${imported} bot orders from ${importFile}`);
+  } catch(e) {
+    console.error('⚠️  bot_orders import failed:', e.message);
+  }
+}
+
 // Seed default settings
 const defaultSettings = {
   business_name: 'Your Business Name',
