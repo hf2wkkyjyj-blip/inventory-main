@@ -206,7 +206,6 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     Solid Supply Admin
     <a href="/" target="_blank"><i class="fa fa-external-link-alt"></i> View Site</a>
   </div>
-  <button class="btn btn-ghost btn-sm" id="orders-link" onclick="openOrderTracker()" style="display:none;"><i class="fa fa-shipping-fast"></i> Order Tracker</button>
   <button class="btn btn-ghost btn-sm" onclick="doLogout()"><i class="fa fa-sign-out-alt"></i> Sign Out</button>
 </div>
 
@@ -216,6 +215,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   <div class="tab" onclick="showTab('expenses')"><i class="fa fa-receipt"></i> Expenses</div>
   <div class="tab" id="tab-pl-nav" onclick="showTab('pl')"><i class="fa fa-chart-line"></i> P&amp;L</div>
   <div class="tab" id="tab-members-nav" onclick="showTab('members')"><i class="fa fa-users"></i> Members</div>
+  <div class="tab" id="tab-bot-orders-nav" onclick="showTab('bot-orders')" style="display:none;"><i class="fa fa-shipping-fast"></i> BOT Order Tracker</div>
   <div class="tab" onclick="showTab('settings')"><i class="fa fa-cog"></i> Business Info</div>
 </div>
 
@@ -406,6 +406,52 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 
   <!-- Member List -->
   <div id="member-list"></div>
+
+</div>
+
+<!-- ══ BOT ORDER TRACKER TAB ════════════════════════════════════════════════ -->
+<div id="tab-bot-orders" style="display:none;">
+
+  <!-- Add Order Panel -->
+  <div class="panel" style="padding:20px;margin-bottom:16px;">
+    <div style="font-size:13px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px;">
+      <i class="fa fa-plus-circle" style="color:var(--accent);"></i> Add Order Manually
+    </div>
+    <div class="form-row three" style="margin-bottom:10px;">
+      <div class="form-group" style="margin:0;"><label>Order #</label><input type="text" id="bot-order-num" placeholder="e.g. 114-1234567"></div>
+      <div class="form-group" style="margin:0;"><label>Carrier</label>
+        <select id="bot-carrier">
+          <option value="">— Select —</option>
+          <option>Amazon</option><option>Home Depot</option><option>Lowe's</option>
+          <option>UPS</option><option>FedEx</option><option>USPS</option><option>Other</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0;"><label>Tracking #</label><input type="text" id="bot-tracking" placeholder="Tracking number"></div>
+    </div>
+    <div class="form-row" style="margin-bottom:10px;gap:10px;">
+      <div class="form-group" style="margin:0;flex:2;"><label>Items / Description</label><input type="text" id="bot-items" placeholder="e.g. Bannister 31in Vanity x2"></div>
+      <div class="form-group" style="margin:0;flex:1;"><label>Status</label>
+        <select id="bot-status">
+          <option value="ordered">Ordered</option>
+          <option value="shipped">Shipped</option>
+          <option value="out_for_delivery">Out for Delivery</option>
+          <option value="delivered">Delivered</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="addBotOrder()"><i class="fa fa-plus"></i> Add Order</button>
+    <button class="btn btn-ghost btn-sm" onclick="loadBotOrders()" style="margin-left:6px;"><i class="fa fa-sync"></i> Refresh</button>
+  </div>
+
+  <!-- Orders List -->
+  <div class="panel" style="padding:0;overflow:hidden;">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:700;display:flex;align-items:center;gap:8px;">
+      <i class="fa fa-robot" style="color:var(--accent);"></i> Orders (auto-synced from email daily)
+      <span id="bot-orders-count" style="font-size:11px;color:var(--muted);font-weight:400;margin-left:auto;"></span>
+    </div>
+    <div id="bot-orders-list" style="min-height:80px;"></div>
+  </div>
 
 </div>
 
@@ -693,14 +739,10 @@ function applyRoleUI() {
   if (ROLE === 'employee') {
     document.getElementById('tab-pl-nav').style.display = 'none';
     document.getElementById('tab-members-nav').style.display = 'none';
+    document.getElementById('tab-bot-orders-nav').style.display = 'none';
   } else {
-    // Show Order Tracker button only for admins
-    document.getElementById('orders-link').style.display = '';
+    document.getElementById('tab-bot-orders-nav').style.display = '';
   }
-}
-
-function openOrderTracker() {
-  window.open('/admin/orders?token=' + encodeURIComponent(TOKEN), '_blank');
 }
 
 async function api(method, path, body) {
@@ -722,21 +764,21 @@ if (TOKEN) {
 
 // ── TABS ──────────────────────────────────────────────────────────────────────
 function showTab(name) {
-  ['products','expenses','pl','members','settings'].forEach(t => {
+  ['products','expenses','pl','members','bot-orders','settings'].forEach(t => {
     document.getElementById('tab-'+t).style.display = t===name ? 'block' : 'none';
   });
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  const nav = name==='members' ? document.getElementById('tab-members-nav') :
-              name==='pl'      ? document.getElementById('tab-pl-nav')      : null;
-  if (nav) { nav.classList.add('active'); }
+  const namedNav = {'members':'tab-members-nav','pl':'tab-pl-nav','bot-orders':'tab-bot-orders-nav'};
+  if (namedNav[name]) { document.getElementById(namedNav[name]).classList.add('active'); }
   else {
-    const idx = {products:0,expenses:1,settings:4};
+    const idx = {products:0,expenses:1,settings:5};
     const allTabs = document.querySelectorAll('.tab');
     if (allTabs[idx[name]]) allTabs[idx[name]].classList.add('active');
   }
   if (name==='expenses') loadExpenses();
   if (name==='pl') { loadPL(); loadDashboard(); }
   if (name==='members') loadMembers();
+  if (name==='bot-orders') loadBotOrders();
 }
 
 // ── PRODUCTS ─────────────────────────────────────────────────────────────────
@@ -1494,6 +1536,8 @@ async function loadMembers() {
     const owed = Number(m.owed_back)||0;
     const fronted = Number(m.total_fronted)||0;
     const stockVal = Number(m.stock_value)||0;
+    const totalPaid = Number(m.total_paid)||0;
+    const netOwed = Number(m.net_owed)||0;
     return `
     <div class="pl-section" style="margin-bottom:12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -1507,7 +1551,7 @@ async function loadMembers() {
           <button class="btn btn-danger btn-sm" onclick="deleteMember(${m.id},'${esc(m.name)}')"><i class="fa fa-trash"></i></button>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px;">
         <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;">
           <div style="font-size:16px;font-weight:700;color:var(--text);">${m.total_products}</div>
           <div style="font-size:11px;color:var(--muted);margin-top:2px;">Products Fronted</div>
@@ -1520,13 +1564,21 @@ async function loadMembers() {
           <div style="font-size:16px;font-weight:700;color:var(--accent);">$${stockVal.toFixed(2)}</div>
           <div style="font-size:11px;color:var(--muted);margin-top:2px;">Current Stock Value</div>
         </div>
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;border-color:${owed>0?'rgba(240,136,62,.4)':'var(--border)'};">
-          <div style="font-size:16px;font-weight:700;color:${owed>0?'var(--orange)':'var(--green)'};">$${owed.toFixed(2)}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px;">You Owe Back</div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;">
+          <div style="font-size:16px;font-weight:700;color:var(--green);">$${totalPaid.toFixed(2)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Total Paid Back</div>
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;border-color:${netOwed>0?'rgba(240,136,62,.4)':'var(--border)'};">
+          <div style="font-size:16px;font-weight:700;color:${netOwed>0?'var(--orange)':'var(--green)'};">$${netOwed.toFixed(2)}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Still Owe Back</div>
         </div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="toggleMemberProducts(${m.id})"><i class="fa fa-list"></i> View Products</button>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-ghost btn-sm" onclick="toggleMemberProducts(${m.id})"><i class="fa fa-list"></i> View Products</button>
+        <button class="btn btn-primary btn-sm" onclick="toggleMemberPayments(${m.id})"><i class="fa fa-dollar-sign"></i> Record Payment</button>
+      </div>
       <div id="mbr-products-${m.id}" style="display:none;margin-top:10px;"></div>
+      <div id="mbr-payments-${m.id}" style="display:none;margin-top:10px;"></div>
     </div>`;
   }).join('');
 }
@@ -1551,6 +1603,129 @@ async function toggleMemberProducts(id) {
       </tr>`).join('')}</tbody></table>`;
   }
   el.style.display = 'block';
+}
+
+async function toggleMemberPayments(id) {
+  const el = document.getElementById('mbr-payments-'+id);
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  await renderMemberPayments(id);
+  el.style.display = 'block';
+}
+
+async function renderMemberPayments(id) {
+  const el = document.getElementById('mbr-payments-'+id);
+  const payments = await api('GET', '/admin/members/'+id+'/payments');
+  const total = payments ? payments.reduce((s,p)=>s+p.amount,0) : 0;
+  el.innerHTML = `
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;margin-top:6px;">
+      <div style="font-size:12px;font-weight:700;margin-bottom:10px;color:var(--accent);"><i class="fa fa-dollar-sign"></i> Payment History — Total Paid: $${total.toFixed(2)}</div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;">
+        <input type="number" id="pay-amt-${id}" placeholder="Amount $" step="0.01" min="0" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;">
+        <input type="text" id="pay-note-${id}" placeholder="Notes (e.g. Venmo, Cash)" style="flex:2;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;">
+        <button class="btn btn-primary btn-sm" onclick="recordPayment(${id})"><i class="fa fa-plus"></i> Record</button>
+      </div>
+      ${payments && payments.length ? `
+      <table style="width:100%;font-size:12px;border-collapse:collapse;">
+        <thead><tr style="color:var(--muted);">
+          <th style="padding:4px 8px;text-align:left;">Date</th>
+          <th style="padding:4px 8px;text-align:left;">Amount</th>
+          <th style="padding:4px 8px;text-align:left;">Notes</th>
+          <th style="padding:4px 8px;"></th>
+        </tr></thead>
+        <tbody>${payments.map(p=>`<tr style="border-top:1px solid var(--border);">
+          <td style="padding:5px 8px;color:var(--muted);">${p.paid_at ? p.paid_at.slice(0,10) : ''}</td>
+          <td style="padding:5px 8px;font-weight:700;color:var(--green);">$${Number(p.amount).toFixed(2)}</td>
+          <td style="padding:5px 8px;color:var(--muted);">${esc(p.notes||'')}</td>
+          <td style="padding:5px 8px;"><button class="btn btn-danger btn-sm" style="padding:2px 6px;font-size:10px;" onclick="deletePayment(${p.id},${id})"><i class="fa fa-trash"></i></button></td>
+        </tr>`).join('')}</tbody>
+      </table>` : '<div style="color:var(--muted);font-size:12px;">No payments recorded yet.</div>'}
+    </div>`;
+}
+
+async function recordPayment(memberId) {
+  const amt = parseFloat(document.getElementById('pay-amt-'+memberId).value)||0;
+  const note = document.getElementById('pay-note-'+memberId).value.trim();
+  if (!amt) return;
+  await api('POST', '/admin/members/'+memberId+'/payments', { amount: amt, notes: note });
+  await loadMembers();
+  document.getElementById('mbr-payments-'+memberId).style.display = 'block';
+  await renderMemberPayments(memberId);
+}
+
+async function deletePayment(payId, memberId) {
+  if (!confirm('Delete this payment record?')) return;
+  await api('DELETE', '/admin/member-payments/'+payId);
+  await loadMembers();
+  await renderMemberPayments(memberId);
+}
+
+// ── BOT ORDER TRACKER ─────────────────────────────────────────────────────────
+const BOT_STATUS_LABELS = { ordered:'Ordered', shipped:'Shipped', out_for_delivery:'Out for Delivery', delivered:'Delivered', cancelled:'Cancelled' };
+const BOT_STATUS_COLORS = { ordered:'var(--muted)', shipped:'var(--accent)', out_for_delivery:'var(--orange)', delivered:'var(--green)', cancelled:'#e74c3c' };
+
+async function loadBotOrders() {
+  const orders = await api('GET', '/admin/bot-orders');
+  const el = document.getElementById('bot-orders-list');
+  const cnt = document.getElementById('bot-orders-count');
+  if (!orders) return;
+  cnt.textContent = orders.length + ' order(s)';
+  if (!orders.length) {
+    el.innerHTML = '<div style="padding:24px;color:var(--muted);font-size:13px;text-align:center;">No orders yet. Add one manually above or wait for the daily email scan.</div>';
+    return;
+  }
+  el.innerHTML = `<table style="width:100%;font-size:12px;border-collapse:collapse;">
+    <thead><tr style="color:var(--muted);border-bottom:1px solid var(--border);background:var(--surface);">
+      <th style="padding:8px 14px;text-align:left;">Status</th>
+      <th style="padding:8px 14px;text-align:left;">Order #</th>
+      <th style="padding:8px 14px;text-align:left;">Items</th>
+      <th style="padding:8px 14px;text-align:left;">Carrier</th>
+      <th style="padding:8px 14px;text-align:left;">Tracking</th>
+      <th style="padding:8px 14px;text-align:left;">Date</th>
+      <th style="padding:8px 14px;"></th>
+    </tr></thead>
+    <tbody>${orders.map(o => {
+      const items = (() => { try { const a=JSON.parse(o.items||'[]'); return Array.isArray(a)?a.join(', '):o.items; } catch(e){ return o.items||''; } })();
+      const statusColor = BOT_STATUS_COLORS[o.status] || 'var(--muted)';
+      const statusLabel = BOT_STATUS_LABELS[o.status] || o.status;
+      const date = (o.received_at||o.created_at||'').slice(0,10);
+      return `<tr style="border-top:1px solid var(--border);">
+        <td style="padding:8px 14px;">
+          <select onchange="updateBotOrderStatus(${o.id},this.value)" style="font-size:11px;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:${statusColor};font-weight:700;">
+            ${Object.entries(BOT_STATUS_LABELS).map(([v,l])=>`<option value="${v}"${o.status===v?' selected':''}>${l}</option>`).join('')}
+          </select>
+        </td>
+        <td style="padding:8px 14px;font-weight:600;">${esc(o.order_number||'—')}</td>
+        <td style="padding:8px 14px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(items)}">${esc(items||o.subject||'—')}</td>
+        <td style="padding:8px 14px;">${esc(o.carrier||'—')}</td>
+        <td style="padding:8px 14px;">${o.tracking?`<a href="https://www.google.com/search?q=${encodeURIComponent(o.tracking)}" target="_blank" style="color:var(--accent);">${esc(o.tracking)}</a>`:'—'}</td>
+        <td style="padding:8px 14px;color:var(--muted);">${date}</td>
+        <td style="padding:8px 14px;"><button class="btn btn-danger btn-sm" style="padding:2px 8px;font-size:10px;" onclick="deleteBotOrder(${o.id})"><i class="fa fa-trash"></i></button></td>
+      </tr>`;
+    }).join('')}</tbody></table>`;
+}
+
+async function addBotOrder() {
+  const order_number = document.getElementById('bot-order-num').value.trim();
+  const carrier = document.getElementById('bot-carrier').value;
+  const tracking = document.getElementById('bot-tracking').value.trim();
+  const itemsRaw = document.getElementById('bot-items').value.trim();
+  const status = document.getElementById('bot-status').value;
+  if (!order_number && !itemsRaw) { alert('Enter at least an order number or item description.'); return; }
+  await api('POST', '/admin/bot-orders', { order_number, carrier, tracking, status, items: itemsRaw ? [itemsRaw] : [] });
+  document.getElementById('bot-order-num').value = '';
+  document.getElementById('bot-tracking').value = '';
+  document.getElementById('bot-items').value = '';
+  await loadBotOrders();
+}
+
+async function updateBotOrderStatus(id, status) {
+  await api('PATCH', '/admin/bot-orders/'+id, { status });
+}
+
+async function deleteBotOrder(id) {
+  if (!confirm('Delete this order?')) return;
+  await api('DELETE', '/admin/bot-orders/'+id);
+  await loadBotOrders();
 }
 
 async function populateMemberDropdown(selectId, selectedId) {

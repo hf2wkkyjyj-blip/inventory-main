@@ -112,6 +112,8 @@ try { db.exec('ALTER TABLE sales ADD COLUMN member_id INTEGER'); } catch(e) {}
 try { db.exec('ALTER TABLE sales ADD COLUMN member_qty_sold INTEGER DEFAULT 0'); } catch(e) {}
 try { db.exec('ALTER TABLE restocks ADD COLUMN member_id INTEGER'); } catch(e) {}
 try { db.exec('ALTER TABLE restocks ADD COLUMN member_qty INTEGER DEFAULT 0'); } catch(e) {}
+try { db.exec('CREATE TABLE IF NOT EXISTS member_payments (id INTEGER PRIMARY KEY AUTOINCREMENT, member_id INTEGER NOT NULL, amount REAL NOT NULL, notes TEXT, paid_at DATETIME DEFAULT CURRENT_TIMESTAMP)'); } catch(e) {}
+try { db.exec('CREATE TABLE IF NOT EXISTS bot_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, email_id TEXT UNIQUE, subject TEXT, from_email TEXT, order_number TEXT, carrier TEXT, tracking TEXT, status TEXT DEFAULT \'ordered\', items TEXT DEFAULT \'[]\', raw_snippet TEXT, received_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)'); } catch(e) {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS members (
@@ -715,7 +717,10 @@ app.get('/api/admin/members', auth, (req, res) => {
     const sold    = db.prepare('SELECT COALESCE(SUM(cost_price*COALESCE(member_qty_sold,0)),0) as total_cost, COALESCE(SUM(sale_price*COALESCE(member_qty_sold,0)),0) as total_revenue FROM sales WHERE member_id=?').get([m.id]);
     const total_fronted = sold.total_cost + stock.value;
     const owed_back     = sold.total_cost; // cost of member's sold units — you received revenue, they need cost back
-    return { ...m, stock_value: stock.value, active_products: stock.products, total_products: allProd.total, total_fronted, sold_cost: sold.total_cost, sold_revenue: sold.total_revenue, owed_back };
+    const paid          = db.prepare('SELECT COALESCE(SUM(amount),0) as total FROM member_payments WHERE member_id=?').get([m.id]);
+    const total_paid    = paid.total;
+    const net_owed      = Math.max(0, owed_back - total_paid);
+    return { ...m, stock_value: stock.value, active_products: stock.products, total_products: allProd.total, total_fronted, sold_cost: sold.total_cost, sold_revenue: sold.total_revenue, owed_back, total_paid, net_owed };
   });
   res.json(result);
 });
@@ -743,6 +748,64 @@ app.delete('/api/admin/members/:id', auth, adminOnly, (req, res) => {
   // Unlink their products before deleting
   db.prepare('UPDATE products SET member_id=NULL WHERE member_id=?').run([req.params.id]);
   db.prepare('DELETE FROM members WHERE id=?').run([req.params.id]);
+  res.json({ success: true });
+});
+
+// ─── MEMBER PAYMENTS ─────────────────────────────────────────────────────────
+app.get('/api/admin/members/:id/payments', auth, adminOnly, (req, res) => {
+  res.json(db.prepare('SELECT * FROM member_payments WHERE member_id=? ORDER BY paid_at DESC').all([req.params.id]));
+});
+
+app.post('/api/admin/members/:id/payments', auth, adminOnly, (req, res) => {
+  const { amount, notes } = req.body;
+  if (!amount) return res.status(400).json({ error: 'Amount required' });
+  const r = db.prepare('INSERT INTO member_payments (member_id,amount,notes) VALUES (?,?,?)').run([req.params.id, parseFloat(amount)||0, notes||null]);
+  res.json({ id: r.lastInsertRowid });
+});
+
+app.delete('/api/admin/member-payments/:id', auth, adminOnly, (req, res) => {
+  db.prepare('DELETE FROM member_payments WHERE id=?').run([req.params.id]);
+  res.json({ success: true });
+});
+
+// ─── BOT ORDERS ──────────────────────────────────────────────────────────────
+const BOT_API_KEY = process.env.BOT_API_KEY || 'bot-ss-2026';
+
+app.post('/api/bot/orders', (req, res) => {
+  const key = req.headers['x-bot-key'];
+  if (key !== BOT_API_KEY) return res.status(401).json({ error: 'Unauthorized' });
+  const orders = req.body.orders || [];
+  let inserted = 0;
+  for (const o of orders) {
+    try {
+      db.prepare('INSERT OR IGNORE INTO bot_orders (email_id,subject,from_email,order_number,carrier,tracking,status,items,raw_snippet,received_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        .run([o.email_id||null, o.subject||null, o.from_email||null, o.order_number||null, o.carrier||null, o.tracking||null, o.status||'ordered', JSON.stringify(o.items||[]), o.raw_snippet||null, o.received_at||null]);
+      inserted++;
+    } catch(e) {}
+  }
+  res.json({ inserted });
+});
+
+app.get('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
+  res.json(db.prepare('SELECT * FROM bot_orders ORDER BY received_at DESC, created_at DESC LIMIT 200').all());
+});
+
+app.post('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
+  const { order_number, carrier, tracking, status, items, notes } = req.body;
+  const r = db.prepare('INSERT INTO bot_orders (order_number,carrier,tracking,status,items,raw_snippet,received_at) VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)')
+    .run([order_number||null, carrier||null, tracking||null, status||'ordered', JSON.stringify(items||[]), notes||null]);
+  res.json({ id: r.lastInsertRowid });
+});
+
+app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
+  const { status, tracking, carrier, order_number } = req.body;
+  db.prepare('UPDATE bot_orders SET status=COALESCE(?,status),tracking=COALESCE(?,tracking),carrier=COALESCE(?,carrier),order_number=COALESCE(?,order_number) WHERE id=?')
+    .run([status||null, tracking||null, carrier||null, order_number||null, req.params.id]);
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
+  db.prepare('DELETE FROM bot_orders WHERE id=?').run([req.params.id]);
   res.json({ success: true });
 });
 
