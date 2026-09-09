@@ -514,6 +514,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
           <th>ITEMS</th>
           <th onclick="botSort('order_total')" style="text-align:right;">TOTAL</th>
           <th onclick="botSort('shipping_name')">BUYER</th>
+          <th>TRACKING</th>
           <th>NOTES</th>
           <th></th>
         </tr>
@@ -1856,6 +1857,7 @@ function renderBotOrders() {
       <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(items)}">${esc(items||'—')}</td>
       <td style="text-align:right;font-variant-numeric:tabular-nums;">${o.order_total?'$'+Number(o.order_total).toFixed(2):'—'}</td>
       <td>${esc(o.shipping_name||'—')}</td>
+      <td style="white-space:nowrap;">${o.tracking ? `<a href="${botTrackingUrl(o.retailer, o.tracking)}" target="_blank" style="color:#60a5fa;font-size:12px;font-weight:600;">${esc(o.tracking)}</a>` : '<span style="color:var(--muted);">—</span>'}</td>
       <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px;" title="${esc(o.notes||'')}">${esc(o.notes||'')}</td>
       <td style="white-space:nowrap;">
         <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:4px;" onclick="botEditRow(${o.id})" title="Edit"><i class="fa fa-pen" style="font-size:11px;"></i></button>
@@ -1863,6 +1865,17 @@ function renderBotOrders() {
       </td>
     </tr>`;
   }).join('');
+}
+
+function botTrackingUrl(retailer, tracking) {
+  if (!tracking) return '#';
+  const r = (retailer||'').toLowerCase();
+  if (r.includes('ups')) return `https://www.ups.com/track?tracknum=${encodeURIComponent(tracking)}`;
+  if (r.includes('fedex')) return `https://www.fedex.com/fedex/track/?tracknumbers=${encodeURIComponent(tracking)}`;
+  if (r.includes('usps')) return `https://tools.usps.com/go/TrackConfirmAction?qtc_tLabels1=${encodeURIComponent(tracking)}`;
+  if (r.includes('amazon')) return `https://www.amazon.com/progress-tracker/package/?_encoding=UTF8&itemId=&orderId=${encodeURIComponent(tracking)}`;
+  // Universal fallback — works for Target, Bear Walker, etc.
+  return `https://www.google.com/search?q=${encodeURIComponent(tracking + ' tracking')}`;
 }
 
 function showBotAddForm() {
@@ -1894,9 +1907,11 @@ async function botEditRow(id) {
   if (!o) return;
   const status = prompt('Status (Confirmed/Shipped/Unship/Delivered/Cancelled/Refunded):', o.status||'Confirmed');
   if (status === null) return;
+  const tracking = prompt('Tracking number:', o.tracking||'');
+  if (tracking === null) return;
   const notes = prompt('Notes:', o.notes||'');
   if (notes === null) return;
-  await api('PATCH', '/admin/bot-orders/'+id, { status, notes });
+  await api('PATCH', '/admin/bot-orders/'+id, { status, tracking: tracking||null, notes });
   await loadBotOrders();
 }
 

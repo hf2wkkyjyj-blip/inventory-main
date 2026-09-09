@@ -129,6 +129,7 @@ try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='ordered'")
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE status='delivered' OR status='out_for_delivery'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Cancelled' WHERE status='cancelled'"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN tracking TEXT"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Unship' WHERE status='Delayed' OR status='delayed'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE order_number IN ('25293','25164','24662')"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE order_number='902003606387023'"); } catch(e) {}
@@ -824,9 +825,9 @@ app.get('/api/bot/orders', (req, res) => {
 app.patch('/api/bot/orders/:id', (req, res) => {
   const key = req.headers['x-bot-key'];
   if (key !== BOT_API_KEY) return res.status(401).json({ error: 'Unauthorized' });
-  const { status, delivered_date, notes } = req.body;
-  db.prepare('UPDATE bot_orders SET status=COALESCE(?,status), delivered_date=COALESCE(?,delivered_date), notes=COALESCE(?,notes) WHERE id=?')
-    .run([status||null, delivered_date||null, notes||null, req.params.id]);
+  const { status, delivered_date, notes, tracking } = req.body;
+  db.prepare('UPDATE bot_orders SET status=COALESCE(?,status), delivered_date=COALESCE(?,delivered_date), notes=COALESCE(?,notes), tracking=COALESCE(?,tracking) WHERE id=?')
+    .run([status||null, delivered_date||null, notes||null, tracking||null, req.params.id]);
   res.json({ success: true });
 });
 
@@ -867,8 +868,8 @@ app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
     account_email=COALESCE(?,account_email), order_date=COALESCE(?,order_date), delivered_date=COALESCE(?,delivered_date),
     shipping_name=COALESCE(?,shipping_name), shipping_address=COALESCE(?,shipping_address),
     status=COALESCE(?,status), items=COALESCE(?,items), order_total=COALESCE(?,order_total),
-    refunded_amount=COALESCE(?,refunded_amount), notes=COALESCE(?,notes) WHERE id=?`)
-    .run([o.category||null,o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||null,o.items?JSON.stringify(o.items):null,o.order_total!=null?o.order_total:null,o.refunded_amount!=null?o.refunded_amount:null,o.notes||null,req.params.id]);
+    refunded_amount=COALESCE(?,refunded_amount), notes=COALESCE(?,notes), tracking=COALESCE(?,tracking) WHERE id=?`)
+    .run([o.category||null,o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||null,o.items?JSON.stringify(o.items):null,o.order_total!=null?o.order_total:null,o.refunded_amount!=null?o.refunded_amount:null,o.notes||null,o.tracking||null,req.params.id]);
   res.json({ success: true });
 });
 
