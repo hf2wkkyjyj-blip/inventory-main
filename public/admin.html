@@ -411,46 +411,122 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 
 <!-- ══ BOT ORDER TRACKER TAB ════════════════════════════════════════════════ -->
 <div id="tab-bot-orders" style="display:none;">
+<style>
+  .bot-stat{border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--surface);}
+  .bot-stat .lbl{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.04em;margin-bottom:10px;color:var(--muted);}
+  .bot-stat .val{font-size:24px;font-weight:700;}
+  .bot-stat.s-green{border-color:#1c5a3f;} .bot-stat.s-green .lbl{color:#34d399;} .bot-stat.s-green .val{color:#34d399;}
+  .bot-stat.s-purple{border-color:#4c3f8c;} .bot-stat.s-purple .lbl{color:#a78bfa;} .bot-stat.s-purple .val{color:#a78bfa;}
+  .bot-stat.s-amber{border-color:#8a6a10;} .bot-stat.s-amber .lbl{color:#fbbf24;} .bot-stat.s-amber .val{color:#fbbf24;}
+  .bot-stat.s-blue{border-color:#265a94;} .bot-stat.s-blue .lbl{color:#60a5fa;} .bot-stat.s-blue .val{color:#60a5fa;}
+  .bot-stat.s-red{border-color:#8a3236;} .bot-stat.s-red .lbl{color:#f87171;} .bot-stat.s-red .val{color:#f87171;}
+  .bot-stat.s-pink{border-color:#8a3468;} .bot-stat.s-pink .lbl{color:#f472b6;} .bot-stat.s-pink .val{color:#f472b6;}
+  .bot-stat.clickable{cursor:pointer;} .bot-stat.clickable:hover{opacity:.85;}
+  .bot-stat.active-filter{outline:2px solid currentColor;outline-offset:-2px;}
+  .bpill{display:inline-block;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:700;white-space:nowrap;}
+  .bpill-Confirmed{background:#0f2a20;color:#34d399;}
+  .bpill-Shipped{background:#211a35;color:#a78bfa;}
+  .bpill-Delayed{background:#332a0d;color:#fbbf24;}
+  .bpill-Delivered{background:#12233d;color:#60a5fa;}
+  .bpill-Cancelled{background:#3a1518;color:#f87171;}
+  .bpill-Refunded{background:#331a29;color:#f472b6;}
+  .btab{padding:6px 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--muted);font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;}
+  .btab:hover{border-color:#3a3f4d;color:var(--text);}
+  .btab.active{background:#153029;border-color:#34d399;color:#34d399;}
+  #bot-orders-table thead th{text-align:left;padding:9px 12px;color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.03em;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;}
+  #bot-orders-table thead th:hover{color:var(--text);}
+  #bot-orders-table thead th.sorted{color:#2dd4bf;}
+  #bot-orders-table tbody td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top;font-size:12.5px;}
+  #bot-orders-table tbody tr:last-child td{border-bottom:none;}
+  #bot-orders-table tbody tr:hover{background:var(--surface);}
+</style>
 
-  <!-- Add Order Panel -->
-  <div class="panel" style="padding:20px;margin-bottom:16px;">
-    <div style="font-size:13px;font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:8px;">
-      <i class="fa fa-plus-circle" style="color:var(--accent);"></i> Add Order Manually
-    </div>
-    <div class="form-row three" style="margin-bottom:10px;">
-      <div class="form-group" style="margin:0;"><label>Order #</label><input type="text" id="bot-order-num" placeholder="e.g. 114-1234567"></div>
-      <div class="form-group" style="margin:0;"><label>Carrier</label>
-        <select id="bot-carrier">
-          <option value="">— Select —</option>
-          <option>Amazon</option><option>Home Depot</option><option>Lowe's</option>
-          <option>UPS</option><option>FedEx</option><option>USPS</option><option>Other</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin:0;"><label>Tracking #</label><input type="text" id="bot-tracking" placeholder="Tracking number"></div>
-    </div>
-    <div class="form-row" style="margin-bottom:10px;gap:10px;">
-      <div class="form-group" style="margin:0;flex:2;"><label>Items / Description</label><input type="text" id="bot-items" placeholder="e.g. Bannister 31in Vanity x2"></div>
-      <div class="form-group" style="margin:0;flex:1;"><label>Status</label>
-        <select id="bot-status">
-          <option value="ordered">Ordered</option>
-          <option value="shipped">Shipped</option>
-          <option value="out_for_delivery">Out for Delivery</option>
-          <option value="delivered">Delivered</option>
-          <option value="cancelled">Cancelled</option>
-        </select>
-      </div>
-    </div>
-    <button class="btn btn-primary btn-sm" onclick="addBotOrder()"><i class="fa fa-plus"></i> Add Order</button>
-    <button class="btn btn-ghost btn-sm" onclick="loadBotOrders()" style="margin-left:6px;"><i class="fa fa-sync"></i> Refresh</button>
+  <!-- Stats Row -->
+  <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:10px;margin-bottom:20px;" id="bot-stats-row">
+    <div class="bot-stat"><div class="lbl">TOTAL</div><div class="val" id="bs-total">0</div></div>
+    <div class="bot-stat s-green clickable" onclick="botFilterStatus('Confirmed')" id="bsc-Confirmed"><div class="lbl">CONFIRMED</div><div class="val" id="bs-confirmed">0</div></div>
+    <div class="bot-stat s-purple clickable" onclick="botFilterStatus('Shipped')" id="bsc-Shipped"><div class="lbl">SHIPPED</div><div class="val" id="bs-shipped">0</div></div>
+    <div class="bot-stat s-amber clickable" onclick="botFilterStatus('Delayed')" id="bsc-Delayed"><div class="lbl">DELAYED</div><div class="val" id="bs-delayed">0</div></div>
+    <div class="bot-stat s-blue clickable" onclick="botFilterStatus('Delivered')" id="bsc-Delivered"><div class="lbl">DELIVERED</div><div class="val" id="bs-delivered">0</div></div>
+    <div class="bot-stat s-red clickable" onclick="botFilterStatus('Cancelled')" id="bsc-Cancelled"><div class="lbl">CANCELLED</div><div class="val" id="bs-cancelled">0</div></div>
+    <div class="bot-stat s-pink clickable" onclick="botFilterStatus('Refunded')" id="bsc-Refunded"><div class="lbl">REFUNDED</div><div class="val" id="bs-refunded">0</div></div>
+    <div class="bot-stat s-green"><div class="lbl">SPENT</div><div class="val" style="font-size:18px;" id="bs-spent">$0</div></div>
   </div>
 
-  <!-- Orders List -->
-  <div class="panel" style="padding:0;overflow:hidden;">
-    <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:700;display:flex;align-items:center;gap:8px;">
-      <i class="fa fa-robot" style="color:var(--accent);"></i> Orders (auto-synced from email daily)
-      <span id="bot-orders-count" style="font-size:11px;color:var(--muted);font-weight:400;margin-left:auto;"></span>
+  <!-- Category Tabs + Controls -->
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+    <div id="bot-cat-tabs"></div>
+    <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <select id="bot-filter-retailer" onchange="renderBotOrders()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+        <option value="">All retailers</option>
+      </select>
+      <select id="bot-filter-status" onchange="renderBotOrders()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+        <option value="">All statuses</option>
+        <option>Confirmed</option><option>Shipped</option><option>Delayed</option>
+        <option>Delivered</option><option>Cancelled</option><option>Refunded</option>
+      </select>
+      <input type="text" id="bot-search" oninput="renderBotOrders()" placeholder="Search order #, item, buyer…" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:200px;">
+      <button class="btn btn-ghost btn-sm" onclick="loadBotOrders()"><i class="fa fa-sync"></i> Refresh</button>
+      <button class="btn btn-primary btn-sm" onclick="showBotAddForm()"><i class="fa fa-plus"></i> Add Order</button>
     </div>
-    <div id="bot-orders-list" style="min-height:80px;"></div>
+  </div>
+
+  <!-- Add Order Form (hidden by default) -->
+  <div id="bot-add-form" style="display:none;" class="panel" style="padding:16px;margin-bottom:12px;">
+    <div style="padding:16px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Category</label>
+        <select id="bot-f-cat" style="width:100%;"><option>Pokemon</option><option>Mattel</option><option>One Piece</option><option>Other</option></select></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Retailer</label>
+        <input type="text" id="bot-f-retailer" placeholder="e.g. Target" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Order #</label>
+        <input type="text" id="bot-f-ordnum" placeholder="Order number" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Order Date</label>
+        <input type="date" id="bot-f-date" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;grid-column:span 2;"><label style="font-size:11px;">Items / Description</label>
+        <input type="text" id="bot-f-items" placeholder="e.g. Pokemon TCG Booster Box x2" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Total ($)</label>
+        <input type="number" id="bot-f-total" placeholder="0.00" step="0.01" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Status</label>
+        <select id="bot-f-status" style="width:100%;"><option>Confirmed</option><option>Shipped</option><option>Delayed</option><option>Delivered</option><option>Cancelled</option><option>Refunded</option></select></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Buyer / Shipping Name</label>
+        <input type="text" id="bot-f-buyer" placeholder="Name" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;grid-column:span 2;"><label style="font-size:11px;">Shipping Address</label>
+        <input type="text" id="bot-f-addr" placeholder="Street address" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Account Email</label>
+        <input type="text" id="bot-f-accemail" placeholder="buyer@gmail.com" style="width:100%;"></div>
+    </div>
+    <div style="padding:0 16px 16px;display:flex;gap:8px;">
+      <button class="btn btn-primary btn-sm" onclick="addBotOrder()"><i class="fa fa-save"></i> Save Order</button>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('bot-add-form').style.display='none'">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Orders Table -->
+  <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
+    <table id="bot-orders-table" style="width:100%;border-collapse:collapse;">
+      <thead>
+        <tr>
+          <th onclick="botSort('category')">CATEGORY</th>
+          <th onclick="botSort('retailer')">RETAILER</th>
+          <th onclick="botSort('order_number')">ORDER #</th>
+          <th onclick="botSort('order_date')">DATE</th>
+          <th onclick="botSort('status')">STATUS</th>
+          <th>ITEMS</th>
+          <th onclick="botSort('order_total')" style="text-align:right;">TOTAL</th>
+          <th onclick="botSort('shipping_name')">BUYER</th>
+          <th>NOTES</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="bot-orders-body">
+        <tr><td colspan="10" style="text-align:center;padding:32px;color:var(--muted);">Loading…</td></tr>
+      </tbody>
+    </table>
+    <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid var(--border);">
+      <span id="bot-page-info" style="font-size:12px;color:var(--muted);"></span>
+      <button class="btn btn-ghost btn-sm" id="bot-prev" onclick="botPageDelta(-1)">← Prev</button>
+      <button class="btn btn-ghost btn-sm" id="bot-next" onclick="botPageDelta(1)">Next →</button>
+    </div>
   </div>
 
 </div>
@@ -1660,66 +1736,168 @@ async function deletePayment(payId, memberId) {
 }
 
 // ── BOT ORDER TRACKER ─────────────────────────────────────────────────────────
-const BOT_STATUS_LABELS = { ordered:'Ordered', shipped:'Shipped', out_for_delivery:'Out for Delivery', delivered:'Delivered', cancelled:'Cancelled' };
-const BOT_STATUS_COLORS = { ordered:'var(--muted)', shipped:'var(--accent)', out_for_delivery:'var(--orange)', delivered:'var(--green)', cancelled:'#e74c3c' };
+let _botOrders = [], _botPage = 0, _botPageSize = 25, _botSortKey = 'order_date', _botSortDir = -1, _botStatusFilter = '';
+const BOT_STATUSES = ['Confirmed','Shipped','Delayed','Delivered','Cancelled','Refunded'];
 
 async function loadBotOrders() {
   const orders = await api('GET', '/admin/bot-orders');
-  const el = document.getElementById('bot-orders-list');
-  const cnt = document.getElementById('bot-orders-count');
   if (!orders) return;
-  cnt.textContent = orders.length + ' order(s)';
-  if (!orders.length) {
-    el.innerHTML = '<div style="padding:24px;color:var(--muted);font-size:13px;text-align:center;">No orders yet. Add one manually above or wait for the daily email scan.</div>';
+  _botOrders = orders;
+  _botPage = 0;
+  buildBotStats();
+  buildBotCatTabs();
+  buildBotRetailerFilter();
+  renderBotOrders();
+}
+
+function buildBotStats() {
+  const o = _botOrders;
+  const counts = {};
+  BOT_STATUSES.forEach(s => counts[s] = 0);
+  let spent = 0;
+  o.forEach(r => {
+    if (counts[r.status] !== undefined) counts[r.status]++;
+    if (r.status !== 'Cancelled' && r.status !== 'Refunded') spent += (r.order_total||0) - (r.refunded_amount||0);
+  });
+  document.getElementById('bs-total').textContent = o.length;
+  document.getElementById('bs-confirmed').textContent = counts['Confirmed'];
+  document.getElementById('bs-shipped').textContent = counts['Shipped'];
+  document.getElementById('bs-delayed').textContent = counts['Delayed'];
+  document.getElementById('bs-delivered').textContent = counts['Delivered'];
+  document.getElementById('bs-cancelled').textContent = counts['Cancelled'];
+  document.getElementById('bs-refunded').textContent = counts['Refunded'];
+  document.getElementById('bs-spent').textContent = '$' + spent.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  BOT_STATUSES.forEach(s => {
+    const el = document.getElementById('bsc-'+s);
+    if (el) el.classList.toggle('active-filter', _botStatusFilter === s);
+  });
+}
+
+function buildBotCatTabs() {
+  const cats = ['All', ...new Set(_botOrders.map(o=>o.category||'Other').filter(Boolean))];
+  const current = document.getElementById('bot-cat-tabs').dataset.active || 'All';
+  document.getElementById('bot-cat-tabs').innerHTML = cats.map(c =>
+    `<button class="btab${c===current?' active':''}" onclick="botSetCat('${c}')">${esc(c)} <span style="opacity:.6;font-size:10px;">${c==='All'?_botOrders.length:_botOrders.filter(o=>(o.category||'Other')===c).length}</span></button>`
+  ).join(' ');
+  document.getElementById('bot-cat-tabs').dataset.active = current;
+}
+
+function buildBotRetailerFilter() {
+  const retailers = [...new Set(_botOrders.map(o=>o.retailer).filter(Boolean))].sort();
+  const sel = document.getElementById('bot-filter-retailer');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All retailers</option>' + retailers.map(r=>`<option${r===cur?' selected':''}>${esc(r)}</option>`).join('');
+}
+
+function botSetCat(cat) {
+  document.getElementById('bot-cat-tabs').dataset.active = cat;
+  document.querySelectorAll('.btab').forEach(b => b.classList.toggle('active', b.textContent.trim().startsWith(cat)));
+  _botPage = 0;
+  renderBotOrders();
+}
+
+function botFilterStatus(s) {
+  _botStatusFilter = _botStatusFilter === s ? '' : s;
+  document.getElementById('bot-filter-status').value = _botStatusFilter;
+  buildBotStats();
+  _botPage = 0;
+  renderBotOrders();
+}
+
+function botSort(key) {
+  if (_botSortKey === key) _botSortDir *= -1;
+  else { _botSortKey = key; _botSortDir = -1; }
+  document.querySelectorAll('#bot-orders-table thead th').forEach(th => th.classList.remove('sorted'));
+  renderBotOrders();
+}
+
+function botPageDelta(d) { _botPage += d; renderBotOrders(); }
+
+function renderBotOrders() {
+  const cat = document.getElementById('bot-cat-tabs').dataset.active || 'All';
+  const retailer = document.getElementById('bot-filter-retailer').value;
+  const status = document.getElementById('bot-filter-status').value || _botStatusFilter;
+  const search = (document.getElementById('bot-search').value||'').toLowerCase();
+  let rows = _botOrders.filter(o => {
+    if (cat !== 'All' && (o.category||'Other') !== cat) return false;
+    if (retailer && o.retailer !== retailer) return false;
+    if (status && o.status !== status) return false;
+    if (search) {
+      const hay = [(o.order_number||''),(o.items||''),(o.shipping_name||''),(o.retailer||''),(o.notes||'')].join(' ').toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+  rows.sort((a,b)=>{
+    let av=a[_botSortKey]||'', bv=b[_botSortKey]||'';
+    if (typeof av==='number') return _botSortDir*(av-bv);
+    return _botSortDir*(String(av).localeCompare(String(bv)));
+  });
+  const total = rows.length;
+  const maxPage = Math.max(0, Math.ceil(total/_botPageSize)-1);
+  _botPage = Math.min(_botPage, maxPage);
+  const page = rows.slice(_botPage*_botPageSize, (_botPage+1)*_botPageSize);
+  document.getElementById('bot-page-info').textContent = total ? `${_botPage*_botPageSize+1}–${Math.min((_botPage+1)*_botPageSize,total)} of ${total}` : '';
+  document.getElementById('bot-prev').disabled = _botPage <= 0;
+  document.getElementById('bot-next').disabled = _botPage >= maxPage;
+  const tbody = document.getElementById('bot-orders-body');
+  if (!page.length) {
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--muted);">No orders found. Add one manually or wait for the daily email scan.</td></tr>`;
     return;
   }
-  el.innerHTML = `<table style="width:100%;font-size:12px;border-collapse:collapse;">
-    <thead><tr style="color:var(--muted);border-bottom:1px solid var(--border);background:var(--surface);">
-      <th style="padding:8px 14px;text-align:left;">Status</th>
-      <th style="padding:8px 14px;text-align:left;">Order #</th>
-      <th style="padding:8px 14px;text-align:left;">Items</th>
-      <th style="padding:8px 14px;text-align:left;">Carrier</th>
-      <th style="padding:8px 14px;text-align:left;">Tracking</th>
-      <th style="padding:8px 14px;text-align:left;">Date</th>
-      <th style="padding:8px 14px;"></th>
-    </tr></thead>
-    <tbody>${orders.map(o => {
-      const items = (() => { try { const a=JSON.parse(o.items||'[]'); return Array.isArray(a)?a.join(', '):o.items; } catch(e){ return o.items||''; } })();
-      const statusColor = BOT_STATUS_COLORS[o.status] || 'var(--muted)';
-      const statusLabel = BOT_STATUS_LABELS[o.status] || o.status;
-      const date = (o.received_at||o.created_at||'').slice(0,10);
-      return `<tr style="border-top:1px solid var(--border);">
-        <td style="padding:8px 14px;">
-          <select onchange="updateBotOrderStatus(${o.id},this.value)" style="font-size:11px;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--surface);color:${statusColor};font-weight:700;">
-            ${Object.entries(BOT_STATUS_LABELS).map(([v,l])=>`<option value="${v}"${o.status===v?' selected':''}>${l}</option>`).join('')}
-          </select>
-        </td>
-        <td style="padding:8px 14px;font-weight:600;">${esc(o.order_number||'—')}</td>
-        <td style="padding:8px 14px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(items)}">${esc(items||o.subject||'—')}</td>
-        <td style="padding:8px 14px;">${esc(o.carrier||'—')}</td>
-        <td style="padding:8px 14px;">${o.tracking?`<a href="https://www.google.com/search?q=${encodeURIComponent(o.tracking)}" target="_blank" style="color:var(--accent);">${esc(o.tracking)}</a>`:'—'}</td>
-        <td style="padding:8px 14px;color:var(--muted);">${date}</td>
-        <td style="padding:8px 14px;"><button class="btn btn-danger btn-sm" style="padding:2px 8px;font-size:10px;" onclick="deleteBotOrder(${o.id})"><i class="fa fa-trash"></i></button></td>
-      </tr>`;
-    }).join('')}</tbody></table>`;
+  tbody.innerHTML = page.map(o => {
+    const items = (() => { try { const a=JSON.parse(o.items||'[]'); return Array.isArray(a)?a.join(', '):o.items; } catch(e){ return o.items||''; } })();
+    return `<tr>
+      <td>${esc(o.category||'Other')}</td>
+      <td>${esc(o.retailer||'—')}</td>
+      <td style="font-weight:600;">${esc(o.order_number||'—')}</td>
+      <td style="color:var(--muted);">${(o.order_date||'').slice(0,10)||'—'}</td>
+      <td><span class="bpill bpill-${o.status||'Confirmed'}">${o.status||'Confirmed'}</span></td>
+      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(items)}">${esc(items||'—')}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">${o.order_total?'$'+Number(o.order_total).toFixed(2):'—'}</td>
+      <td>${esc(o.shipping_name||'—')}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px;" title="${esc(o.notes||'')}">${esc(o.notes||'')}</td>
+      <td style="white-space:nowrap;">
+        <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:4px;" onclick="botEditRow(${o.id})" title="Edit"><i class="fa fa-pen" style="font-size:11px;"></i></button>
+        <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;" onclick="deleteBotOrder(${o.id})" title="Delete"><i class="fa fa-trash" style="font-size:11px;"></i></button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function showBotAddForm() {
+  const f = document.getElementById('bot-add-form');
+  f.style.display = f.style.display==='none' ? 'block' : 'none';
 }
 
 async function addBotOrder() {
-  const order_number = document.getElementById('bot-order-num').value.trim();
-  const carrier = document.getElementById('bot-carrier').value;
-  const tracking = document.getElementById('bot-tracking').value.trim();
-  const itemsRaw = document.getElementById('bot-items').value.trim();
-  const status = document.getElementById('bot-status').value;
-  if (!order_number && !itemsRaw) { alert('Enter at least an order number or item description.'); return; }
-  await api('POST', '/admin/bot-orders', { order_number, carrier, tracking, status, items: itemsRaw ? [itemsRaw] : [] });
-  document.getElementById('bot-order-num').value = '';
-  document.getElementById('bot-tracking').value = '';
-  document.getElementById('bot-items').value = '';
+  const o = {
+    category: document.getElementById('bot-f-cat').value,
+    retailer: document.getElementById('bot-f-retailer').value.trim(),
+    order_number: document.getElementById('bot-f-ordnum').value.trim(),
+    order_date: document.getElementById('bot-f-date').value,
+    items: [document.getElementById('bot-f-items').value.trim()].filter(Boolean),
+    order_total: parseFloat(document.getElementById('bot-f-total').value)||0,
+    status: document.getElementById('bot-f-status').value,
+    shipping_name: document.getElementById('bot-f-buyer').value.trim(),
+    shipping_address: document.getElementById('bot-f-addr').value.trim(),
+    account_email: document.getElementById('bot-f-accemail').value.trim(),
+  };
+  if (!o.order_number && !o.items[0]) { alert('Enter at least an order number or item.'); return; }
+  await api('POST', '/admin/bot-orders', o);
+  document.getElementById('bot-add-form').style.display = 'none';
   await loadBotOrders();
 }
 
-async function updateBotOrderStatus(id, status) {
-  await api('PATCH', '/admin/bot-orders/'+id, { status });
+async function botEditRow(id) {
+  const o = _botOrders.find(x=>x.id===id);
+  if (!o) return;
+  const status = prompt('Status (Confirmed/Shipped/Delayed/Delivered/Cancelled/Refunded):', o.status||'Confirmed');
+  if (status === null) return;
+  const notes = prompt('Notes:', o.notes||'');
+  if (notes === null) return;
+  await api('PATCH', '/admin/bot-orders/'+id, { status, notes });
+  await loadBotOrders();
 }
 
 async function deleteBotOrder(id) {

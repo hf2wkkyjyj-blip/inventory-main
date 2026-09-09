@@ -113,7 +113,22 @@ try { db.exec('ALTER TABLE sales ADD COLUMN member_qty_sold INTEGER DEFAULT 0');
 try { db.exec('ALTER TABLE restocks ADD COLUMN member_id INTEGER'); } catch(e) {}
 try { db.exec('ALTER TABLE restocks ADD COLUMN member_qty INTEGER DEFAULT 0'); } catch(e) {}
 try { db.exec('CREATE TABLE IF NOT EXISTS member_payments (id INTEGER PRIMARY KEY AUTOINCREMENT, member_id INTEGER NOT NULL, amount REAL NOT NULL, notes TEXT, paid_at DATETIME DEFAULT CURRENT_TIMESTAMP)'); } catch(e) {}
-try { db.exec('CREATE TABLE IF NOT EXISTS bot_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, email_id TEXT UNIQUE, subject TEXT, from_email TEXT, order_number TEXT, carrier TEXT, tracking TEXT, status TEXT DEFAULT \'ordered\', items TEXT DEFAULT \'[]\', raw_snippet TEXT, received_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)'); } catch(e) {}
+try { db.exec('CREATE TABLE IF NOT EXISTS bot_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, email_id TEXT UNIQUE, subject TEXT, from_email TEXT, category TEXT DEFAULT \'Other\', retailer TEXT, order_number TEXT, account_email TEXT, order_date TEXT, delivered_date TEXT, shipping_name TEXT, shipping_address TEXT, status TEXT DEFAULT \'Confirmed\', items TEXT DEFAULT \'[]\', order_total REAL DEFAULT 0, refunded_amount REAL DEFAULT 0, notes TEXT, raw_snippet TEXT, received_at DATETIME, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)'); } catch(e) {}
+// Migrations for bot_orders if table already existed
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN category TEXT DEFAULT 'Other'"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN retailer TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN account_email TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN order_date TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN delivered_date TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN shipping_name TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN shipping_address TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN order_total REAL DEFAULT 0"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN refunded_amount REAL DEFAULT 0"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN notes TEXT"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='ordered'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE status='delivered' OR status='out_for_delivery'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Cancelled' WHERE status='cancelled'"); } catch(e) {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS members (
@@ -778,8 +793,10 @@ app.post('/api/bot/orders', (req, res) => {
   let inserted = 0;
   for (const o of orders) {
     try {
-      db.prepare('INSERT OR IGNORE INTO bot_orders (email_id,subject,from_email,order_number,carrier,tracking,status,items,raw_snippet,received_at) VALUES (?,?,?,?,?,?,?,?,?,?)')
-        .run([o.email_id||null, o.subject||null, o.from_email||null, o.order_number||null, o.carrier||null, o.tracking||null, o.status||'ordered', JSON.stringify(o.items||[]), o.raw_snippet||null, o.received_at||null]);
+      db.prepare(`INSERT OR IGNORE INTO bot_orders
+        (email_id,subject,from_email,category,retailer,order_number,account_email,order_date,delivered_date,shipping_name,shipping_address,status,items,order_total,refunded_amount,notes,raw_snippet,received_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run([o.email_id||null,o.subject||null,o.from_email||null,o.category||'Other',o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||'Confirmed',JSON.stringify(o.items||[]),o.order_total||0,o.refunded_amount||0,o.notes||null,o.raw_snippet||null,o.received_at||null]);
       inserted++;
     } catch(e) {}
   }
@@ -787,20 +804,35 @@ app.post('/api/bot/orders', (req, res) => {
 });
 
 app.get('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
-  res.json(db.prepare('SELECT * FROM bot_orders ORDER BY received_at DESC, created_at DESC LIMIT 200').all());
+  const orders = db.prepare('SELECT * FROM bot_orders ORDER BY order_date DESC, received_at DESC, created_at DESC LIMIT 500').all();
+  // Auto-mark delayed: Confirmed/Shipped with order_date > 14 days ago
+  const now = Date.now();
+  orders.forEach(o => {
+    if ((o.status==='Confirmed'||o.status==='Shipped') && o.order_date) {
+      const daysSince = (now - new Date(o.order_date).getTime()) / 86400000;
+      if (daysSince > 14) o.status = 'Delayed';
+    }
+  });
+  res.json(orders);
 });
 
 app.post('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
-  const { order_number, carrier, tracking, status, items, notes } = req.body;
-  const r = db.prepare('INSERT INTO bot_orders (order_number,carrier,tracking,status,items,raw_snippet,received_at) VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)')
-    .run([order_number||null, carrier||null, tracking||null, status||'ordered', JSON.stringify(items||[]), notes||null]);
+  const { category, retailer, order_number, account_email, order_date, shipping_name, shipping_address, status, items, order_total, notes } = req.body;
+  const r = db.prepare(`INSERT INTO bot_orders (category,retailer,order_number,account_email,order_date,shipping_name,shipping_address,status,items,order_total,notes,received_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+    .run([category||'Other',retailer||null,order_number||null,account_email||null,order_date||null,shipping_name||null,shipping_address||null,status||'Confirmed',JSON.stringify(items||[]),parseFloat(order_total)||0,notes||null]);
   res.json({ id: r.lastInsertRowid });
 });
 
 app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
-  const { status, tracking, carrier, order_number } = req.body;
-  db.prepare('UPDATE bot_orders SET status=COALESCE(?,status),tracking=COALESCE(?,tracking),carrier=COALESCE(?,carrier),order_number=COALESCE(?,order_number) WHERE id=?')
-    .run([status||null, tracking||null, carrier||null, order_number||null, req.params.id]);
+  const o = req.body;
+  db.prepare(`UPDATE bot_orders SET
+    category=COALESCE(?,category), retailer=COALESCE(?,retailer), order_number=COALESCE(?,order_number),
+    account_email=COALESCE(?,account_email), order_date=COALESCE(?,order_date), delivered_date=COALESCE(?,delivered_date),
+    shipping_name=COALESCE(?,shipping_name), shipping_address=COALESCE(?,shipping_address),
+    status=COALESCE(?,status), items=COALESCE(?,items), order_total=COALESCE(?,order_total),
+    refunded_amount=COALESCE(?,refunded_amount), notes=COALESCE(?,notes) WHERE id=?`)
+    .run([o.category||null,o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||null,o.items?JSON.stringify(o.items):null,o.order_total!=null?o.order_total:null,o.refunded_amount!=null?o.refunded_amount:null,o.notes||null,req.params.id]);
   res.json({ success: true });
 });
 
