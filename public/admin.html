@@ -426,7 +426,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   .bpill{display:inline-block;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:700;white-space:nowrap;}
   .bpill-Confirmed{background:#0f2a20;color:#34d399;}
   .bpill-Shipped{background:#211a35;color:#a78bfa;}
-  .bpill-Delayed{background:#332a0d;color:#fbbf24;}
+  .bpill-Unship{background:#332a0d;color:#fbbf24;}
   .bpill-Delivered{background:#12233d;color:#60a5fa;}
   .bpill-Cancelled{background:#3a1518;color:#f87171;}
   .bpill-Refunded{background:#331a29;color:#f472b6;}
@@ -446,7 +446,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="bot-stat"><div class="lbl">TOTAL</div><div class="val" id="bs-total">0</div></div>
     <div class="bot-stat s-green clickable" onclick="botFilterStatus('Confirmed')" id="bsc-Confirmed"><div class="lbl">CONFIRMED</div><div class="val" id="bs-confirmed">0</div></div>
     <div class="bot-stat s-purple clickable" onclick="botFilterStatus('Shipped')" id="bsc-Shipped"><div class="lbl">SHIPPED</div><div class="val" id="bs-shipped">0</div></div>
-    <div class="bot-stat s-amber clickable" onclick="botFilterStatus('Delayed')" id="bsc-Delayed"><div class="lbl">DELAYED</div><div class="val" id="bs-delayed">0</div></div>
+    <div class="bot-stat s-amber clickable" onclick="botFilterStatus('Unship')" id="bsc-Unship"><div class="lbl">UNSHIP</div><div class="val" id="bs-delayed">0</div></div>
     <div class="bot-stat s-blue clickable" onclick="botFilterStatus('Delivered')" id="bsc-Delivered"><div class="lbl">DELIVERED</div><div class="val" id="bs-delivered">0</div></div>
     <div class="bot-stat s-red clickable" onclick="botFilterStatus('Cancelled')" id="bsc-Cancelled"><div class="lbl">CANCELLED</div><div class="val" id="bs-cancelled">0</div></div>
     <div class="bot-stat s-pink clickable" onclick="botFilterStatus('Refunded')" id="bsc-Refunded"><div class="lbl">REFUNDED</div><div class="val" id="bs-refunded">0</div></div>
@@ -462,7 +462,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       </select>
       <select id="bot-filter-status" onchange="renderBotOrders()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
         <option value="">All statuses</option>
-        <option>Confirmed</option><option>Shipped</option><option>Delayed</option>
+        <option>Confirmed</option><option>Shipped</option><option>Unship</option>
         <option>Delivered</option><option>Cancelled</option><option>Refunded</option>
       </select>
       <input type="text" id="bot-search" oninput="renderBotOrders()" placeholder="Search order #, item, buyer…" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:200px;">
@@ -1737,7 +1737,7 @@ async function deletePayment(payId, memberId) {
 
 // ── BOT ORDER TRACKER ─────────────────────────────────────────────────────────
 let _botOrders = [], _botPage = 0, _botPageSize = 25, _botSortKey = 'order_date', _botSortDir = -1, _botStatusFilter = '';
-const BOT_STATUSES = ['Confirmed','Shipped','Delayed','Delivered','Cancelled','Refunded'];
+const BOT_STATUSES = ['Confirmed','Shipped','Unship','Delivered','Cancelled','Refunded'];
 
 async function loadBotOrders() {
   const orders = await api('GET', '/admin/bot-orders');
@@ -1762,7 +1762,7 @@ function buildBotStats() {
   document.getElementById('bs-total').textContent = o.length;
   document.getElementById('bs-confirmed').textContent = counts['Confirmed'];
   document.getElementById('bs-shipped').textContent = counts['Shipped'];
-  document.getElementById('bs-delayed').textContent = counts['Delayed'];
+  document.getElementById('bs-delayed').textContent = counts['Unship'];
   document.getElementById('bs-delivered').textContent = counts['Delivered'];
   document.getElementById('bs-cancelled').textContent = counts['Cancelled'];
   document.getElementById('bs-refunded').textContent = counts['Refunded'];
@@ -1892,7 +1892,7 @@ async function addBotOrder() {
 async function botEditRow(id) {
   const o = _botOrders.find(x=>x.id===id);
   if (!o) return;
-  const status = prompt('Status (Confirmed/Shipped/Delayed/Delivered/Cancelled/Refunded):', o.status||'Confirmed');
+  const status = prompt('Status (Confirmed/Shipped/Unship/Delivered/Cancelled/Refunded):', o.status||'Confirmed');
   if (status === null) return;
   const notes = prompt('Notes:', o.notes||'');
   if (notes === null) return;

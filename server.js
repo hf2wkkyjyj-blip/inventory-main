@@ -129,6 +129,7 @@ try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='ordered'")
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE status='delivered' OR status='out_for_delivery'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Cancelled' WHERE status='cancelled'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Unship' WHERE status='Delayed' OR status='delayed'"); } catch(e) {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS members (
@@ -828,14 +829,6 @@ app.post('/api/bot/orders', (req, res) => {
 
 app.get('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
   const orders = db.prepare('SELECT * FROM bot_orders ORDER BY order_date DESC, received_at DESC, created_at DESC LIMIT 500').all();
-  // Auto-mark delayed: Confirmed/Shipped with order_date > 14 days ago
-  const now = Date.now();
-  orders.forEach(o => {
-    if ((o.status==='Confirmed'||o.status==='Shipped') && o.order_date) {
-      const daysSince = (now - new Date(o.order_date).getTime()) / 86400000;
-      if (daysSince > 14) o.status = 'Delayed';
-    }
-  });
   res.json(orders);
 });
 
