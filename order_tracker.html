@@ -1,0 +1,4485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Retail Arbitrage Order Tracker</title>
+<style>
+  :root{
+    --bg:#0a0b0f;
+    --panel:#12141a;
+    --panel-2:#181b23;
+    --border:#242833;
+    --text:#e8e9ed;
+    --muted:#8b90a0;
+    --faint:#5a5f6e;
+
+    --teal:#2dd4bf;      --teal-dim:#0f2c29;
+    --green:#34d399;     --green-dim:#0f2a20;
+    --purple:#a78bfa;    --purple-dim:#211a35;
+    --amber:#fbbf24;     --amber-dim:#332a0d;
+    --blue:#60a5fa;      --blue-dim:#12233d;
+    --red:#f87171;       --red-dim:#3a1518;
+    --pink:#f472b6;      --pink-dim:#331a29;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+    font-size:14px; line-height:1.5;
+  }
+  .wrap{max-width:1440px;margin:0 auto;padding:28px 24px 60px;}
+
+  .headline{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-bottom:20px;}
+  .headline p{margin:0;max-width:760px;color:var(--muted);font-size:14.5px;}
+  .sync-pill{display:flex;align-items:center;gap:8px;white-space:nowrap;color:var(--green);font-size:13px;padding-top:2px;}
+  .sync-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green);}
+
+  hr.rule{border:none;border-top:1px solid #3a3320;margin:16px 0 24px;}
+
+  .stats{display:grid;grid-template-columns:repeat(10,1fr);gap:12px;margin-bottom:32px;}
+  @media (max-width:1300px){.stats{grid-template-columns:repeat(5,1fr);}}
+  @media (max-width:760px){.stats{grid-template-columns:repeat(2,1fr);}}
+  .stat{
+    border:1px solid var(--border); border-radius:10px; padding:14px 16px;
+    background:var(--panel);
+  }
+  .stat .lbl{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;letter-spacing:.04em;margin-bottom:10px;}
+  .stat .val{font-size:26px;font-weight:700;}
+  .stat.teal{border-color:#1c5a52;} .stat.teal .lbl{color:var(--teal);}
+  .stat.green{border-color:#1c5a3f;} .stat.green .lbl{color:var(--green);}
+  .stat.purple{border-color:#4c3f8c;} .stat.purple .lbl{color:var(--purple);}
+  .stat.amber{border-color:#8a6a10;} .stat.amber .lbl{color:var(--amber);}
+  .stat.blue{border-color:#265a94;} .stat.blue .lbl{color:var(--blue);}
+  .stat.red{border-color:#8a3236;} .stat.red .lbl{color:var(--red);}
+  .stat.pink{border-color:#8a3468;} .stat.pink .lbl{color:var(--pink);}
+  .stat.plain{border-color:var(--border);} .stat.plain .lbl{color:var(--muted);}
+  .stat .val.green-txt{color:var(--green);}
+  .stat.clickable{cursor:pointer;transition:transform .08s ease, background .12s ease;}
+  .stat.clickable:hover{background:#171a22;}
+  .stat.clickable:active{transform:scale(.98);}
+  .stat.active-filter{outline:2px solid currentColor;outline-offset:-1px;}
+  .stat .sub{font-size:10.5px;color:var(--faint);margin-top:4px;}
+
+  h2{font-size:16px;margin:0 0 14px;}
+
+  .tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+  .tab{
+    padding:7px 16px;border-radius:999px;border:1px solid var(--border);
+    background:var(--panel); color:var(--muted); font-size:13px; cursor:pointer;
+    display:flex; align-items:center; gap:6px; user-select:none;
+  }
+  .tab .n{opacity:.7;font-variant-numeric:tabular-nums;}
+  .tab:hover{border-color:#3a3f4d;color:var(--text);}
+  .tab.active{background:#153029;border-color:var(--green);color:var(--green);}
+
+  .items-section{margin-bottom:34px;}
+  .items-scroll{overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--panel);}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{
+    text-align:left;padding:10px 14px;color:var(--faint);font-weight:600;
+    font-size:11.5px;letter-spacing:.03em;border-bottom:1px solid var(--border);
+    white-space:nowrap; user-select:none;
+  }
+  thead th.sortable{cursor:pointer;}
+  thead th.sorted{color:var(--teal);}
+  tbody td{padding:10px 14px;border-bottom:1px solid #1c1f28;vertical-align:top;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:#161922;}
+  .empty-row td{text-align:center;color:var(--muted);padding:34px;}
+
+  .orders-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:12px;}
+  .orders-header .hint{color:var(--faint);font-size:12.5px;}
+  .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;}
+  .pill-count{
+    padding:6px 14px;border-radius:999px;border:1px solid var(--green);
+    color:var(--green);background:#0f2a20;font-size:13px;
+  }
+  select, input[type=text], input[type=number], input[type=date]{
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:8px 12px; border-radius:8px; font-size:13px; outline:none;
+    font-family:inherit;
+  }
+  select:focus, input:focus{border-color:var(--teal);}
+  input[type=text]{min-width:220px;}
+  .spacer{flex:1;}
+
+  .status-pill{
+    display:inline-block; padding:3px 9px; border-radius:6px; font-size:11.5px; font-weight:600;
+    white-space:nowrap;
+  }
+  .status-Confirmed{background:var(--green-dim);color:var(--green);}
+  .status-Shipped{background:var(--purple-dim);color:var(--purple);}
+  .status-Delayed{background:var(--amber-dim);color:var(--amber);}
+  .status-Delivered{background:var(--blue-dim);color:var(--blue);}
+  .status-Cancelled{background:var(--red-dim);color:var(--red);}
+  .status-Refunded{background:var(--pink-dim);color:var(--pink);}
+
+  .items-cell{max-width:320px;}
+  .notes-cell{max-width:260px;color:var(--muted);font-size:12.5px;}
+  .mono{font-variant-numeric:tabular-nums;}
+  .num-cell{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+
+  .fee-input{
+    width:64px; background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:5px 7px; border-radius:6px; font-size:12.5px; text-align:right; font-variant-numeric:tabular-nums;
+  }
+  .fee-input:focus{border-color:var(--amber);outline:none;}
+  .fee-input.has-value{border-color:var(--amber);color:var(--amber);}
+  .true-cost{font-weight:600;}
+  .true-cost.bumped{color:var(--amber);}
+  .fee-hint{font-size:12px;color:var(--faint);margin-right:3px;}
+
+  .sku-apply{display:flex;align-items:center;gap:6px;justify-content:flex-end;}
+  .sku-apply input{width:60px;}
+  .apply-btn{
+    background:var(--amber-dim); border:1px solid #6b5410; color:var(--amber);
+    padding:5px 10px; border-radius:6px; font-size:11.5px; cursor:pointer; white-space:nowrap;
+  }
+  .apply-btn:hover{border-color:var(--amber);}
+  .apply-feedback{display:block;text-align:right;font-size:10.5px;color:var(--green);margin-top:3px;min-height:13px;}
+
+  .actions-cell{white-space:nowrap;}
+  .icon-btn{
+    background:var(--panel-2); border:1px solid var(--border); color:var(--muted);
+    width:28px; height:28px; border-radius:6px; cursor:pointer; font-size:13px; margin-right:5px;
+  }
+  .icon-btn:hover{border-color:var(--teal);color:var(--text);}
+  .icon-btn.danger:hover{border-color:var(--red);color:var(--red);}
+
+  .edit-row td{background:#101319;padding:16px;}
+  .edit-form{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;}
+  .edit-form label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--faint);}
+  .edit-form label.wide{grid-column:span 4;}
+  .edit-form input, .edit-form select{width:100%;}
+  .edit-actions{display:flex;gap:8px;margin-top:14px;}
+  .edit-actions button{padding:8px 18px;border-radius:8px;font-size:13px;cursor:pointer;border:1px solid var(--border);}
+  .save-edit-btn{background:var(--green-dim);border-color:#1c5a3f;color:var(--green);}
+  .save-edit-btn:hover{border-color:var(--green);}
+  .cancel-edit-btn{background:var(--panel-2);color:var(--muted);}
+  .cancel-edit-btn:hover{color:var(--text);}
+  .deleted-banner{
+    display:flex;justify-content:space-between;align-items:center;
+    background:var(--red-dim);border:1px solid #6b2226;color:var(--red);
+    padding:8px 14px;border-radius:8px;font-size:12.5px;margin-bottom:12px;
+  }
+  .deleted-banner button{background:none;border:1px solid var(--red);color:var(--red);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:11.5px;}
+
+  .pager{display:flex;justify-content:flex-end;gap:10px;margin-top:14px;align-items:center;}
+  .pager button{
+    background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+    padding:7px 16px; border-radius:8px; font-size:13px; cursor:pointer;
+  }
+  .pager button:disabled{opacity:.4;cursor:default;}
+  .pager button:not(:disabled):hover{border-color:var(--teal);}
+  .pager .info{color:var(--muted);font-size:12.5px;}
+
+  .footnote{margin-top:34px;padding-top:18px;border-top:1px solid var(--border);color:var(--faint);font-size:12px;line-height:1.7;}
+  .footnote b{color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="headline">
+    <p id="descText"></p>
+    <div class="sync-pill"><span class="sync-dot"></span><span id="syncLabel"></span></div>
+  </div>
+  <hr class="rule">
+
+  <div class="stats" id="statsRow"></div>
+
+  <div class="items-section">
+    <h2>Locations <span class="hint" style="font-weight:400;">— where orders are shipping, jig variants merged into one real address</span></h2>
+    <div class="items-scroll">
+      <table id="locationsTable">
+        <thead>
+          <tr>
+            <th class="sortable" data-key="label">ADDRESS</th>
+            <th class="sortable" data-key="orders" style="text-align:right">ORDERS</th>
+            <th class="sortable" data-key="delivered" style="text-align:right">DELIVERED</th>
+            <th class="sortable" data-key="delayed" style="text-align:right">DELAYED</th>
+            <th class="sortable" data-key="cancelled" style="text-align:right">CANCELLED</th>
+            <th class="sortable" data-key="refunded" style="text-align:right">REFUNDED</th>
+            <th class="sortable" data-key="lastOrder" style="text-align:right">LAST ORDER</th>
+          </tr>
+        </thead>
+        <tbody id="locationsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="items-section">
+    <h2>Items</h2>
+    <div class="tabs" id="itemTabs"></div>
+    <div class="items-scroll">
+      <table id="itemsTable">
+        <thead>
+          <tr>
+            <th class="sortable" data-key="category">CATEGORY</th>
+            <th class="sortable" data-key="name">ITEM</th>
+            <th class="sortable" data-key="qty" style="text-align:right">QTY</th>
+            <th class="sortable" data-key="orders" style="text-align:right">ORDERS</th>
+            <th class="sortable" data-key="price_ea" style="text-align:right">PRICE/EA</th>
+            <th class="sortable" data-key="total" style="text-align:right">TOTAL</th>
+            <th style="text-align:right">PAS / EA — MASS APPLY</th>
+          </tr>
+        </thead>
+        <tbody id="itemsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="orders-section">
+    <div id="ordersAnchor" style="position:relative;top:-12px;"></div>
+    <div class="orders-header">
+      <h2 style="margin:0;">All orders</h2>
+      <span class="hint">click a column to sort · click a status card above to filter · ✎ edit · 🗑 delete</span>
+    </div>
+    <div id="deletedBanner"></div>
+    <div class="controls">
+      <span class="pill-count" id="allPill">All 0</span>
+      <select id="brandFilter"></select>
+      <select id="retailerFilter"></select>
+      <select id="locationFilter"></select>
+      <select id="statusFilter">
+        <option value="">All statuses</option>
+        <option>Confirmed</option>
+        <option>Shipped</option>
+        <option>Delayed</option>
+        <option>Delivered</option>
+        <option>Cancelled</option>
+        <option>Refunded</option>
+      </select>
+      <div class="spacer"></div>
+      <input type="text" id="search" placeholder="Search order #, SKU, item name, buyer…">
+    </div>
+    <div class="items-scroll">
+      <table id="ordersTable">
+        <thead>
+          <tr>
+            <th class="sortable" data-key="category">CATEGORY</th>
+            <th class="sortable" data-key="retailer">RETAILER</th>
+            <th class="sortable" data-key="order_number">ORDER #</th>
+            <th class="sortable" data-key="order_date">ORDER DATE</th>
+            <th class="sortable" data-key="status">STATUS</th>
+            <th data-key="items_sku_or_name">ITEMS</th>
+            <th class="sortable" data-key="charged" style="text-align:right">TOTAL</th>
+            <th class="sortable" data-key="feePct" style="text-align:right">PAS</th>
+            <th class="sortable" data-key="trueCost" style="text-align:right">TRUE COST</th>
+            <th class="sortable" data-key="shipping_name">BUYER</th>
+            <th>NOTES</th>
+            <th>ACTIONS</th>
+          </tr>
+        </thead>
+        <tbody id="ordersBody"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <span class="info" id="pageInfo"></span>
+      <button id="prevBtn">&larr; Prev</button>
+      <button id="nextBtn">Next &rarr;</button>
+    </div>
+  </div>
+
+  <div class="footnote">
+    <div><b>Snapshot from your order-confirmation, shipping, and delivery emails</b> — pulled and reconciled from Gmail as of <span id="genDate"></span>.</div>
+    <div style="margin-top:6px;">Brand tabs are generated from each order's category — a brand ordered from more than once gets its own tab instead of falling into "Other".</div>
+    <div style="margin-top:6px;">"Delayed", "Stick %" and "Spent" are computed here, not pulled directly from an email: delayed = no shipping/delivery update in 14+ days since the order date; stick % = share of orders that weren't cancelled; spent = net of cancellations and refunds.</div>
+    <div style="margin-top:6px;">This is a point-in-time snapshot, not a live feed — ask to have it refreshed with the latest order emails whenever you want an update.</div>
+    <div style="margin-top:6px;"><b>PAS</b> is the flat $ cut you pay the person whose card/account/address placed the order — retailers never mention it, so no email sync could ever fill it in. Set it per order, or use <b>PAS/EA — mass apply</b> on the Items table to set a per-unit rate once and push it to every single-item order for that SKU at once (qty × rate). Mixed-item orders are left alone — set those by hand. <b>True cost</b> (checkout total + PAS) updates immediately either way, and everything you enter is saved so it's still there next time you open this.</div>
+    <div style="margin-top:6px;"><b>Order TOTAL</b> already includes tax and shipping — the exact amount the retailer charged. The <b>Items</b> table's PRICE/EA and TOTAL go a step further: each item's price has that order's tax rate (tax ÷ subtotal) applied, plus an even split of that order's shipping/delivery fee across every unit in the order — a $9 shipping charge on a 2-item order adds $4.50 to each item, or $1.80 each on a 5-item order.</div>
+    <div style="margin-top:6px;"><b>Edit / delete:</b> use ✎ to correct any field on an order (status, total, dates, items, notes...) or 🗑 to remove a row entirely — duplicates, test orders, anything that shouldn't be tracked. Both are saved, and every stat and total on this page recalculates from your edited data, not the original pull.</div>
+    <div style="margin-top:6px;"><b>Locations</b> groups every shipping address down to its real house number + street, ignoring apartment/unit/floor/door text and city/zip drift — so all the jig variants of one address collapse into a single row instead of showing up as 30+ separate "different" addresses. Use the address dropdown in the orders filters to jump straight to everything sent to one location.</div>
+  </div>
+
+</div>
+
+<script>
+const DATA = {
+  "generated": "2026-09-07",
+  "stats": {
+    "orders": 134,
+    "confirmed": 0,
+    "shipped": 1,
+    "delayed": 84,
+    "delivered": 23,
+    "cancelled": 15,
+    "refunded": 11,
+    "stick_pct": 88.8,
+    "spent": 19146.64
+  },
+  "tabs": [
+    "Pokemon",
+    "Mattel",
+    "One Piece",
+    "Other"
+  ],
+  "orders": [
+    {
+      "id": 0,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "912003499321226",
+      "account_email": "pfperglovi@gmail.com",
+      "order_date": "2026-06-09",
+      "delivered_date": "2026-06-17",
+      "items_sku_or_name": "2x Pokemon TCG: Mega Evolution Chaos Rising Booster Bundle (SKU unknown; $29.99/ea)",
+      "item_prices": "$29.99/ea",
+      "order_total_text": "$65.09 (subtotal $59.98 + tax $5.11 + free delivery)",
+      "charged": 65.09,
+      "refunded": 0.0,
+      "net": 65.09,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "8805 E Research Center Rd, New Hope, MN 55428",
+      "notes": "Order total $65.09; matched via order confirmation (19eab318005fb7b4) + ship notice (19ebd6556aaaf04e) + arrived notice (19ed697ddcc7c9b8)",
+      "status": "Delivered",
+      "days_since_order": 90,
+      "tax_rate": 0.085195,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 1,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040889108",
+      "account_email": "bauh2343@gmail.com",
+      "order_date": "2026-07-22",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: Scarlet & Violet-151 Mini Tin (Arcanine & Omanyte) (SKU 10-10437-102)",
+      "item_prices": "$9.99/ea",
+      "order_total_text": "$17.31 (subtotal $9.99 + tax $1.34 + shipping $5.98) - ORDER CANCELED before charge",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Jenny Xiong",
+      "shipping_address": "8410 Yates Ave N Apt 3f, Minneapolis, MN 55443",
+      "notes": "ORDER CANCELED - item could not be processed and was canceled (thread 19f8c43a8ac3a2b0); customer not charged; no delivery expected",
+      "status": "Cancelled",
+      "days_since_order": 47,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 2,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040756156",
+      "account_email": "beamfps@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Sarah Johnson",
+      "shipping_address": "08410c Yates Avenue N 3-in, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 3,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040665895",
+      "account_email": "zhefzein5@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Christine Le",
+      "shipping_address": "08805 E Research Center Dr Apt-3-out, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 4,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040665758",
+      "account_email": "hierophanie2@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Hnb Market",
+      "shipping_address": "7964 Brooklyn Boulevard-nh Apt-109-out, Minneapolis, MN 55445",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 5,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040539112",
+      "account_email": "daniloalcapone1@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Brandon Xiong",
+      "shipping_address": "8805c E Research Center Drive Floor 2, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 6,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040414419",
+      "account_email": "baronyaron175@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Michael Torres",
+      "shipping_address": "8410 Yates Ave N Rm 4, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 7,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040276427",
+      "account_email": "benjaminlepain2@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Rachel Her",
+      "shipping_address": "8410 Yates Avenue N-no Apt-1in, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 8,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040261750",
+      "account_email": "satriawahyu817@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Tyler Nguyen",
+      "shipping_address": "013564 142nd Avenue North Apt 7d, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder); note - a different order (P0037610998) for same recipient was delivered",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 9,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040259214",
+      "account_email": "bogumilbiegan1@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Alex Kim",
+      "shipping_address": "013564 142nd Ave North Unit-4-out, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder); note - a different order (P0037371055) for same recipient was delivered",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 10,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040233864",
+      "account_email": "asumatullo@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Tiffany Tran",
+      "shipping_address": "13564 142nd North Ave-qu Apt-1-in, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 11,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040234977",
+      "account_email": "nandes11942@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Hnb Market Sang",
+      "shipping_address": "7964 Brooklyn Blvd Room 109, Minneapolis, MN 55445",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 12,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040204793",
+      "account_email": "eleisohia@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Davis Lai",
+      "shipping_address": "8805 E Research Center Dr Door 2, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 13,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040173949",
+      "account_email": "bauh2343@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Jenny Xiong",
+      "shipping_address": "8410 Yates Ave N Apt 3f, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 14,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040165831",
+      "account_email": "bedejeana@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Tommy Lee",
+      "shipping_address": "08410 Yates Avenue N Door-1-in, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 15,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040136073",
+      "account_email": "naiaortegamartin1@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Kien Lai",
+      "shipping_address": "08805 E Research Center Dr Rm 5, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 16,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040055828",
+      "account_email": "kleela941@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Alex Tora",
+      "shipping_address": "8805 E Research Center Dr-ad Unit-1-in, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 17,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040051954",
+      "account_email": "ilyescloze@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Tyler Vue",
+      "shipping_address": "8805a E Research Center Rd Unit A, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 18,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040039940",
+      "account_email": "benjasal22iphone@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Jason Yang",
+      "shipping_address": "8410 Yates Ave North Fl 6, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 19,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0040015788",
+      "account_email": "vetalvov2@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Snguye Sang",
+      "shipping_address": "13564 142nd Ave N Door 1, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder); note - a different order (P0037268569) for same recipient was delivered",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 20,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0039945658",
+      "account_email": "baigya7@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$87.71 (subtotal $80.82 + tax $6.89 + free shipping)",
+      "charged": 87.71,
+      "refunded": 0.0,
+      "net": 87.71,
+      "shipping_name": "Linda Vang",
+      "shipping_address": "8410 Yates Ave N Floor 3, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 21,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0039912445",
+      "account_email": "maciekpietrzak1231@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115) | 1x Pokemon TCG: 30th Celebration Mini Tins (10-Pack) (SKU 10-10465-176)",
+      "item_prices": "$26.94/ea | $99.90/ea",
+      "order_total_text": "$196.63 (subtotal $180.72 + tax $15.41 + retail delivery fee $0.50 + free shipping)",
+      "charged": 196.63,
+      "refunded": 0.0,
+      "net": 196.63,
+      "shipping_name": "Sang Hnb Market",
+      "shipping_address": "7964 Brooklyn Blvd 109-in, Minneapolis, MN 55445",
+      "notes": "No shipping/delivery email found for this order. Note: a different, earlier order (P0036021709) for same recipient was delivered",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.08527,
+      "ship_per_unit": 0.125,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 22,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0039905349",
+      "account_email": "bartekcelej1@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115) | 1x Pokemon TCG: 30th Celebration Mini Tins (10-Pack) (SKU 10-10465-176)",
+      "item_prices": "$26.94/ea | $99.90/ea",
+      "order_total_text": "$196.63 (subtotal $180.72 + tax $15.41 + retail delivery fee $0.50 + free shipping)",
+      "charged": 196.63,
+      "refunded": 0.0,
+      "net": 196.63,
+      "shipping_name": "Isaac Lai",
+      "shipping_address": "8805 E Research Center Dr Room 3, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.08527,
+      "ship_per_unit": 0.125,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 23,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0039884643",
+      "account_email": "bereniceeasdon@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Mini Tins (10-Pack) (SKU 10-10465-176) | 3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$99.90/ea | $26.94/ea",
+      "order_total_text": "$196.63 (subtotal $180.72 + tax $15.41 + retail delivery fee $0.50 + free shipping)",
+      "charged": 196.63,
+      "refunded": 0.0,
+      "net": 196.63,
+      "shipping_name": "Monica Chan",
+      "shipping_address": "8410 Yates Avenue North-kl Ste-2-out, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.08527,
+      "ship_per_unit": 0.125,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 24,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0039858421",
+      "account_email": "gerimolc2@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Mini Tins (10-Pack) (SKU 10-10465-176) | 3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$99.90/ea | $26.94/ea",
+      "order_total_text": "$196.63 (subtotal $180.72 + tax $15.41 + retail delivery fee $0.50 + free shipping)",
+      "charged": 196.63,
+      "refunded": 0.0,
+      "net": 196.63,
+      "shipping_name": "Linda Vang",
+      "shipping_address": "013564d 142nd Avenue N Floor 5, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.08527,
+      "ship_per_unit": 0.125,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 25,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0039857379",
+      "account_email": "killingz3braz@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Mini Tins (10-Pack) (SKU 10-10465-176) | 3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$99.90/ea | $26.94/ea",
+      "order_total_text": "$196.63 (subtotal $180.72 + tax $15.41 + retail delivery fee $0.50 + free shipping)",
+      "charged": 196.63,
+      "refunded": 0.0,
+      "net": 196.63,
+      "shipping_name": "Cindy Lee",
+      "shipping_address": "08805b E Research Center Dr Unit-2-in, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.08527,
+      "ship_per_unit": 0.125,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 26,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0039814296",
+      "account_email": "cristhian21mp@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Mini Tins (10-Pack) (SKU 10-10465-176) | 3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$99.90/ea | $26.94/ea",
+      "order_total_text": "$196.63 (subtotal $180.72 + tax $15.41 + retail delivery fee $0.50 + free shipping)",
+      "charged": 196.63,
+      "refunded": 0.0,
+      "net": 196.63,
+      "shipping_name": "Hung Lai",
+      "shipping_address": "8805 E Research Center Dr Door 4, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder)",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.08527,
+      "ship_per_unit": 0.125,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 27,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0039818929",
+      "account_email": "pfperglovi@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Mini Tins (10-Pack) (SKU 10-10465-176) | 3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$99.90/ea | $26.94/ea",
+      "order_total_text": "$196.63 (subtotal $180.72 + tax $15.41 + retail delivery fee $0.50 + free shipping)",
+      "charged": 196.63,
+      "refunded": 0.0,
+      "net": 196.63,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "13564 142nd Ave N, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order (preorder); same recipient account also has a Target order",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.08527,
+      "ship_per_unit": 0.125,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 28,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0039810971",
+      "account_email": "rubikeraa@gmail.com",
+      "order_date": "2026-07-20",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Mini Tins (10-Pack) (SKU 10-10465-176) | 3x Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "item_prices": "$99.90/ea | $26.94/ea",
+      "order_total_text": "$196.63 (subtotal $180.72 + tax $15.41 + retail delivery fee $0.50 + free shipping)",
+      "charged": 196.63,
+      "refunded": 0.0,
+      "net": 196.63,
+      "shipping_name": "Kevin Nguyen",
+      "shipping_address": "13564 142nd Ave N Floor 2, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order. Note: a different, earlier order (P0037598826) for same recipient was delivered",
+      "status": "Delayed",
+      "days_since_order": 49,
+      "tax_rate": 0.08527,
+      "ship_per_unit": 0.125,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 29,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0039007837",
+      "account_email": "franklynmulligan696@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122)",
+      "item_prices": "$59.99/ea | $9.99/ea | $14.99/ea | $14.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Kevin Thao",
+      "shipping_address": "013564y 142nd Ave North Apt 4f, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order. Note: a different, earlier order (P0037434308) for same recipient was delivered",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 30,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038964312",
+      "account_email": "nandes11942@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121)",
+      "item_prices": "$59.99/ea | $14.99/ea | $9.99/ea | $14.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Hnb Market Sang",
+      "shipping_address": "7964 Brooklyn Blvd Room 109, Minneapolis, MN 55445",
+      "notes": "No shipping/delivery email found in inbox for this order",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 31,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038838257",
+      "account_email": "hierophanie2@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122)",
+      "item_prices": "$9.99/ea | $59.99/ea | $14.99/ea | $14.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Hnb Market",
+      "shipping_address": "7964 Brooklyn Boulevard-nh Apt-109-out, Minneapolis, MN 55445",
+      "notes": "No shipping/delivery email found in inbox for this order",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 32,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038646655",
+      "account_email": "sorokaserzh1@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111)",
+      "item_prices": "$14.99/ea | $9.99/ea | $14.99/ea | $59.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Minh Nguyen",
+      "shipping_address": "13564 142nd Ave N Rm 3, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order. Note: a different, earlier order (P0037735133) for same recipient was delivered",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 33,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038408819",
+      "account_email": "satriawahyu817@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111)",
+      "item_prices": "$14.99/ea | $9.99/ea | $14.99/ea | $59.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Tyler Nguyen",
+      "shipping_address": "013564 142nd Avenue North Apt 7d, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order. Note: a different, earlier order (P0037610998) for same recipient was delivered",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 34,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038379467",
+      "account_email": "bartekcelej1@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101)",
+      "item_prices": "$14.99/ea | $14.99/ea | $59.99/ea | $9.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Isaac Lai",
+      "shipping_address": "8805 E Research Center Dr Room 3, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 35,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038369919",
+      "account_email": "asumatullo@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121)",
+      "item_prices": "$14.99/ea | $59.99/ea | $9.99/ea | $14.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Tiffany Tran",
+      "shipping_address": "13564 142nd North Ave-qu Apt-1-in, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 36,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038323517",
+      "account_email": "rubikeraa@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121)",
+      "item_prices": "$9.99/ea | $59.99/ea | $14.99/ea | $14.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Kevin Nguyen",
+      "shipping_address": "13564 142nd Ave N Floor 2, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order. Note: a different, earlier order (P0037598826) for same recipient was delivered",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 37,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038322055",
+      "account_email": "eleisohia@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111)",
+      "item_prices": "$14.99/ea | $14.99/ea | $9.99/ea | $59.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Davis Lai",
+      "shipping_address": "8805 E Research Center Dr Door 2, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 38,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038323739",
+      "account_email": "bogumilbiegan1@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111)",
+      "item_prices": "$14.99/ea | $9.99/ea | $14.99/ea | $59.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Alex Kim",
+      "shipping_address": "013564 142nd Ave North Unit-4-out, Dayton, MN 55327",
+      "notes": "No shipping/delivery email found in inbox for this order. Note: a different, earlier order (P0037371055) for same recipient was delivered",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 39,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038320540",
+      "account_email": "naiaortegamartin1@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101)",
+      "item_prices": "$14.99/ea | $14.99/ea | $59.99/ea | $9.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Kien Lai",
+      "shipping_address": "08805 E Research Center Dr Rm 5, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 40,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038311805",
+      "account_email": "bauh2343@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101)",
+      "item_prices": "$59.99/ea | $14.99/ea | $14.99/ea | $9.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Jenny Xiong",
+      "shipping_address": "8410 Yates Ave N Apt 3f, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 41,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038309993",
+      "account_email": "kleela941@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122)",
+      "item_prices": "$59.99/ea | $14.99/ea | $9.99/ea | $14.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Alex Tora",
+      "shipping_address": "8805 E Research Center Dr-ad Unit-1-in, Minneapolis, MN 55428",
+      "notes": "No shipping/delivery email found in inbox for this order",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 42,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038308968",
+      "account_email": "baronyaron175@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121)",
+      "item_prices": "$9.99/ea | $14.99/ea | $59.99/ea | $14.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Michael Torres",
+      "shipping_address": "8410 Yates Ave N Rm 4, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 43,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038246261",
+      "account_email": "benjaminlepain2@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122)",
+      "item_prices": "$14.99/ea | $9.99/ea | $59.99/ea | $14.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Rachel Her",
+      "shipping_address": "8410 Yates Avenue N-no Apt-1in, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 44,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0038241809",
+      "account_email": "benjasal22iphone@gmail.com",
+      "order_date": "2026-07-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121) | 1x Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122) | 1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101) | 2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111)",
+      "item_prices": "$14.99/ea | $14.99/ea | $9.99/ea | $59.99/ea",
+      "order_total_text": "$174.06 (subtotal $159.95 + tax $13.61 + retail delivery fee $0.50 + free shipping)",
+      "charged": 174.06,
+      "refunded": 0.0,
+      "net": 174.06,
+      "shipping_name": "Jason Yang",
+      "shipping_address": "8410 Yates Ave North Fl 6, Minneapolis, MN 55443",
+      "notes": "No shipping/delivery email found in inbox for this order",
+      "status": "Delayed",
+      "days_since_order": 54,
+      "tax_rate": 0.085089,
+      "ship_per_unit": 0.1,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 45,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0037735133",
+      "account_email": "sorokaserzh1@gmail.com",
+      "order_date": "2026-06-30",
+      "delivered_date": "2026-07-17",
+      "items_sku_or_name": "2x Pokemon TCG: Mega Evolution-Pitch Black Booster Bundle (6 Packs) (SKU 10-10422-109) | 1x Pokemon TCG: Mega Evolution-Pitch Black Booster Display Box (36 Packs) (SKU 10-10425-120)",
+      "item_prices": "$26.94/ea | $161.64/ea",
+      "order_total_text": "$234.37 (subtotal $215.52 + tax $18.35 + retail delivery fee $0.50 + free shipping)",
+      "charged": 234.37,
+      "refunded": 0.0,
+      "net": 234.37,
+      "shipping_name": "Minh Nguyen",
+      "shipping_address": "13564 142nd Ave N Rm 3, Dayton, MN 55327",
+      "notes": "Ship notice 19f6dc094d80d5d9, delivered notice 19f715678a74d471; delivered to 13564 142nd ave n Dayton MN 55327",
+      "status": "Delivered",
+      "days_since_order": 69,
+      "tax_rate": 0.085143,
+      "ship_per_unit": 0.166667,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 46,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0037610998",
+      "account_email": "satriawahyu817@gmail.com",
+      "order_date": "2026-06-30",
+      "delivered_date": "2026-07-17",
+      "items_sku_or_name": "2x Pokemon TCG: Mega Evolution-Pitch Black Booster Bundle (6 Packs) (SKU 10-10422-109) | 1x Pokemon TCG: Mega Evolution-Pitch Black Booster Display Box (36 Packs) (SKU 10-10425-120)",
+      "item_prices": "$26.94/ea | $161.64/ea",
+      "order_total_text": "$234.37 (subtotal $215.52 + tax $18.35 + retail delivery fee $0.50 + free shipping)",
+      "charged": 234.37,
+      "refunded": 0.0,
+      "net": 234.37,
+      "shipping_name": "Tyler Nguyen",
+      "shipping_address": "013564 142nd avenue north apt 7d, Dayton, MN 55327",
+      "notes": "Ship notice 19f6da8c531eef7b, delivered notice 19f71566db1dbaf7; delivered to 013564 142nd avenue north Dayton MN 55327",
+      "status": "Delivered",
+      "days_since_order": 69,
+      "tax_rate": 0.085143,
+      "ship_per_unit": 0.166667,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 47,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0037598826",
+      "account_email": "rubikeraa@gmail.com",
+      "order_date": "2026-06-30",
+      "delivered_date": "2026-07-18",
+      "items_sku_or_name": "2x Pokemon TCG: Mega Evolution-Pitch Black Booster Bundle (6 Packs) (SKU 10-10422-109) | 1x Pokemon TCG: Mega Evolution-Pitch Black Booster Display Box (36 Packs) (SKU 10-10425-120)",
+      "item_prices": "$26.94/ea | $161.64/ea",
+      "order_total_text": "$234.37 (subtotal $215.52 + tax $18.35 + retail delivery fee $0.50 + free shipping)",
+      "charged": 234.37,
+      "refunded": 0.0,
+      "net": 234.37,
+      "shipping_name": "Kevin Nguyen",
+      "shipping_address": "13564 142nd ave n floor 2, Dayton, MN 55327",
+      "notes": "Card reauth failed Jul 10 (thread 19f4acc3ee40d9d7), payment resolved before deadline; ship notice 19f6fb4aab4c35b8, delivered notice 19f764f9077542bc; delivered to 13564 142nd ave n Dayton MN 55327",
+      "status": "Delivered",
+      "days_since_order": 69,
+      "tax_rate": 0.085143,
+      "ship_per_unit": 0.166667,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 48,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0037434308",
+      "account_email": "franklynmulligan696@gmail.com",
+      "order_date": "2026-06-30",
+      "delivered_date": "2026-07-17",
+      "items_sku_or_name": "2x Pokemon TCG: Mega Evolution-Pitch Black Booster Bundle (6 Packs) (SKU 10-10422-109) | 1x Pokemon TCG: Mega Evolution-Pitch Black Booster Display Box (36 Packs) (SKU 10-10425-120)",
+      "item_prices": "$26.94/ea | $161.64/ea",
+      "order_total_text": "$234.37 (subtotal $215.52 + tax $18.35 + retail delivery fee $0.50 + free shipping)",
+      "charged": 234.37,
+      "refunded": 0.0,
+      "net": 234.37,
+      "shipping_name": "Kevin Thao",
+      "shipping_address": "013564y 142nd Ave North apt 4f, Dayton, MN 55327",
+      "notes": "Ship notice 19f6dc082de098b7, delivered notice 19f7156605a788fb; delivered to 013564y 142nd Ave North Dayton MN 55327",
+      "status": "Delivered",
+      "days_since_order": 69,
+      "tax_rate": 0.085143,
+      "ship_per_unit": 0.166667,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 49,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0037371055",
+      "account_email": "bogumilbiegan1@gmail.com",
+      "order_date": "2026-06-30",
+      "delivered_date": "2026-07-17",
+      "items_sku_or_name": "2x Pokemon TCG: Mega Evolution-Pitch Black Booster Bundle (6 Packs) (SKU 10-10422-109) | 1x Pokemon TCG: Mega Evolution-Pitch Black Booster Display Box (36 Packs) (SKU 10-10425-120)",
+      "item_prices": "$26.94/ea | $161.64/ea",
+      "order_total_text": "$234.37 (subtotal $215.52 + tax $18.35 + retail delivery fee $0.50 + free shipping)",
+      "charged": 234.37,
+      "refunded": 0.0,
+      "net": 234.37,
+      "shipping_name": "Alex Kim",
+      "shipping_address": "013564 142nd ave north unit-4-out, Dayton, MN 55327",
+      "notes": "Ship notice 19f6d1316d328d97, delivered notice 19f715672b46be89; delivered to 013564 142nd ave north Dayton MN 55327",
+      "status": "Delivered",
+      "days_since_order": 69,
+      "tax_rate": 0.085143,
+      "ship_per_unit": 0.166667,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 50,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0037268569",
+      "account_email": "vetalvov2@gmail.com",
+      "order_date": "2026-06-25",
+      "delivered_date": "2026-06-30",
+      "items_sku_or_name": "2x Pokemon TCG: Scarlet & Violet-Prismatic Evolutions Booster Bundle (6 Packs) (SKU 10-10025-101)",
+      "item_prices": "$26.94/ea",
+      "order_total_text": "$58.46 (subtotal $53.88 + tax $4.58 + free shipping)",
+      "charged": 58.46,
+      "refunded": 0.0,
+      "net": 58.46,
+      "shipping_name": "Snguye Sang",
+      "shipping_address": "13564 142nd ave n door 1, Dayton, MN 55327",
+      "notes": "Ship notice 19f0a7a59ae488ee, delivered notice 19f19d3cede12816; delivered to 13564 142nd ave n Dayton MN 55327",
+      "status": "Delivered",
+      "days_since_order": 74,
+      "tax_rate": 0.085004,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 51,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0036037086",
+      "account_email": "vladezub@gmail.com",
+      "order_date": "2026-04-29",
+      "delivered_date": "2026-05-02",
+      "items_sku_or_name": "1x Pokemon TCG: Mega Evolution-Ascended Heroes Tech Sticker Collection (Charmander) (SKU 10-10314-121)",
+      "item_prices": "$15.99/ea",
+      "order_total_text": "$23.83 (subtotal $15.99 + tax $1.86 + shipping $5.98)",
+      "charged": 23.83,
+      "refunded": 0.0,
+      "net": 23.83,
+      "shipping_name": "Helen N",
+      "shipping_address": "13564 142nd ave n office 2, Dayton, MN 55327",
+      "notes": "Ship notice 19de56cc96724d6c, delivered notice 19de966717a136c4; delivered to 13564 142nd ave n Dayton MN 55327",
+      "status": "Delivered",
+      "days_since_order": 131,
+      "tax_rate": 0.116323,
+      "ship_per_unit": 5.98,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 52,
+      "category": "Pokemon",
+      "retailer": "Pokemon Center",
+      "order_number": "P0036021709",
+      "account_email": "maciekpietrzak1231@gmail.com",
+      "order_date": "2026-04-29",
+      "delivered_date": "2026-05-08",
+      "items_sku_or_name": "1x Pokemon TCG: Mega Evolution-Ascended Heroes Tech Sticker Collection (Charmander) (SKU 10-10314-121)",
+      "item_prices": "$15.99/ea",
+      "order_total_text": "$23.83 (subtotal $15.99 + tax $1.86 + shipping $5.98)",
+      "charged": 23.83,
+      "refunded": 0.0,
+      "net": 23.83,
+      "shipping_name": "Sang HnB Market",
+      "shipping_address": "7964 Brooklyn Blvd unit109, Minneapolis, MN 55445",
+      "notes": "Ship notice 19df4cac7d401c5e, delivered notice 19e081a2369646db; delivered to 7964 Brooklyn Blvd Minneapolis MN 55445",
+      "status": "Delivered",
+      "days_since_order": 131,
+      "tax_rate": 0.116323,
+      "ship_per_unit": 5.98,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 53,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "912003454777043",
+      "account_email": "ceudupngham66@gmail.com",
+      "order_date": "2026-08-11",
+      "delivered_date": "2026-08-24",
+      "items_sku_or_name": "2x Pokemon Trading Card Game: First Partner Illustration Collection Series 2 ($17.99/ea)",
+      "item_prices": "$17.99/ea",
+      "order_total_text": "$39.05 (subtotal $35.98 + tax $3.07 + free delivery)",
+      "charged": 39.05,
+      "refunded": 0.0,
+      "net": 39.05,
+      "shipping_name": "HnB Market",
+      "shipping_address": "7964 Brooklyn Blvd, 109, Brooklyn Park, MN 55445",
+      "notes": "Delivered \u2014 confirmed 19fefb7da9a54795, ship notice 19e26985..., arrived notice 1a0343eac67b4d15 (delivered Aug 24 2026)",
+      "status": "Delivered",
+      "days_since_order": 27,
+      "tax_rate": 0.085325,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 54,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "902003677072140",
+      "account_email": "ceudupngham66@gmail.com",
+      "order_date": "2026-08-14",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon 30th Celebration Tech Sticker Collection Trading Cards (Styles May Vary) ($19.99/ea)",
+      "item_prices": "$19.99/ea",
+      "order_total_text": "$43.39 (subtotal $39.98 + tax $3.41 + free delivery)",
+      "charged": 43.39,
+      "refunded": 0.0,
+      "net": 43.39,
+      "shipping_name": "HnB Market",
+      "shipping_address": "7964 Brooklyn Blvd, 109, Brooklyn Park, MN 55445",
+      "notes": "Preorder; estimated arrival Sep 17-22 2026; no delivery confirmation email found (thread 19fff8a2780f462a)",
+      "status": "Delayed",
+      "days_since_order": 24,
+      "tax_rate": 0.085293,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 55,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "902003676341900",
+      "account_email": "pfperglovi@gmail.com",
+      "order_date": "2026-08-14",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon 30th Celebration Tech Sticker Collection Trading Cards (Styles May Vary) ($19.99/ea)",
+      "item_prices": "$19.99/ea",
+      "order_total_text": "$43.39 (subtotal $39.98 + tax $3.41 + free delivery)",
+      "charged": 43.39,
+      "refunded": 0.0,
+      "net": 43.39,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "6543 109th place North, champlin, MN 55316",
+      "notes": "Preorder; estimated arrival Sep 17-22 2026; no delivery confirmation email found (thread 19fff89d791f9e1b)",
+      "status": "Delayed",
+      "days_since_order": 24,
+      "tax_rate": 0.085293,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 56,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "902003676318858",
+      "account_email": "ceudupngham66@gmail.com",
+      "order_date": "2026-08-14",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon 30th Anniversary Poster Collection ($19.99/ea)",
+      "item_prices": "$19.99/ea",
+      "order_total_text": "$43.39 (subtotal $39.98 + tax $3.41 + free delivery)",
+      "charged": 43.39,
+      "refunded": 0.0,
+      "net": 43.39,
+      "shipping_name": "HnB Market",
+      "shipping_address": "7964 Brooklyn Blvd, 109, Brooklyn Park, MN 55445",
+      "notes": "Preorder; estimated arrival Sep 17-22 2026; no delivery confirmation email found (thread 19fff7cb66fb2652)",
+      "status": "Delayed",
+      "days_since_order": 24,
+      "tax_rate": 0.085293,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 57,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "902003676888420",
+      "account_email": "leoxangt@gmail.com",
+      "order_date": "2026-08-14",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon 30th Anniversary Poster Collection ($19.99/ea)",
+      "item_prices": "$19.99/ea",
+      "order_total_text": "$43.39 (subtotal $39.98 + tax $3.41 + free delivery)",
+      "charged": 43.39,
+      "refunded": 0.0,
+      "net": 43.39,
+      "shipping_name": "Kevin kim",
+      "shipping_address": "8805 E Research Center Rd, door 1, New hope, MN 55428",
+      "notes": "Preorder; estimated arrival Sep 17-22 2026; no delivery confirmation email found (thread 19fff74f149c0cfc)",
+      "status": "Delayed",
+      "days_since_order": 24,
+      "tax_rate": 0.085293,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 58,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "912003621706297",
+      "account_email": "pfperglovi@gmail.com",
+      "order_date": "2026-08-14",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon 30th Anniversary Poster Collection ($19.99/ea)",
+      "item_prices": "$19.99/ea",
+      "order_total_text": "$43.39 (subtotal $39.98 + tax $3.41 + free delivery)",
+      "charged": 43.39,
+      "refunded": 0.0,
+      "net": 43.39,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "6543 109th place North, champlin, MN 55316",
+      "notes": "Preorder; estimated arrival Sep 17-22 2026; no delivery confirmation email found (thread 19fff74edc4f359a)",
+      "status": "Delayed",
+      "days_since_order": 24,
+      "tax_rate": 0.085293,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 59,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "102003676185758",
+      "account_email": "nheorungd@gmail.com",
+      "order_date": "2026-08-14",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon 30th Anniversary EX Box 2 ($29.99/ea)",
+      "item_prices": "$29.99/ea",
+      "order_total_text": "$65.09 (subtotal $59.98 + tax $5.11 + free delivery)",
+      "charged": 65.09,
+      "refunded": 0.0,
+      "net": 65.09,
+      "shipping_name": "Hailey Nguyen",
+      "shipping_address": "13564 142nd ave n, Dayton, MN 55327",
+      "notes": "Preorder; estimated arrival Sep 17-22 2026; no delivery confirmation email found (thread 19fff6cbc9ea255d)",
+      "status": "Delayed",
+      "days_since_order": 24,
+      "tax_rate": 0.085195,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 60,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "912003440498135",
+      "account_email": "leoxangt@gmail.com",
+      "order_date": "2026-08-14",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon 30th Anniversary EX Box 2 ($29.99/ea)",
+      "item_prices": "$29.99/ea",
+      "order_total_text": "$65.09 (subtotal $59.98 + tax $5.11 + free delivery) - ORDER CANCELED before charge",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Kevin kim",
+      "shipping_address": "8805 E Research Center Rd, door 1, New hope, MN 55428",
+      "notes": "ORDER CANCELED - see thread 19fff6ca9971072a 'Sorry, we had to cancel order #912003440498135'; customer was not charged",
+      "status": "Cancelled",
+      "days_since_order": 24,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 61,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "902003676323810",
+      "account_email": "ceudupngham66@gmail.com",
+      "order_date": "2026-08-14",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon 30th Anniversary EX Box 1 ($29.99/ea)",
+      "item_prices": "$29.99/ea",
+      "order_total_text": "$65.09 (subtotal $59.98 + tax $5.11 + free delivery)",
+      "charged": 65.09,
+      "refunded": 0.0,
+      "net": 65.09,
+      "shipping_name": "HnB Market",
+      "shipping_address": "7964 Brooklyn Blvd, 109, Brooklyn Park, MN 55445",
+      "notes": "Preorder; estimated arrival Sep 17-22 2026; no delivery confirmation email found (thread 19fff5a22e100c8f)",
+      "status": "Delayed",
+      "days_since_order": 24,
+      "tax_rate": 0.085195,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 62,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "102003665235314",
+      "account_email": "ceudupngham66@gmail.com",
+      "order_date": "2026-08-14",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon 30th Anniversary EX Box 1 ($29.99/ea)",
+      "item_prices": "$29.99/ea",
+      "order_total_text": "$65.09 (subtotal $59.98 + tax $5.11 + free delivery)",
+      "charged": 65.09,
+      "refunded": 0.0,
+      "net": 65.09,
+      "shipping_name": "HnB Market",
+      "shipping_address": "7964 Brooklyn Blvd, 109, Brooklyn Park, MN 55445",
+      "notes": "Preorder; estimated arrival Sep 17-22 2026; no delivery confirmation email found (thread 19fff59d747e78b4)",
+      "status": "Delayed",
+      "days_since_order": 24,
+      "tax_rate": 0.085195,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 63,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "902003439958040",
+      "account_email": "nheorungd@gmail.com",
+      "order_date": "2026-08-14",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Pokemon 30th Anniversary EX Box 1 ($29.99/ea)",
+      "item_prices": "$29.99/ea",
+      "order_total_text": "$65.09 (subtotal $59.98 + tax $5.11 + free delivery)",
+      "charged": 65.09,
+      "refunded": 0.0,
+      "net": 65.09,
+      "shipping_name": "Hailey Nguyen",
+      "shipping_address": "13564 142nd ave n, Dayton, MN 55327",
+      "notes": "Preorder; estimated arrival Sep 17-22 2026; no delivery confirmation email found (thread 19fff5972d05a6ad)",
+      "status": "Delayed",
+      "days_since_order": 24,
+      "tax_rate": 0.085195,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 64,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "902003504422064",
+      "account_email": "tchimhuyec@gmail.com",
+      "order_date": "2026-07-17",
+      "delivered_date": "2026-07-24",
+      "items_sku_or_name": "2x Pokemon SV 8.5 Prismatic Evolutions Super Premium Collection ($129.99/ea)",
+      "item_prices": "$129.99/ea",
+      "order_total_text": "$282.64 (subtotal $259.98 + regional Road Improvement/Food Delivery fee $0.50 + tax $22.16)",
+      "charged": 282.64,
+      "refunded": 0.0,
+      "net": 282.64,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "8410 Yates ave n, Brooklyn Park, MN 55443",
+      "notes": "Delivered \u2014 order confirmed 19f6f17265ceb414, ship notice 19f8c1a89741b188, arrived notice 19f953e2a92d5ee5 (delivered Jul 24 2026)",
+      "status": "Delivered",
+      "days_since_order": 52,
+      "tax_rate": 0.085237,
+      "ship_per_unit": 0.25,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 65,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "912003521448384",
+      "account_email": "pfperglovi@gmail.com",
+      "order_date": "2026-07-03",
+      "delivered_date": "2026-07-09",
+      "items_sku_or_name": "2x Pokemon Trading Card Game: Mega Greninja ex Premium Collection ($44.99/ea)",
+      "item_prices": "$44.99/ea",
+      "order_total_text": "$97.65 (subtotal $89.98 + tax $7.67 + free delivery)",
+      "charged": 97.65,
+      "refunded": 0.0,
+      "net": 97.65,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "8805 E Research Center Rd, New Hope, MN 55428",
+      "notes": "Delivered \u2014 confirmed 19f26e9131d9c828, ship notice 19f43bea737d3fe4, arrived notice 19f47ec237d7b5fb (delivered Jul 9 2026)",
+      "status": "Delivered",
+      "days_since_order": 66,
+      "tax_rate": 0.085241,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 66,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "912003577907211",
+      "account_email": "pfperglovi@gmail.com",
+      "order_date": "2026-07-24",
+      "delivered_date": "2026-07-30",
+      "items_sku_or_name": "2x Pokemon Trading Card Game: First Partner Illustration Collection Series 2 ($17.99/ea)",
+      "item_prices": "$17.99/ea",
+      "order_total_text": "$39.05 (subtotal $35.98 + tax $3.07 + free delivery)",
+      "charged": 39.05,
+      "refunded": 0.0,
+      "net": 39.05,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "6543 109th place North, champlin, MN 55316",
+      "notes": "Ship notice 19fab0c0743e1b47 (payment processed $39.05); arrived notice 19fb4a6fecfd9970 delivered Jul 30 2026",
+      "status": "Delivered",
+      "days_since_order": 45,
+      "tax_rate": 0.085325,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 67,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "102003707810910",
+      "account_email": "tchimhuyec@gmail.com",
+      "order_date": "2026-08-28",
+      "delivered_date": "2026-09-05",
+      "items_sku_or_name": "2x Pokemon Trading Card Game: Mega Evolution\u2014Ascended Heroes Tin- Mega Fraligatr ex",
+      "item_prices": "$24.99/ea",
+      "order_total_text": "$54.24 (subtotal $49.98 + tax $4.26 + free delivery)",
+      "charged": 54.24,
+      "refunded": 0.0,
+      "net": 54.24,
+      "shipping_name": "Isaac Nguyen",
+      "shipping_address": "8410 Yates ave n, Brooklyn Park, MN 55444",
+      "notes": "Delivered \u2014 order confirmed 1a047531c3e1fd5e, ship notice 1a06a72e6cdef285, arrived notice 1a07367d8cd7c4bf (delivered Sep 5 2026)",
+      "status": "Delivered",
+      "days_since_order": 10,
+      "tax_rate": 0.085234,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 68,
+      "category": "Pokemon",
+      "retailer": "Target",
+      "order_number": "902003676605816",
+      "account_email": "ceudupngham66@gmail.com",
+      "order_date": "2026-08-28",
+      "delivered_date": "2026-09-03",
+      "items_sku_or_name": "2x Pokemon Trading Card Game: Mega Evolution\u2014Ascended Heroes Tin- Mega Emboar ex",
+      "item_prices": "$24.99/ea",
+      "order_total_text": "$54.24 (subtotal $49.98 + tax $4.26 + free delivery)",
+      "charged": 54.24,
+      "refunded": 0.0,
+      "net": 54.24,
+      "shipping_name": "HnB Market",
+      "shipping_address": "7964 Brooklyn Blvd, 109, Brooklyn Park, MN 55445",
+      "notes": "Delivered \u2014 confirmed 1a047403b0a3d6eb, ship notice 1a063893ede5b4e2, arrived notice 1a06818f64b57611 (delivered Sep 3 2026)",
+      "status": "Delivered",
+      "days_since_order": 10,
+      "tax_rate": 0.085234,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 69,
+      "category": "Pokemon",
+      "retailer": "Sam's Club",
+      "order_number": "10425483529",
+      "account_email": "bnheclung@gmail.com",
+      "order_date": "2026-05-27",
+      "delivered_date": "2026-06-01",
+      "items_sku_or_name": "2x Pokemon TCG Scarlet Violet Prismatic Evolutions Super Premium Collection (Item 990462073)",
+      "item_prices": "$69.98/ea",
+      "order_total_text": "$139.96 (subtotal $139.96 + free shipping)",
+      "charged": 139.96,
+      "refunded": 0.0,
+      "net": 139.96,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "7964 Brooklyn Blvd, #109, Brooklyn Park, MN 55445",
+      "notes": "Order confirmed 19e677cb5581b5e6; delayed notice 19e82bc42b3c76c3; shipped notice 19e7156042f561a3; out for delivery 19e82f527554991f; delivered notice 19e841437b676ebc (SamsClub.com order was delivered Jun 1 2026)",
+      "status": "Delivered",
+      "days_since_order": 103,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 70,
+      "category": "Pokemon",
+      "retailer": "Sam's Club",
+      "order_number": "TC163413808352988728813",
+      "account_email": "nxungthac@gmail.com",
+      "order_date": "2026-07-21",
+      "delivered_date": "2026-07-21",
+      "items_sku_or_name": "2x POKEMON (Item 990518062) - in-club purchase",
+      "item_prices": "$55.98/ea",
+      "order_total_text": "$111.96 (paid in club)",
+      "charged": 111.96,
+      "refunded": 0.0,
+      "net": 111.96,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "Maple Grove Sam's Club, 16701 94th Ave N, Maple Grove, MN 55311 (in-club pickup, no ship address)",
+      "notes": "In-club receipt (TC# 163413808352988728813); thread 19f84d9e733bdb76",
+      "status": "Delivered",
+      "days_since_order": 48,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 71,
+      "category": "Pokemon",
+      "retailer": "Sam's Club",
+      "order_number": "TC9915585140381162319628",
+      "account_email": "nxungthac@gmail.com",
+      "order_date": "2026-06-21",
+      "delivered_date": "2026-06-21",
+      "items_sku_or_name": "96x LEGOPOKEMONEEVEE (Item 990497327)",
+      "item_prices": "$34.98/ea",
+      "order_total_text": "$3358.08 (paid in club)",
+      "charged": 3358.08,
+      "refunded": 0.0,
+      "net": 3358.08,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "Mankato Sam's Club, 1831 E Madison Ave, Mankato, MN 56001 (in-club pickup, no ship address)",
+      "notes": "Large bulk purchase of LEGO x Pokemon Eevee set; in-club receipt TC# 9915585140381162319628; thread 19eebab0d6160e32",
+      "status": "Delivered",
+      "days_since_order": 78,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 72,
+      "category": "Pokemon",
+      "retailer": "Sam's Club",
+      "order_number": "TC4610424056638639651322",
+      "account_email": "nxungthac@gmail.com",
+      "order_date": "2026-06-21",
+      "delivered_date": "2026-06-21",
+      "items_sku_or_name": "61x LEGOPOKEMONEEVEE (Item 990497327)",
+      "item_prices": "$34.98/ea",
+      "order_total_text": "$2133.78 (paid in club)",
+      "charged": 2133.78,
+      "refunded": 0.0,
+      "net": 2133.78,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "Shakopee Sam's Club, 8201 Old Carriage Ct, Shakopee, MN 55379 (in-club pickup, no ship address)",
+      "notes": "Large bulk purchase of LEGO x Pokemon Eevee set; in-club receipt TC# 4610424056638639651322; thread 19eeab3ea71c50f8",
+      "status": "Delivered",
+      "days_since_order": 78,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Pokemon"
+    },
+    {
+      "id": 73,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033780",
+      "account_email": "reubencookson2@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Laura Hang",
+      "shipping_address": "06543 109th Pl N floor 3, Champlin, MN 55316",
+      "notes": "Mass same-item order batch from orders@mattel.com dated 2026-08-18 ~16:3x UTC; thread 1a015cd8ec5fcde6",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 74,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10030888",
+      "account_email": "diquanillidge1@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$116.91 (subtotal $100.00 + shipping $8.00 + tax $8.91)",
+      "charged": 116.91,
+      "refunded": 0.0,
+      "net": 116.91,
+      "shipping_name": "Brian Lor",
+      "shipping_address": "1909 Briar Hill Dr floor 7, Denton, TX 76207",
+      "notes": "thread 1a015bb106588f29",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0891,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 75,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033732",
+      "account_email": "sorokaserzh1@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Minh Nguyen",
+      "shipping_address": "13564 142nd ave n rm 3, Dayton, MN 55327",
+      "notes": "ORDER CANCELED (confirmed then canceled per thread 1a015a5705f119f7); thread 1a015ba91a19bdb9",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 76,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10031322",
+      "account_email": "bogumilbiegan1@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Alex Kim",
+      "shipping_address": "013564 142nd ave north unit-4-out, Dayton, MN 55327",
+      "notes": "thread 1a015ba8066b1573",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 77,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10041791",
+      "account_email": "vetalvov2@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Snguye Sang",
+      "shipping_address": "13564 142nd ave n door 1, Dayton, MN 55327",
+      "notes": "ORDER CANCELED and REFUNDED (threads 1a015aa642cf843b / 1a015aba0108d28c); thread 1a015ba7ad97ae66",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 78,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033644",
+      "account_email": "diquanillidge1@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$116.91 (subtotal $100.00 + shipping $8.00 + tax $8.91)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Brian Lor",
+      "shipping_address": "1909 Briar Hill Dr floor 7, Denton, TX 76207",
+      "notes": "ORDER CANCELED and REFUNDED (threads 1a015a74e116b6a4 / 1a015a9b9c6523d7); thread 1a015ba67e0c1c6a",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 79,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10039044",
+      "account_email": "rubikeraa@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Kevin Nguyen",
+      "shipping_address": "13564 142nd ave n floor 2, Dayton, MN 55327",
+      "notes": "ORDER CANCELED and REFUNDED (threads 1a015aabd15f0bb6 / 1a015ab68b58a52c); thread 1a015ba278b54735",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 80,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10039035",
+      "account_email": "fnatixst0rm@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Marcus Vang",
+      "shipping_address": "06543c 109th Place North bsmt, Champlin, MN 55316",
+      "notes": "ORDER CANCELED and REFUNDED (threads 1a015ab3833df680 / 1a015a9fb700508d); thread 1a015ba033e92efd",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 81,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034631",
+      "account_email": "gerimolc2@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 117.71,
+      "net": 0.0,
+      "shipping_name": "Linda Vang",
+      "shipping_address": "013564d 142nd Avenue N floor 5, Dayton, MN 55327",
+      "notes": "REFUNDED (thread 1a015a59fa7979f5); thread 1a015b9ca8b5e001",
+      "status": "Refunded",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 82,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10038383",
+      "account_email": "satriawahyu817@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Tyler Nguyen",
+      "shipping_address": "013564 142nd avenue north apt 7d, Dayton, MN 55327",
+      "notes": "ORDER CANCELED and REFUNDED (threads 1a015aa3dd9067da / 1a015a78a41320e6); thread 1a015b9b986f5330",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 83,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10032364",
+      "account_email": "satriawahyu817@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Tyler Nguyen",
+      "shipping_address": "013564 142nd avenue north apt 7d, Dayton, MN 55327",
+      "notes": "thread 1a015b9b4f6df69c",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 84,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034918",
+      "account_email": "joaohenriqueanoc@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$116.91 (subtotal $100.00 + shipping $8.00 + tax $8.91)",
+      "charged": 116.91,
+      "refunded": 0.0,
+      "net": 116.91,
+      "shipping_name": "Jenny Xiong",
+      "shipping_address": "1909 Briar Hill Dr rm 2, Denton, TX 76207",
+      "notes": "thread 1a015b974705997e",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0891,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 85,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034258",
+      "account_email": "joynerlaurence398@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Jordan Khang",
+      "shipping_address": "7703 118th Ave N Rm 1, Champlin, MN 55316",
+      "notes": "thread 1a015b9446dc8789",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 86,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033432",
+      "account_email": "lawrencelupe536@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "7964 Brooklyn Blvd 109, Brooklyn Park, MN 55445",
+      "notes": "thread 1a015b93cbeb4e92",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 87,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10035292",
+      "account_email": "lksvlljs2@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 117.71,
+      "net": 0.0,
+      "shipping_name": "Patrick Chan",
+      "shipping_address": "6543 109th Pl North Rm 5, Champlin, MN 55316",
+      "notes": "REFUNDED (thread 1a015a74535f5ebe); thread 1a015b9320bfbcc0",
+      "status": "Refunded",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 88,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10032881",
+      "account_email": "sorokaserzh1@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Minh Nguyen",
+      "shipping_address": "13564 142nd ave n rm 3, Dayton, MN 55327",
+      "notes": "thread 1a015b92ab6fe219",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 89,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033723",
+      "account_email": "reakwon1904@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$116.91 (subtotal $100.00 + shipping $8.00 + tax $8.91)",
+      "charged": 116.91,
+      "refunded": 116.91,
+      "net": 0.0,
+      "shipping_name": "David Pham",
+      "shipping_address": "1909 Briar Hill Dr fl 3, Denton, TX 76207",
+      "notes": "REFUNDED (thread 1a015a7aa850cd2b); thread 1a015b91360d73f6",
+      "status": "Refunded",
+      "days_since_order": 20,
+      "tax_rate": 0.0891,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 90,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10032602",
+      "account_email": "reakwon1904@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$116.91 (subtotal $100.00 + shipping $8.00 + tax $8.91)",
+      "charged": 116.91,
+      "refunded": 0.0,
+      "net": 116.91,
+      "shipping_name": "David Pham",
+      "shipping_address": "1909 Briar Hill Dr fl 3, Denton, TX 76207",
+      "notes": "thread 1a015b90653aac52",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0891,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 91,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033328",
+      "account_email": "vetalvov2@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Snguye Sang",
+      "shipping_address": "13564 142nd ave n door 1, Dayton, MN 55327",
+      "notes": "thread 1a015b8e7e00a873",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 92,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10030736",
+      "account_email": "asumatullo@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Tiffany Tran",
+      "shipping_address": "13564 142nd north ave-QU apt-1-in, Dayton, MN 55327",
+      "notes": "thread 1a015b8c85387bf1",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 93,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10031130",
+      "account_email": "leijam480@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Jessica Her",
+      "shipping_address": "06543f 109th Place N apt-2-in, Champlin, MN 55316",
+      "notes": "thread 1a015b8c84470b0e",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 94,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10035531",
+      "account_email": "camiloalbertozamoragallardo3@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 117.71,
+      "net": 0.0,
+      "shipping_name": "Nathan Fang",
+      "shipping_address": "7703 118th Ave N Fl 2, Champlin, MN 55316",
+      "notes": "REFUNDED (thread 1a015ab7bb75b5e7); thread 1a015b8c7cffd814",
+      "status": "Refunded",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 95,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034151",
+      "account_email": "estefanoalulema1@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$116.91 (subtotal $100.00 + shipping $8.00 + tax $8.91)",
+      "charged": 116.91,
+      "refunded": 0.0,
+      "net": 116.91,
+      "shipping_name": "Sarah Johnson",
+      "shipping_address": "1909 Briar Hill Dr door 4, Denton, TX 76207",
+      "notes": "thread 1a015b89e3fa36cf",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0891,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 96,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034341",
+      "account_email": "rubikeraa@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Kevin Nguyen",
+      "shipping_address": "13564 142nd ave n floor 2, Dayton, MN 55327",
+      "notes": "ORDER CANCELED and REFUNDED (threads 1a015a7ef9eb3d37 / 1a015a817c379a66); thread 1a015b88316f2ec1",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 97,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034848",
+      "account_email": "leijam480@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Jessica Her",
+      "shipping_address": "06543f 109th Place N apt-2-in, Champlin, MN 55316",
+      "notes": "thread 1a015b822e651d19",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 98,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034223",
+      "account_email": "estefanoalulema1@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$116.91 (subtotal $100.00 + shipping $8.00 + tax $8.91)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Sarah Johnson",
+      "shipping_address": "1909 Briar Hill Dr door 4, Denton, TX 76207",
+      "notes": "ORDER CANCELED (thread 1a015a7341d64fa5); thread 1a015b81c31aed53",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 99,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10032232",
+      "account_email": "asumatullo@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Tiffany Tran",
+      "shipping_address": "13564 142nd north ave-QU apt-1-in, Dayton, MN 55327",
+      "notes": "ORDER CANCELED (thread 1a015abd62e87f14); thread 1a015b7f4bbfc1cd",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 100,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10035079",
+      "account_email": "satriawahyu817@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Tyler Nguyen",
+      "shipping_address": "013564 142nd avenue north apt 7d, Dayton, MN 55327",
+      "notes": "ORDER CANCELED and REFUNDED (threads 1a015a9d3daf2551 / 1a015aa1ed852bb3); thread 1a015b7ccb2191a6",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 101,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034410",
+      "account_email": "franklynmulligan696@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Kevin Thao",
+      "shipping_address": "013564y 142nd Ave North apt 4f, Dayton, MN 55327",
+      "notes": "ORDER CANCELED and REFUNDED (threads 1a015aa09722fd88 / 1a015a76fcb6c845); thread 1a015b79d3583c8c",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 102,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10035207",
+      "account_email": "nawalalattawi2@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Wendy Tran",
+      "shipping_address": "06543 109th Place North fl 6, Champlin, MN 55316",
+      "notes": "thread 1a015b799276f966",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 103,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033726",
+      "account_email": "hoeyuentan@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$116.91 (subtotal $100.00 + shipping $8.00 + tax $8.91)",
+      "charged": 116.91,
+      "refunded": 116.91,
+      "net": 0.0,
+      "shipping_name": "Amy Moua",
+      "shipping_address": "01909 Briar Hill Drive Door 3, Denton, TX 76207",
+      "notes": "REFUNDED (thread 1a015a9eb13b96bf); thread 1a015b78b64cca87",
+      "status": "Refunded",
+      "days_since_order": 20,
+      "tax_rate": 0.0891,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 104,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034377",
+      "account_email": "gerimolc2@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Linda Vang",
+      "shipping_address": "013564d 142nd Avenue N floor 5, Dayton, MN 55327",
+      "notes": "thread 1a015b780c6cb4d9",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 105,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034488",
+      "account_email": "lksvlljs2@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Patrick Chan",
+      "shipping_address": "6543 109th Pl North Rm 5, Champlin, MN 55316",
+      "notes": "thread 1a015b77fbda700b",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 106,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10035713",
+      "account_email": "joynerlaurence398@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 117.71,
+      "net": 0.0,
+      "shipping_name": "Jordan Khang",
+      "shipping_address": "7703 118th Ave N Rm 1, Champlin, MN 55316",
+      "notes": "REFUNDED (thread 1a015a6aa5759c0b); thread 1a015b776f9a1f1c",
+      "status": "Refunded",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 107,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033543",
+      "account_email": "triotool3@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "HnB Market",
+      "shipping_address": "7964 Brooklyn Boulevard apt-109-door, Brooklyn Park, MN 55445",
+      "notes": "ORDER CANCELED and REFUNDED (threads 1a015a474bc547de / 1a015a4fa70d5bfd); thread 1a015b76d5c1a363 \u2014 missed in original pull, was showing as pending",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 108,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10032669",
+      "account_email": "pfperglovi@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "13564 142nd ave n, Dayton, MN 55327",
+      "notes": "thread 1a015b76873e92f1",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 109,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033449",
+      "account_email": "awadlatifa9@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Helen N",
+      "shipping_address": "13564 142nd ave n office 2, Dayton, MN 55327",
+      "notes": "thread 1a015b764846c4bc",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 110,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033323",
+      "account_email": "edertorreslorenzo1@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "sang nguyen",
+      "shipping_address": "7703 118th Avenue N floor 5, Champlin, MN 55316",
+      "notes": "thread 1a015b74795ba147",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 111,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033484",
+      "account_email": "rubikeraa@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Kevin Nguyen",
+      "shipping_address": "13564 142nd ave n floor 2, Dayton, MN 55327",
+      "notes": "thread 1a015b73fd256763",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 112,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033424",
+      "account_email": "pfperglovi@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "13564 142nd ave n, Dayton, MN 55327",
+      "notes": "ORDER CANCELED and REFUNDED (threads 1a015a805b1db8e6 / 1a015a9ea59dc87a); thread 1a015b72b657b6ce",
+      "status": "Cancelled",
+      "days_since_order": 20,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 113,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10031376",
+      "account_email": "triotool3@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "HnB Market",
+      "shipping_address": "7964 Brooklyn Boulevard apt-109-door, Brooklyn Park, MN 55445",
+      "notes": "thread 1a015b72717e2bfe",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 114,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10031115",
+      "account_email": "fnatixst0rm@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Marcus Vang",
+      "shipping_address": "06543c 109th Place North bsmt, Champlin, MN 55316",
+      "notes": "thread 1a015b6ee4153ddc",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 115,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10031375",
+      "account_email": "camiloalbertozamoragallardo3@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Nathan Fang",
+      "shipping_address": "7703 118th Ave N Fl 2, Champlin, MN 55316",
+      "notes": "thread 1a015b6a5f02d044",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 116,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10030137",
+      "account_email": "bogumilbiegan1@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Alex Kim",
+      "shipping_address": "013564 142nd ave north unit-4-out, Dayton, MN 55327",
+      "notes": "thread 1a015b69d2c68e05",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 117,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10033904",
+      "account_email": "lawrencelupe536@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 117.71,
+      "net": 0.0,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "7964 Brooklyn Blvd 109, Brooklyn Park, MN 55445",
+      "notes": "REFUNDED (thread 1a015a5b3c1d9ccc); thread 1a015b6921cf8ec6",
+      "status": "Refunded",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 118,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034260",
+      "account_email": "franklynmulligan696@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Kevin Thao",
+      "shipping_address": "013564y 142nd Ave North apt 4f, Dayton, MN 55327",
+      "notes": "thread 1a015b62e857bb68",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 119,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10034896",
+      "account_email": "awadlatifa9@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 117.71,
+      "net": 0.0,
+      "shipping_name": "Helen N",
+      "shipping_address": "13564 142nd ave n office 2, Dayton, MN 55327",
+      "notes": "REFUNDED (thread 1a015a5ebb902765); thread 1a015b59205c1ec4",
+      "status": "Refunded",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 120,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10030776",
+      "account_email": "hoeyuentan@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$116.91 (subtotal $100.00 + shipping $8.00 + tax $8.91)",
+      "charged": 116.91,
+      "refunded": 0.0,
+      "net": 116.91,
+      "shipping_name": "Amy Moua",
+      "shipping_address": "01909 Briar Hill Drive Door 3, Denton, TX 76207",
+      "notes": "thread 1a015b5869dde8f3",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0891,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 121,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP10031379",
+      "account_email": "avalovesdick@gmail.com",
+      "order_date": "2026-08-18",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "item_prices": "$50.00/ea",
+      "order_total_text": "$117.71 (subtotal $100.00 + shipping $8.00 + tax $9.71)",
+      "charged": 117.71,
+      "refunded": 0.0,
+      "net": 117.71,
+      "shipping_name": "Sang HnB Market",
+      "shipping_address": "7964 Brooklyn Blvd unit 109, Brooklyn Park, MN 55445",
+      "notes": "thread 1a015b4467769ab5",
+      "status": "Delayed",
+      "days_since_order": 20,
+      "tax_rate": 0.0971,
+      "ship_per_unit": 4.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 122,
+      "category": "Mattel",
+      "retailer": "Mattel Creations",
+      "order_number": "CHP9993463",
+      "account_email": "reubencookson2@gmail.com",
+      "order_date": "2026-08-15",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Hot Wheels Red Line Club 1-Year Digital Membership (Item #HNB06)",
+      "item_prices": "$9.99/ea",
+      "order_total_text": "$10.84 (subtotal $9.99 + tax $0.85)",
+      "charged": 10.84,
+      "refunded": 0.0,
+      "net": 10.84,
+      "shipping_name": "Laura Hang",
+      "shipping_address": "(digital product - billing address only) 06543 109th Pl N floor 3, Champlin, MN 55316",
+      "notes": "Digital membership, not a physical Ferrari F40 order like the other 49 Mattel rows; thread 1a009042a5284a7b",
+      "status": "Delayed",
+      "days_since_order": 23,
+      "tax_rate": 0.085085,
+      "ship_per_unit": 0.0,
+      "tab": "Mattel"
+    },
+    {
+      "id": 123,
+      "category": "One Piece",
+      "retailer": "Target",
+      "order_number": "902003716005832",
+      "account_email": "tchimhuyec@gmail.com",
+      "order_date": "2026-08-28",
+      "delivered_date": "2026-09-05",
+      "items_sku_or_name": "2x One Piece Card Game: The World's Strongest Warriors Double Pack Set 12",
+      "item_prices": "$12.99/ea",
+      "order_total_text": "$34.70 (subtotal $25.98 + shipping $5.99 + tax $2.73)",
+      "charged": 34.7,
+      "refunded": 0.0,
+      "net": 34.7,
+      "shipping_name": "Isaac Nguyen",
+      "shipping_address": "8410 Yates ave n, Brooklyn Park, MN 55444",
+      "notes": "Delivered \u2014 confirmed 1a0479a94d88a2ba, ship notice 1a05f40cf5945276, arrived notice 1a07367c623cb310 (delivered Sep 5 2026)",
+      "status": "Delivered",
+      "days_since_order": 10,
+      "tax_rate": 0.105081,
+      "ship_per_unit": 2.995,
+      "tab": "One Piece"
+    },
+    {
+      "id": 124,
+      "category": "One Piece",
+      "retailer": "Bear Walker",
+      "order_number": "25293",
+      "account_email": "needkonto2@gmail.com",
+      "order_date": "2026-08-21",
+      "delivered_date": "",
+      "items_sku_or_name": "1x BW x ONE PIECE Skateboard Blindbox",
+      "item_prices": "$110.00/ea",
+      "order_total_text": "$129.85 (subtotal $110.00 + shipping $19.85)",
+      "charged": 129.85,
+      "refunded": 0.0,
+      "net": 129.85,
+      "shipping_name": "sang minh",
+      "shipping_address": "07703c 118th Ave North dept, Champlin, MN 55316",
+      "notes": "Shopify store bearwalker.com; order confirmed thread 1a026b2b4b3e02da; shipped notice 1a05d982e4ad94eb",
+      "status": "Delayed",
+      "days_since_order": 17,
+      "tax_rate": 0.0,
+      "ship_per_unit": 19.85,
+      "tab": "One Piece"
+    },
+    {
+      "id": 125,
+      "category": "One Piece",
+      "retailer": "Bear Walker",
+      "order_number": "25164",
+      "account_email": "avalovesdick@gmail.com",
+      "order_date": "2026-08-21",
+      "delivered_date": "",
+      "items_sku_or_name": "1x BW x ONE PIECE Skateboard Blindbox",
+      "item_prices": "$110.00/ea",
+      "order_total_text": "$125.48 (subtotal $110.00 + shipping $15.48)",
+      "charged": 125.48,
+      "refunded": 0.0,
+      "net": 125.48,
+      "shipping_name": "Sang HnB Market",
+      "shipping_address": "7964 Brooklyn Blvd unit 109, Brooklyn Park, MN 55445",
+      "notes": "Shopify store bearwalker.com; order confirmed thread 1a026aae964ad030; shipped notice 1a0457d80e6adf7d (Aug 27 2026) \u2014 missed in original pull",
+      "status": "Delayed",
+      "days_since_order": 17,
+      "tax_rate": 0.0,
+      "ship_per_unit": 15.48,
+      "tab": "One Piece"
+    },
+    {
+      "id": 126,
+      "category": "One Piece",
+      "retailer": "Bear Walker",
+      "order_number": "24662",
+      "account_email": "edertorreslorenzo1@gmail.com",
+      "order_date": "2026-08-21",
+      "delivered_date": "",
+      "items_sku_or_name": "1x BW x ONE PIECE Skateboard Blindbox",
+      "item_prices": "$110.00/ea",
+      "order_total_text": "$129.85 (subtotal $110.00 + shipping $19.85)",
+      "charged": 129.85,
+      "refunded": 0.0,
+      "net": 129.85,
+      "shipping_name": "sang nguyen",
+      "shipping_address": "7703 118th Avenue N floor 5, Champlin, MN 55316",
+      "notes": "Shopify store bearwalker.com; order confirmed thread 1a02674993656d34; shipped notice 1a05d6a6dd9d808c",
+      "status": "Delayed",
+      "days_since_order": 17,
+      "tax_rate": 0.0,
+      "ship_per_unit": 19.85,
+      "tab": "One Piece"
+    },
+    {
+      "id": 127,
+      "category": "Canon",
+      "retailer": "Target",
+      "order_number": "902003606387023",
+      "account_email": "tchimhuyec@gmail.com",
+      "order_date": "2026-08-26",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Canon PowerShot G7 X Mark III 20.1 Megapixel Digital Camera - Black ($879.99/ea)",
+      "item_prices": "$879.99/ea",
+      "order_total_text": "$955.51 (subtotal $879.99 + regional Road Improvement/Food Delivery fee $0.50 + tax $75.02)",
+      "charged": 955.51,
+      "refunded": 0.0,
+      "net": 955.51,
+      "shipping_name": "Isaac Nguyen",
+      "shipping_address": "8410 Yates ave n, Brooklyn Park, MN 55444",
+      "notes": "Ship notice Aug 27 2026 (thread 1a042dd4e6b0bfb5) \u2014 no arrival confirmation email found; est. arrival was Aug 28, now 11+ days out, likely delivered but unconfirmed",
+      "status": "Shipped",
+      "days_since_order": 12,
+      "tax_rate": 0.085251,
+      "ship_per_unit": 0.5,
+      "tab": "Other"
+    },
+    {
+      "id": 128,
+      "category": "Panini",
+      "retailer": "Target",
+      "order_number": "902003499287056",
+      "account_email": "pfperglovi@gmail.com",
+      "order_date": "2026-05-28",
+      "delivered_date": "2026-06-05",
+      "items_sku_or_name": "2x 2025 Panini NFL Optic Donruss Football Trading Card Mega Box ($64.99/ea)",
+      "item_prices": "$64.99/ea",
+      "order_total_text": "$141.56 (subtotal $129.98 + regional Road Improvement/Food Delivery fee $0.50 + tax $11.08)",
+      "charged": 141.56,
+      "refunded": 0.0,
+      "net": 141.56,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "8805 E Research Center Rd, New Hope, MN 55428",
+      "notes": "Delivered \u2014 confirmed 19e71a86637fcad8, ship notice 19e947b51d809d3d, arrived notice 19e9917d02c34335 (delivered Jun 5 2026)",
+      "status": "Delivered",
+      "days_since_order": 102,
+      "tax_rate": 0.085244,
+      "ship_per_unit": 0.25,
+      "tab": "Other"
+    },
+    {
+      "id": 129,
+      "category": "Costco Apparel",
+      "retailer": "Costco",
+      "order_number": "1287328120",
+      "account_email": "andrealmeidac1231@gmail.com",
+      "order_date": "2026-05-25",
+      "delivered_date": "2026-05-29",
+      "items_sku_or_name": "10x Keith Haring Men's Graphic Tee, Beige, XX-Large (Item #1964939)",
+      "item_prices": "$11.99/ea",
+      "order_total_text": "$0.00 (subtotal $119.90 - full order discount $119.90 + shipping $0.00 + tax $0.00)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "sang nguyen",
+      "shipping_address": "13564 142ND AVE N, DAYTON, MN 55327-5601",
+      "notes": "Order fully discounted at checkout (100% off promo) resulting in $0.00 charge; shipped via UPS 1ZH916Y11246949934; delayed in transit notice then delivered; threads 19e5ecd473f8d8aa/19e6c3fc1f5c4a93/19e711ab80022b39/19e74ac664a20e27/19e7bc92ea8388dd/19e88d8297fdcc42",
+      "status": "Delivered",
+      "days_since_order": 105,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Other"
+    },
+    {
+      "id": 130,
+      "category": "Grocery",
+      "retailer": "Sam's Club",
+      "order_number": "TC028381640016577953701",
+      "account_email": "nxungthac@gmail.com",
+      "order_date": "2026-07-16",
+      "delivered_date": "2026-07-16",
+      "items_sku_or_name": "1x PYREX SS 28P $29.98 | 1x OG MANGO $13.95 | 1x BRISKET $57.28 | 1x MMBRWNSUGR $6.98 | 1x CUCUMBERS $3.27 | 1x MM WATER $3.98 | 1x CAGEFREE60CT $8.47 | 1x PEACHES $9.87 | 1x ROMAINE $6.33 | 1x BCP S&S 25Z $5.98 | 1x GRAPE TOMATO $5.67 | 1x RITZ BITS CH $12.98 | 1x WHOLE MILK $3.47",
+      "item_prices": "see items_sku_or_name column for individual prices",
+      "order_total_text": "$171.46 (subtotal $168.21 + tax $3.25)",
+      "charged": 171.46,
+      "refunded": 0.0,
+      "net": 171.46,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "Maple Grove Sam's Club, 16701 94th Ave N, Maple Grove, MN 55311 (in-club pickup, no ship address)",
+      "notes": "Not a toy/collectible order - routine grocery run; in-club receipt TC# 028381640016577953701; thread 19f6d912ef7cbd77",
+      "status": "Delivered",
+      "days_since_order": 53,
+      "tax_rate": 0.019321,
+      "ship_per_unit": 0.0,
+      "tab": "Other"
+    },
+    {
+      "id": 131,
+      "category": "Apparel",
+      "retailer": "Sam's Club",
+      "order_number": "653689641531847675429",
+      "account_email": "nxungthac@gmail.com",
+      "order_date": "2026-06-27",
+      "delivered_date": "",
+      "items_sku_or_name": "2x Levis (Item 990457353 / 990457345)",
+      "item_prices": "$36.98/ea",
+      "order_total_text": "REFUND $63.96 (subtotal $73.96 refunded $63.96 to Amex)",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "Maple Grove Sam's Club, 16701 94th Ave N, Maple Grove, MN 55311 (return)",
+      "notes": "Return/refund only - no original order-confirmation email found in inbox for this purchase; thread 19f0b737d26711f0",
+      "status": "Refunded",
+      "days_since_order": 72,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Other"
+    },
+    {
+      "id": 132,
+      "category": "Electronics",
+      "retailer": "Sam's Club",
+      "order_number": "356230893236394547960",
+      "account_email": "nxungthac@gmail.com",
+      "order_date": "2026-06-21",
+      "delivered_date": "",
+      "items_sku_or_name": "1x Nintendo Switch (Item 984262440)",
+      "item_prices": "$449.00/ea",
+      "order_total_text": "REFUND $449.00",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "Mankato Sam's Club, 1831 E Madison Ave, Mankato, MN 56001 (return)",
+      "notes": "Return/refund only - no original order-confirmation email found in inbox for this purchase; thread 19eeba416c5dc4f1",
+      "status": "Refunded",
+      "days_since_order": 78,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Other"
+    },
+    {
+      "id": 133,
+      "category": "Outdoor",
+      "retailer": "Sam's Club",
+      "order_number": "522423982132080109825",
+      "account_email": "nxungthac@gmail.com",
+      "order_date": "2026-06-18",
+      "delivered_date": "",
+      "items_sku_or_name": "1x 18ft Pool (Item 990463685)",
+      "item_prices": "$399.00/ea",
+      "order_total_text": "REFUND $399.00",
+      "charged": 0.0,
+      "refunded": 0.0,
+      "net": 0.0,
+      "shipping_name": "Sang Nguyen",
+      "shipping_address": "Maple Grove Sam's Club, 16701 94th Ave N, Maple Grove, MN 55311 (return)",
+      "notes": "Return/refund only - no original order-confirmation email found in inbox for this purchase; thread 19edd602a64af6a3",
+      "status": "Refunded",
+      "days_since_order": 81,
+      "tax_rate": 0.0,
+      "ship_per_unit": 0.0,
+      "tab": "Other"
+    }
+  ],
+  "items": [
+    {
+      "category": "Pokemon",
+      "name": "LEGOPOKEMONEEVEE (Item 990497327)",
+      "qty": 157,
+      "orders": 2,
+      "gross_qty": 157,
+      "gross_orders": 2,
+      "price_ea": 34.98,
+      "total": 5491.86
+    },
+    {
+      "category": "Mattel",
+      "name": "Hot Wheels RLC Exclusive Ferrari F40 (Item #JJY72)",
+      "qty": 72,
+      "orders": 36,
+      "gross_qty": 98,
+      "gross_orders": 49,
+      "price_ea": 58.78,
+      "total": 4231.96
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: 30th Celebration Booster Bundle (6 Packs) (SKU 10-10451-115)",
+      "qty": 81,
+      "orders": 27,
+      "gross_qty": 81,
+      "gross_orders": 27,
+      "price_ea": 29.27,
+      "total": 2371.18
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111)",
+      "qty": 32,
+      "orders": 16,
+      "gross_qty": 32,
+      "gross_orders": 16,
+      "price_ea": 65.19,
+      "total": 2086.22
+    },
+    {
+      "category": "Canon",
+      "name": "Canon PowerShot G7 X Mark III 20.1 Megapixel Digital Camera - Black",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 955.51,
+      "total": 955.51
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: Mega Evolution-Pitch Black Booster Display Box (36 Packs) (SKU 10-10425-120)",
+      "qty": 5,
+      "orders": 5,
+      "gross_qty": 5,
+      "gross_orders": 5,
+      "price_ea": 175.57,
+      "total": 877.85
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: 30th Celebration Mini Tins (10-Pack) (SKU 10-10465-176)",
+      "qty": 8,
+      "orders": 8,
+      "gross_qty": 8,
+      "gross_orders": 8,
+      "price_ea": 108.54,
+      "total": 868.35
+    },
+    {
+      "category": "Electronics",
+      "name": "Nintendo Switch (Item 984262440)",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 449.0,
+      "total": 449.0
+    },
+    {
+      "category": "Outdoor",
+      "name": "18ft Pool (Item 990463685)",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 399.0,
+      "total": 399.0
+    },
+    {
+      "category": "One Piece",
+      "name": "BW x ONE PIECE Skateboard Blindbox",
+      "qty": 3,
+      "orders": 3,
+      "gross_qty": 3,
+      "gross_orders": 3,
+      "price_ea": 128.39,
+      "total": 385.18
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: Mega Evolution-Pitch Black Booster Bundle (6 Packs) (SKU 10-10422-109)",
+      "qty": 10,
+      "orders": 5,
+      "gross_qty": 10,
+      "gross_orders": 5,
+      "price_ea": 29.4,
+      "total": 294.0
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon SV 8.5 Prismatic Evolutions Super Premium Collection",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 2,
+      "gross_orders": 1,
+      "price_ea": 141.32,
+      "total": 282.64
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: 30th Celebration Tech Sticker Collection (Alolan Exeggutor) (SKU 10-10449-121)",
+      "qty": 16,
+      "orders": 16,
+      "gross_qty": 16,
+      "gross_orders": 16,
+      "price_ea": 16.37,
+      "total": 261.85
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: 30th Celebration Tech Sticker Collection (Lucario) (SKU 10-10449-122)",
+      "qty": 16,
+      "orders": 16,
+      "gross_qty": 16,
+      "gross_orders": 16,
+      "price_ea": 16.37,
+      "total": 261.85
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon 30th Anniversary EX Box 1",
+      "qty": 6,
+      "orders": 3,
+      "gross_qty": 6,
+      "gross_orders": 3,
+      "price_ea": 32.54,
+      "total": 195.27
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101)",
+      "qty": 16,
+      "orders": 16,
+      "gross_qty": 16,
+      "gross_orders": 16,
+      "price_ea": 10.94,
+      "total": 175.04
+    },
+    {
+      "category": "Panini",
+      "name": "2025 Panini NFL Optic Donruss Football Trading Card Mega Box",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 2,
+      "gross_orders": 1,
+      "price_ea": 70.78,
+      "total": 141.56
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG Scarlet Violet Prismatic Evolutions Super Premium Collection (Item 990462073)",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 2,
+      "gross_orders": 1,
+      "price_ea": 69.98,
+      "total": 139.96
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon 30th Anniversary Poster Collection",
+      "qty": 6,
+      "orders": 3,
+      "gross_qty": 6,
+      "gross_orders": 3,
+      "price_ea": 21.7,
+      "total": 130.17
+    },
+    {
+      "category": "Costco Apparel",
+      "name": "Keith Haring Men's Graphic Tee, Beige, XX-Large (Item #1964939)",
+      "qty": 10,
+      "orders": 1,
+      "gross_qty": 10,
+      "gross_orders": 1,
+      "price_ea": 11.99,
+      "total": 119.9
+    },
+    {
+      "category": "Pokemon",
+      "name": "POKEMON (Item 990518062) - in-club purchase",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 2,
+      "gross_orders": 1,
+      "price_ea": 55.98,
+      "total": 111.96
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon Trading Card Game: Mega Greninja ex Premium Collection",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 2,
+      "gross_orders": 1,
+      "price_ea": 48.82,
+      "total": 97.65
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon 30th Celebration Tech Sticker Collection Trading Cards (Styles May Vary)",
+      "qty": 4,
+      "orders": 2,
+      "gross_qty": 4,
+      "gross_orders": 2,
+      "price_ea": 21.7,
+      "total": 86.78
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon Trading Card Game: First Partner Illustration Collection Series 2",
+      "qty": 4,
+      "orders": 2,
+      "gross_qty": 4,
+      "gross_orders": 2,
+      "price_ea": 19.52,
+      "total": 78.1
+    },
+    {
+      "category": "Apparel",
+      "name": "Levis (Item 990457353 / 990457345)",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 2,
+      "gross_orders": 1,
+      "price_ea": 36.98,
+      "total": 73.96
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: Mega Evolution Chaos Rising Booster Bundle (SKU unknown;",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 2,
+      "gross_orders": 1,
+      "price_ea": 32.54,
+      "total": 65.09
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon 30th Anniversary EX Box 2",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 4,
+      "gross_orders": 2,
+      "price_ea": 32.54,
+      "total": 65.09
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: Scarlet & Violet-Prismatic Evolutions Booster Bundle (6 Packs) (SKU 10-10025-101)",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 2,
+      "gross_orders": 1,
+      "price_ea": 29.23,
+      "total": 58.46
+    },
+    {
+      "category": "Grocery",
+      "name": "BRISKET",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 58.39,
+      "total": 58.39
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon Trading Card Game: Mega Evolution\u2014Ascended Heroes Tin- Mega Fraligatr ex",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 2,
+      "gross_orders": 1,
+      "price_ea": 27.12,
+      "total": 54.24
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon Trading Card Game: Mega Evolution\u2014Ascended Heroes Tin- Mega Emboar ex",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 2,
+      "gross_orders": 1,
+      "price_ea": 27.12,
+      "total": 54.24
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: Mega Evolution-Ascended Heroes Tech Sticker Collection (Charmander) (SKU 10-10314-121)",
+      "qty": 2,
+      "orders": 2,
+      "gross_qty": 2,
+      "gross_orders": 2,
+      "price_ea": 23.83,
+      "total": 47.66
+    },
+    {
+      "category": "One Piece",
+      "name": "One Piece Card Game: The World's Strongest Warriors Double Pack Set 12",
+      "qty": 2,
+      "orders": 1,
+      "gross_qty": 2,
+      "gross_orders": 1,
+      "price_ea": 17.35,
+      "total": 34.7
+    },
+    {
+      "category": "Grocery",
+      "name": "PYREX SS 28P",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 30.56,
+      "total": 30.56
+    },
+    {
+      "category": "Grocery",
+      "name": "OG MANGO",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 14.22,
+      "total": 14.22
+    },
+    {
+      "category": "Grocery",
+      "name": "RITZ BITS CH",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 13.23,
+      "total": 13.23
+    },
+    {
+      "category": "Mattel",
+      "name": "Hot Wheels Red Line Club 1-Year Digital Membership (Item #HNB06)",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 10.84,
+      "total": 10.84
+    },
+    {
+      "category": "Grocery",
+      "name": "PEACHES",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 10.06,
+      "total": 10.06
+    },
+    {
+      "category": "Grocery",
+      "name": "CAGEFREE60CT",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 8.63,
+      "total": 8.63
+    },
+    {
+      "category": "Grocery",
+      "name": "MMBRWNSUGR",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 7.11,
+      "total": 7.11
+    },
+    {
+      "category": "Grocery",
+      "name": "ROMAINE",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 6.45,
+      "total": 6.45
+    },
+    {
+      "category": "Grocery",
+      "name": "BCP S&S 25Z",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 6.1,
+      "total": 6.1
+    },
+    {
+      "category": "Grocery",
+      "name": "GRAPE TOMATO",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 5.78,
+      "total": 5.78
+    },
+    {
+      "category": "Grocery",
+      "name": "MM WATER",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 4.06,
+      "total": 4.06
+    },
+    {
+      "category": "Grocery",
+      "name": "WHOLE MILK",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 3.54,
+      "total": 3.54
+    },
+    {
+      "category": "Grocery",
+      "name": "CUCUMBERS",
+      "qty": 1,
+      "orders": 1,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 3.33,
+      "total": 3.33
+    },
+    {
+      "category": "Pokemon",
+      "name": "Pokemon TCG: Scarlet & Violet-151 Mini Tin (Arcanine & Omanyte) (SKU 10-10437-102)",
+      "qty": 0,
+      "orders": 0,
+      "gross_qty": 1,
+      "gross_orders": 1,
+      "price_ea": 0.0,
+      "total": 0.0
+    }
+  ]
+};
+const STATUS_OPTIONS = ['Confirmed','Shipped','Delayed','Delivered','Cancelled','Refunded'];
+
+function safeId(s){
+  let hash = 0;
+  for(let i=0;i<s.length;i++){ hash = ((hash<<5)-hash + s.charCodeAt(i))|0; }
+  return 'k' + Math.abs(hash);
+}
+function fmtMoney(n){
+  const neg = n < 0;
+  const v = Math.abs(n||0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  return (neg?'-':'') + '$' + v;
+}
+function escAttr(s){
+  return String(s===undefined||s===null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+// ---- persisted state: PAS fees, per-sku PAS rates, manual edits, deletions ----
+let state = { fees:{}, skuRates:{}, edits:{}, deleted:[] };
+
+async function loadState(){
+  try{
+    if(window.storage){
+      const res = await window.storage.get('order-overrides');
+      if(res && res.value){
+        const parsed = JSON.parse(res.value);
+        state = Object.assign({fees:{},skuRates:{},edits:{},deleted:[]}, parsed);
+      }
+    }
+  }catch(e){ /* nothing saved yet, or storage unavailable — start clean */ }
+  renderAll();
+}
+async function saveState(){
+  try{ if(window.storage) await window.storage.set('order-overrides', JSON.stringify(state)); }
+  catch(e){ /* fees/edits still work this session, just won't persist */ }
+}
+
+function getFeePct(id){
+  const v = state.fees[id];
+  return (v===undefined || v===null || v==='') ? null : Number(v);
+}
+function feeAmount(o){
+  const v = getFeePct(o.id);
+  return v ? Math.round(v*100)/100 : 0;
+}
+function trueCost(o){
+  return Math.round((o.charged + feeAmount(o))*100)/100;
+}
+
+function tabFor(category){
+  return DATA.tabs.includes(category) ? category : 'Other';
+}
+function mergedOrder(base){
+  const e = state.edits[base.id];
+  const o = e ? Object.assign({}, base, e) : base;
+  if(e && 'category' in e) o.tab = tabFor(o.category); else o.tab = base.tab;
+  return o;
+}
+function liveOrders(){
+  return DATA.orders.filter(o => state.deleted.indexOf(o.id) === -1).map(mergedOrder);
+}
+
+// ---- live stats / items, recomputed from current (edited, non-deleted) orders ----
+function computeStats(orders){
+  const total = orders.length;
+  const counts = {};
+  orders.forEach(o => counts[o.status] = (counts[o.status]||0) + 1);
+  const cancelled = counts['Cancelled'] || 0;
+  const stick = total ? Math.round((total-cancelled)/total*1000)/10 : 0;
+  const spent = Math.round(orders.reduce((s,o)=>s + (Number(o.charged)||0) - (Number(o.refunded)||0), 0)*100)/100;
+  return {
+    orders: total, confirmed: counts['Confirmed']||0, shipped: counts['Shipped']||0,
+    delayed: counts['Delayed']||0, delivered: counts['Delivered']||0,
+    cancelled, refunded: counts['Refunded']||0, stick_pct: stick, spent
+  };
+}
+
+const ITEM_LINE_RE = /^\s*(\d+)x\s+(.*)$/;
+function parseOrderItems(o){
+  const names = (o.items_sku_or_name||'').split(' | ').map(s=>s.trim()).filter(Boolean);
+  let prices = (o.item_prices||'').split(' | ').map(s=>s.trim()).filter(Boolean);
+  if(prices.length !== names.length) prices = names.map(()=>null);
+  const out = [];
+  names.forEach((nameToken, i) => {
+    const m = ITEM_LINE_RE.exec(nameToken);
+    if(!m) return;
+    const qty = parseInt(m[1], 10);
+    let itemName = m[2].trim();
+    const priceToken = prices[i];
+    let unitPrice = null;
+    if(priceToken){
+      const pm = priceToken.match(/\$([\d,]+\.\d{2})/);
+      if(pm) unitPrice = parseFloat(pm[1].replace(/,/g,''));
+    }
+    if(unitPrice===null){
+      const em = itemName.match(/\(?\$([\d,]+\.\d{2})\/ea\)?/);
+      if(em) unitPrice = parseFloat(em[1].replace(/,/g,''));
+    }
+    if(unitPrice===null){
+      const em2 = itemName.match(/\$([\d,]+\.\d{2})\s*$/);
+      if(em2){ unitPrice = parseFloat(em2[1].replace(/,/g,'')); itemName = itemName.slice(0, em2.index).trim(); }
+    }
+    const cleanName = itemName.replace(/\s*\(?\$[\d,]+\.\d{2}\/ea\)?\s*$/, '').trim();
+    out.push({name: cleanName, qty, unitPrice});
+  });
+  return out;
+}
+
+// ---- address clustering: jig variants (apt/floor/door/zip noise) collapsed to one real location ----
+const STREET_TYPES = new Set(['ave','avenue','blvd','boulevard','rd','road','dr','drive','st','street',
+                               'pl','place','ct','court','ln','lane','way','cir','circle']);
+const DIRECTIONS = new Set(['n','s','e','w','north','south','east','west','ne','nw','se','sw']);
+const UNIT_WORDS = ['apt','unit','rm','room','fl','floor','ste','suite','door','dept','bsmt',
+                    'basement','no','in','out','office'];
+const UNIT_WORDS_SET = new Set(UNIT_WORDS);
+
+function locationKey(addr){
+  addr = (addr||'').trim();
+  const clubMatch = addr.match(/^([A-Za-z .']+ Sam's Club),\s/);
+  if(clubMatch) return clubMatch[1].trim();
+  const streetLine = addr.split(',')[0].replace(/^\(.*?\)\s*/, '').trim();
+  const tokens = streetLine.split(/\s+/).filter(Boolean);
+  if(tokens.length === 0) return addr || '(no address)';
+  const houseDigits = tokens[0].replace(/\D/g, '');
+  const houseNum = houseDigits ? String(parseInt(houseDigits, 10)) : tokens[0].toLowerCase();
+  const keep = [];
+  for(let i=1; i<tokens.length; i++){
+    let base = tokens[i].toLowerCase().split('-')[0].replace(/[^a-z0-9]/g, '');
+    if(!base) continue;
+    if(STREET_TYPES.has(base) || DIRECTIONS.has(base) || UNIT_WORDS_SET.has(base)) continue;
+    if(UNIT_WORDS.some(u => u.length >= 3 && base.startsWith(u))) continue;
+    if(/^\d+$/.test(base)) continue;
+    if(/^\d{1,2}[a-z]{1,2}$/.test(base)) continue;
+    keep.push(base);
+  }
+  return `${houseNum} ${keep.slice(0,2).join(' ')}`.trim();
+}
+
+function computeLocations(orders){
+  const agg = {};
+  orders.forEach(o => {
+    const key = locationKey(o.shipping_address);
+    if(!agg[key]) agg[key] = {key, addrs:{}, orders:0, confirmed:0, shipped:0, delayed:0, delivered:0, cancelled:0, refunded:0, lastOrder:''};
+    const a = agg[key];
+    a.orders += 1;
+    a.addrs[o.shipping_address] = (a.addrs[o.shipping_address]||0) + 1;
+    const statusField = o.status.toLowerCase();
+    if(a[statusField] !== undefined) a[statusField] += 1;
+    if(o.order_date > a.lastOrder) a.lastOrder = o.order_date;
+  });
+  return Object.values(agg).map(a => {
+    // pick the shortest raw address string seen for this cluster as the clean display label
+    const label = Object.keys(a.addrs).sort((x,y)=>x.length-y.length)[0].replace(/\s*\([^)]*\)\s*$/, '');
+    return {key:a.key, label, orders:a.orders, confirmed:a.confirmed, shipped:a.shipped,
+             delayed:a.delayed, delivered:a.delivered, cancelled:a.cancelled, refunded:a.refunded,
+             lastOrder:a.lastOrder};
+  });
+}
+
+function computeItems(orders){
+  const agg = {};
+  orders.forEach(o => {
+    const items = parseOrderItems(o);
+    items.forEach(it => {
+      const key = o.category + '|||' + it.name;
+      if(!agg[key]) agg[key] = {category:o.category, name:it.name, qty:0, orders:0, landedTotal:0, cancelledQty:0, cancelledOrders:0, singleItem:true};
+      const a = agg[key];
+      a.qty += it.qty; a.orders += 1;
+      if(items.length > 1) a.singleItem = false;
+      if(it.unitPrice !== null && o.status !== 'Cancelled'){
+        const landedUnit = it.unitPrice * (1 + (o.tax_rate||0)) + (o.ship_per_unit||0);
+        a.landedTotal += landedUnit * it.qty;
+      }
+      if(o.status === 'Cancelled'){ a.cancelledQty += it.qty; a.cancelledOrders += 1; }
+    });
+  });
+  const list = Object.keys(agg).map(key => {
+    const a = agg[key];
+    const liveQty = a.qty - a.cancelledQty;
+    const liveOrdersCt = a.orders - a.cancelledOrders;
+    const priceEa = liveQty > 0 ? Math.round(a.landedTotal/liveQty*100)/100 : 0;
+    return {key, category:a.category, name:a.name, qty:liveQty, orders:liveOrdersCt,
+             price_ea:priceEa, total: Math.round(a.landedTotal*100)/100};
+  });
+  list.sort((x,y) => y.total - x.total);
+  return list;
+}
+
+// ---- mass-apply a per-unit PAS rate to every single-item order for a SKU ----
+function applySkuRate(category, name, rate){
+  const key = category + '|||' + name;
+  state.skuRates[key] = rate;
+  let applied = 0, skipped = 0;
+  DATA.orders.forEach(base => {
+    if(state.deleted.indexOf(base.id) !== -1) return;
+    const o = mergedOrder(base);
+    const items = parseOrderItems(o);
+    if(items.length === 1 && items[0].name === name && o.category === category){
+      state.fees[o.id] = Math.round(rate * items[0].qty * 100) / 100;
+      applied++;
+    } else if(o.category === category && items.some(it => it.name === name)){
+      skipped++;
+    }
+  });
+  saveState();
+  renderAll();
+  const fb = document.getElementById('feedback-' + safeId(key));
+  if(fb){
+    fb.textContent = `Applied to ${applied} order${applied===1?'':'s'}` + (skipped ? ` · ${skipped} mixed-item order${skipped===1?'':'s'} skipped` : '');
+    setTimeout(()=>{ if(fb) fb.textContent=''; }, 6000);
+  }
+}
+
+let activeTab = 'All';
+let activeStatusFilter = '';
+let sortKey = 'order_date', sortDir = -1;
+let itemSortKey = 'total', itemSortDir = -1;
+let locSortKey = 'orders', locSortDir = -1;
+let editingId = null;
+let page = 0;
+const PAGE_SIZE = 25;
+
+function renderStats(){
+  const orders = liveOrders();
+  const s = computeStats(orders);
+  const totalFees = orders.reduce((sum,o)=>sum+feeAmount(o), 0);
+  const totalTrue = Math.round((s.spent + totalFees)*100)/100;
+  const feesEntered = orders.some(o => getFeePct(o.id) !== null);
+
+  const cards = [
+    {status:'', label:'ORDERS', val: s.orders, cls:'teal'},
+    {status:'Confirmed', label:'CONFIRMED', val: s.confirmed, cls:'green'},
+    {status:'Shipped', label:'SHIPPED', val: s.shipped, cls:'purple'},
+    {status:'Delayed', label:'DELAYED', val: s.delayed, cls:'amber'},
+    {status:'Delivered', label:'DELIVERED', val: s.delivered, cls:'blue'},
+    {status:'Cancelled', label:'CANCELLED', val: s.cancelled, cls:'red'},
+    {status:'Refunded', label:'REFUNDED', val: s.refunded, cls:'pink'},
+    {status:null, label:'STICK %', val: s.stick_pct.toFixed(1)+'%', cls:'plain', green:true},
+    {status:null, label:'CHECKOUT SPENT', val: fmtMoney(s.spent), cls:'plain'},
+    {status:null, label:'TRUE COST', val: fmtMoney(totalTrue), cls:'plain',
+      sub: feesEntered ? `incl. ${fmtMoney(totalFees)} in PAS` : 'add PAS below to see this rise'},
+  ];
+  const icons = {ORDERS:'🛒',CONFIRMED:'✅',SHIPPED:'🚚',DELAYED:'⏱',DELIVERED:'📦',CANCELLED:'⊗',REFUNDED:'↺','STICK %':'📈','CHECKOUT SPENT':'$','TRUE COST':'💰'};
+  document.getElementById('statsRow').innerHTML = cards.map(c => `
+    <div class="stat ${c.cls} ${c.status!==null ? 'clickable':''} ${activeStatusFilter===c.status && c.status ? 'active-filter':''}" ${c.status!==null?`data-status="${c.status}"`:''}>
+      <div class="lbl">${icons[c.label]} ${c.label}</div>
+      <div class="val ${c.green?'green-txt':''}">${c.val}</div>
+      ${c.sub?`<div class="sub">${c.sub}</div>`:''}
+    </div>
+  `).join('');
+
+  document.querySelectorAll('.stat.clickable').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const status = el.dataset.status;
+      activeStatusFilter = status;
+      document.getElementById('statusFilter').value = status;
+      page = 0;
+      renderOrders();
+      const anchor = document.getElementById('ordersAnchor');
+      if(anchor.scrollIntoView) anchor.scrollIntoView({behavior:'smooth', block:'start'});
+    });
+  });
+}
+
+function renderTabs(){
+  const orders = liveOrders();
+  const tabs = ['All', ...DATA.tabs];
+  const counts = {'All': orders.length};
+  DATA.tabs.forEach(t => counts[t] = orders.filter(o=>o.tab===t).length);
+  document.getElementById('itemTabs').innerHTML = tabs.map(t => `
+    <div class="tab ${t===activeTab?'active':''}" data-tab="${t}">${t} <span class="n">${counts[t]}</span></div>
+  `).join('');
+  document.querySelectorAll('.tab').forEach(el => {
+    el.addEventListener('click', () => { activeTab = el.dataset.tab; page = 0; renderAll(); });
+  });
+
+  const brandSel = document.getElementById('brandFilter');
+  if(!brandSel.dataset.built){
+    brandSel.innerHTML = '<option value="">All brands</option>' + DATA.tabs.map(t=>`<option>${t}</option>`).join('');
+    brandSel.dataset.built = '1';
+  }
+
+  const retailerSel = document.getElementById('retailerFilter');
+  if(!retailerSel.dataset.built){
+    const retailers = [...new Set(DATA.orders.map(o=>o.retailer))].sort();
+    retailerSel.innerHTML = '<option value="">All retailers</option>' + retailers.map(r=>`<option>${r}</option>`).join('');
+    retailerSel.dataset.built = '1';
+  }
+
+  const locSel = document.getElementById('locationFilter');
+  if(!locSel.dataset.built){
+    const locs = computeLocations(DATA.orders).sort((a,b)=>a.label.localeCompare(b.label));
+    locSel.innerHTML = '<option value="">All addresses</option>' + locs.map(l=>`<option value="${escAttr(l.key)}">${l.label} (${l.orders})</option>`).join('');
+    locSel.dataset.built = '1';
+  }
+}
+
+function currentTabOrders(){
+  const orders = liveOrders();
+  if(activeTab === 'All') return orders;
+  return orders.filter(o => o.tab === activeTab);
+}
+
+function renderLocations(){
+  const locs = computeLocations(currentTabOrders());
+  let rows = locs.slice().sort((a,b)=>{
+    const av=a[locSortKey], bv=b[locSortKey];
+    if(typeof av === 'string') return av.localeCompare(bv)*locSortDir;
+    return ((av||0)-(bv||0))*locSortDir;
+  });
+  const body = document.getElementById('locationsBody');
+  if(rows.length===0){
+    body.innerHTML = '<tr class="empty-row"><td colspan="7">No locations in this view.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(l => `
+    <tr>
+      <td>${l.label}</td>
+      <td class="num-cell">${l.orders}</td>
+      <td class="num-cell">${l.delivered||''}</td>
+      <td class="num-cell">${l.delayed||''}</td>
+      <td class="num-cell">${l.cancelled||''}</td>
+      <td class="num-cell">${l.refunded||''}</td>
+      <td class="num-cell mono">${l.lastOrder}</td>
+    </tr>
+  `).join('');
+}
+
+function renderItems(){
+  const items = computeItems(currentTabOrders());
+  let rows = items.slice().sort((a,b)=>{
+    const av=a[itemSortKey], bv=b[itemSortKey];
+    if(typeof av === 'string') return av.localeCompare(bv)*itemSortDir;
+    return (av-bv)*itemSortDir;
+  });
+  const body = document.getElementById('itemsBody');
+  if(rows.length===0){
+    body.innerHTML = '<tr class="empty-row"><td colspan="7">No items in this view.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(it => {
+    const rateKey = it.category + '|||' + it.name;
+    const savedRate = state.skuRates[rateKey];
+    const fbId = 'feedback-' + safeId(rateKey);
+    return `
+    <tr>
+      <td>${it.category}</td>
+      <td>${it.name}</td>
+      <td class="num-cell">${it.qty}</td>
+      <td class="num-cell">${it.orders}</td>
+      <td class="num-cell">${fmtMoney(it.price_ea)}</td>
+      <td class="num-cell">${fmtMoney(it.total)}</td>
+      <td>
+        <div class="sku-apply">
+          <span class="fee-hint">$</span>
+          <input type="number" class="sku-rate-input" min="0" step="0.5" placeholder="—"
+                 data-cat="${escAttr(it.category)}" data-name="${escAttr(it.name)}"
+                 value="${savedRate!==undefined?savedRate:''}">
+          <button class="apply-btn" data-cat="${escAttr(it.category)}" data-name="${escAttr(it.name)}">Apply to all</button>
+        </div>
+        <span class="apply-feedback" id="${fbId}"></span>
+      </td>
+    </tr>
+  `;}).join('');
+
+  body.querySelectorAll('.apply-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const cat = btn.dataset.cat, name = btn.dataset.name;
+      const input = body.querySelector(`.sku-rate-input[data-cat="${CSS.escape(cat)}"][data-name="${CSS.escape(name)}"]`);
+      const rate = Number(input.value);
+      if(!input.value || isNaN(rate) || rate < 0) return;
+      applySkuRate(cat, name, rate);
+    });
+  });
+}
+
+function matchesSearch(o, q){
+  if(!q) return true;
+  q = q.toLowerCase();
+  return [o.order_number, o.items_sku_or_name, o.shipping_name, o.account_email, o.retailer]
+    .some(f => (f||'').toLowerCase().includes(q));
+}
+
+function buildEditRow(o){
+  return `
+  <tr class="edit-row" data-edit-row="${o.id}">
+    <td colspan="12">
+      <div class="edit-form">
+        <label>Category <input class="ef" data-f="category" value="${escAttr(o.category)}"></label>
+        <label>Retailer <input class="ef" data-f="retailer" value="${escAttr(o.retailer)}"></label>
+        <label>Order # <input class="ef" data-f="order_number" value="${escAttr(o.order_number)}"></label>
+        <label>Order date <input class="ef" type="date" data-f="order_date" value="${escAttr(o.order_date)}"></label>
+        <label>Delivered date <input class="ef" type="date" data-f="delivered_date" value="${escAttr(o.delivered_date)}"></label>
+        <label>Status
+          <select class="ef" data-f="status">
+            ${STATUS_OPTIONS.map(s=>`<option ${o.status===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </label>
+        <label>Total charged $ <input class="ef" type="number" step="0.01" data-f="charged" value="${o.charged}"></label>
+        <label>Buyer <input class="ef" data-f="shipping_name" value="${escAttr(o.shipping_name)}"></label>
+        <label class="wide">Items <input class="ef" data-f="items_sku_or_name" value="${escAttr(o.items_sku_or_name)}"></label>
+        <label class="wide">Notes <input class="ef" data-f="notes" value="${escAttr(o.notes)}"></label>
+      </div>
+      <div class="edit-actions">
+        <button class="save-edit-btn" data-id="${o.id}">Save</button>
+        <button class="cancel-edit-btn" data-id="${o.id}">Cancel</button>
+      </div>
+    </td>
+  </tr>`;
+}
+
+function renderDeletedBanner(){
+  const el = document.getElementById('deletedBanner');
+  const n = state.deleted.length;
+  if(!n){ el.innerHTML=''; return; }
+  el.innerHTML = `<div class="deleted-banner"><span>${n} order${n===1?'':'s'} deleted from this tracker.</span><button id="undoDeleteBtn">Restore all</button></div>`;
+  document.getElementById('undoDeleteBtn').addEventListener('click', ()=>{
+    state.deleted = [];
+    saveState();
+    renderAll();
+  });
+}
+
+function renderOrders(){
+  const brand = document.getElementById('brandFilter').value;
+  const retailer = document.getElementById('retailerFilter').value;
+  const location = document.getElementById('locationFilter').value;
+  const status = document.getElementById('statusFilter').value;
+  const q = document.getElementById('search').value;
+
+  let rows = currentTabOrders();
+  if(brand) rows = rows.filter(o => o.tab === brand);
+  if(retailer) rows = rows.filter(o => o.retailer === retailer);
+  if(location) rows = rows.filter(o => locationKey(o.shipping_address) === location);
+  if(status) rows = rows.filter(o => o.status === status);
+  rows = rows.filter(o => matchesSearch(o, q));
+
+  document.getElementById('allPill').textContent = `All ${rows.length}`;
+  renderDeletedBanner();
+
+  rows = rows.slice().sort((a,b)=>{
+    let av, bv;
+    if(sortKey==='feePct'){ av=getFeePct(a.id)||0; bv=getFeePct(b.id)||0; }
+    else if(sortKey==='trueCost'){ av=trueCost(a); bv=trueCost(b); }
+    else { av=a[sortKey]; bv=b[sortKey]; }
+    if(typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv)*sortDir;
+    return ((av||0)-(bv||0))*sortDir;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  if(page >= totalPages) page = totalPages - 1;
+  if(page < 0) page = 0;
+  const pageRows = rows.slice(page*PAGE_SIZE, page*PAGE_SIZE + PAGE_SIZE);
+
+  const body = document.getElementById('ordersBody');
+  if(pageRows.length===0){
+    body.innerHTML = '<tr class="empty-row"><td colspan="12">No orders match these filters.</td></tr>';
+  } else {
+    body.innerHTML = pageRows.map(o => {
+      const pct = getFeePct(o.id);
+      const tc = trueCost(o);
+      const bumped = pct !== null && pct > 0;
+      const row = `
+      <tr>
+        <td>${o.category}</td>
+        <td>${o.retailer}</td>
+        <td class="mono">${o.order_number}</td>
+        <td class="mono">${o.order_date}</td>
+        <td><span class="status-pill status-${o.status}">${o.status}</span></td>
+        <td class="items-cell">${o.items_sku_or_name}</td>
+        <td class="num-cell">${fmtMoney(o.charged)}</td>
+        <td class="num-cell">
+          <span class="fee-hint">$</span>
+          <input type="number" class="fee-input ${bumped?'has-value':''}" data-id="${o.id}"
+                 min="0" step="0.5" placeholder="—"
+                 value="${pct===null?'':pct}">
+        </td>
+        <td class="num-cell true-cost ${bumped?'bumped':''}">${fmtMoney(tc)}</td>
+        <td>${o.shipping_name}</td>
+        <td class="notes-cell">${o.notes}</td>
+        <td class="actions-cell">
+          <button class="icon-btn edit-btn" data-id="${o.id}" title="Edit">✎</button>
+          <button class="icon-btn danger delete-btn" data-id="${o.id}" title="Delete">🗑</button>
+        </td>
+      </tr>`;
+      return row + (editingId === o.id ? buildEditRow(o) : '');
+    }).join('');
+
+    body.querySelectorAll('.fee-input').forEach(inp => {
+      inp.addEventListener('change', async (e)=>{
+        const id = Number(e.target.dataset.id);
+        const raw = e.target.value.trim();
+        if(raw===''){ delete state.fees[id]; } else { state.fees[id] = Math.max(0, Number(raw)); }
+        await saveState();
+        renderStats();
+        renderOrders();
+      });
+    });
+
+    body.querySelectorAll('.edit-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{ editingId = Number(btn.dataset.id); renderOrders(); });
+    });
+    body.querySelectorAll('.delete-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = Number(btn.dataset.id);
+        const ord = rows.find(r=>r.id===id);
+        const label = ord ? `${ord.retailer} order ${ord.order_number}` : 'this order';
+        if(window.confirm(`Delete ${label}? This removes it from the tracker (can be restored via "Restore all").`)){
+          state.deleted.push(id);
+          if(editingId===id) editingId=null;
+          saveState();
+          renderAll();
+        }
+      });
+    });
+    body.querySelectorAll('.cancel-edit-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{ editingId = null; renderOrders(); });
+    });
+    body.querySelectorAll('.edit-row').forEach(tr=>{
+      const id = Number(tr.dataset.editRow);
+      const saveBtn = tr.querySelector('.save-edit-btn');
+      if(!saveBtn) return;
+      saveBtn.addEventListener('click', ()=>{
+        const fields = {};
+        tr.querySelectorAll('.ef').forEach(inp=>{
+          const f = inp.dataset.f;
+          fields[f] = f==='charged' ? (parseFloat(inp.value)||0) : inp.value;
+        });
+        state.edits[id] = Object.assign({}, state.edits[id]||{}, fields);
+        editingId = null;
+        saveState();
+        renderAll();
+      });
+    });
+  }
+
+  document.getElementById('pageInfo').textContent = `Page ${page+1} of ${totalPages}`;
+  document.getElementById('prevBtn').disabled = page<=0;
+  document.getElementById('nextBtn').disabled = page>=totalPages-1;
+}
+
+function renderAll(){
+  renderStats();
+  renderTabs();
+  renderLocations();
+  renderItems();
+  renderOrders();
+  updateSortIndicators();
+}
+
+function updateSortIndicators(){
+  document.querySelectorAll('#ordersTable thead th.sortable').forEach(th=>{
+    const base = th.textContent.replace(/ ?[▲▼]$/,'');
+    th.textContent = base;
+    th.classList.toggle('sorted', th.dataset.key===sortKey);
+    if(th.dataset.key===sortKey) th.textContent = base + (sortDir===1?' ▲':' ▼');
+  });
+  document.querySelectorAll('#itemsTable thead th.sortable').forEach(th=>{
+    const base = th.textContent.replace(/ ?[▲▼]$/,'');
+    th.textContent = base;
+    th.classList.toggle('sorted', th.dataset.key===itemSortKey);
+    if(th.dataset.key===itemSortKey) th.textContent = base + (itemSortDir===1?' ▲':' ▼');
+  });
+  document.querySelectorAll('#locationsTable thead th.sortable').forEach(th=>{
+    const base = th.textContent.replace(/ ?[▲▼]$/,'');
+    th.textContent = base;
+    th.classList.toggle('sorted', th.dataset.key===locSortKey);
+    if(th.dataset.key===locSortKey) th.textContent = base + (locSortDir===1?' ▲':' ▼');
+  });
+}
+
+document.querySelectorAll('#ordersTable thead th.sortable').forEach(th=>{
+  th.addEventListener('click', ()=>{
+    const key = th.dataset.key;
+    if(sortKey===key) sortDir *= -1; else { sortKey = key; sortDir = key==='order_date'?-1:1; }
+    renderOrders(); updateSortIndicators();
+  });
+});
+document.querySelectorAll('#itemsTable thead th.sortable').forEach(th=>{
+  th.addEventListener('click', ()=>{
+    const key = th.dataset.key;
+    if(itemSortKey===key) itemSortDir *= -1; else { itemSortKey = key; itemSortDir = 1; }
+    renderItems(); updateSortIndicators();
+  });
+});
+document.querySelectorAll('#locationsTable thead th.sortable').forEach(th=>{
+  th.addEventListener('click', ()=>{
+    const key = th.dataset.key;
+    if(locSortKey===key) locSortDir *= -1; else { locSortKey = key; locSortDir = key==='label'?1:-1; }
+    renderLocations(); updateSortIndicators();
+  });
+});
+
+document.getElementById('brandFilter').addEventListener('change', ()=>{ page=0; renderOrders(); });
+document.getElementById('retailerFilter').addEventListener('change', ()=>{ page=0; renderOrders(); });
+document.getElementById('locationFilter').addEventListener('change', ()=>{ page=0; renderOrders(); });
+document.getElementById('statusFilter').addEventListener('change', (e)=>{
+  activeStatusFilter = e.target.value; page=0; renderOrders(); renderStats();
+});
+document.getElementById('search').addEventListener('input', ()=>{ page=0; renderOrders(); });
+document.getElementById('prevBtn').addEventListener('click', ()=>{ page--; renderOrders(); });
+document.getElementById('nextBtn').addEventListener('click', ()=>{ page++; renderOrders(); });
+
+document.getElementById('descText').textContent =
+  "Retail-arbitrage order tracker for Pokemon, Mattel, One Piece and every other brand you order from — brands you've ordered from more than once get their own tab automatically instead of piling into \"Other\". Pulled from order confirmation, shipping and delivery emails.";
+document.getElementById('syncLabel').textContent = "Snapshot from " + DATA.generated;
+document.getElementById('genDate').textContent = DATA.generated;
+
+loadState();
+</script>
+</body>
+</html>

@@ -746,9 +746,27 @@ app.delete('/api/admin/members/:id', auth, adminOnly, (req, res) => {
   res.json({ success: true });
 });
 
+// ─── ORDER TRACKER (admin-only, not in /public) ──────────────────────────────
+// Requires a valid admin JWT passed as ?token=<jwt> in the URL.
+// The token is verified server-side before the file is sent, so the page is
+// never reachable without credentials. The link is only surfaced inside
+// admin.html (itself behind a login wall).
+app.get('/admin/orders', (req, res) => {
+  const token = req.query.token || (req.headers.authorization || '').replace('Bearer ', '');
+  if (!token) return res.status(401).send('<h2>401 – Not authorised</h2>');
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.role !== 'admin') return res.status(403).send('<h2>403 – Admin only</h2>');
+    res.sendFile(path.join(__dirname, 'order_tracker.html'));
+  } catch(e) {
+    res.status(401).send('<h2>401 – Invalid or expired token</h2>');
+  }
+});
+
 // ─── START ───────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n✅ Inventory Site v2 running at http://localhost:${PORT}`);
   console.log(`   Admin panel: http://localhost:${PORT}/admin.html`);
+  console.log(`   Order tracker: http://localhost:${PORT}/admin/orders?token=<jwt>`);
   console.log(`   Admin password: ${ADMIN_PASSWORD}\n`);
 });
