@@ -133,6 +133,9 @@ try { db.exec("ALTER TABLE bot_orders ADD COLUMN tracking TEXT"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Unship' WHERE status='Delayed' OR status='delayed'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE order_number IN ('25293','25164','24662')"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE order_number='902003606387023'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0309059483' WHERE order_number='25293' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0308841629' WHERE order_number='25164' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0304222055' WHERE order_number='24662' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS members (
