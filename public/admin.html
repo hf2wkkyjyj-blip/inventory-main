@@ -472,6 +472,10 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       </select>
       <input type="text" id="bot-search" oninput="renderBotOrders()" placeholder="Search order #, item, buyer…" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:200px;">
       <button class="btn btn-ghost btn-sm" id="bot-scan-btn" onclick="botScanEmails()"><i class="fa fa-envelope"></i> Scan Emails</button>
+      <div style="display:flex;gap:4px;align-items:center;">
+        <input type="text" id="bot-order-scan-input" placeholder="Order # …" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:130px;" onkeydown="if(event.key==='Enter')botScanOrder()">
+        <button class="btn btn-ghost btn-sm" id="bot-order-scan-btn" onclick="botScanOrder()"><i class="fa fa-search"></i> Scan Order</button>
+      </div>
       <button class="btn btn-ghost btn-sm" id="bot-refresh-btn" onclick="botRefresh()"><i class="fa fa-sync"></i> Refresh</button>
       <button class="btn btn-primary btn-sm" onclick="showBotAddForm()"><i class="fa fa-plus"></i> Add Order</button>
     </div>
@@ -1980,6 +1984,25 @@ async function addBotOrder() {
   await api('POST', '/admin/bot-orders', o);
   document.getElementById('bot-add-form').style.display = 'none';
   await loadBotOrders();
+}
+
+async function botScanOrder() {
+  const input = document.getElementById('bot-order-scan-input');
+  const orderNum = input.value.trim();
+  if (!orderNum) { input.focus(); return; }
+  const btn = document.getElementById('bot-order-scan-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa fa-search fa-spin"></i> Scanning…';
+  const result = await api('POST', '/admin/scrape-emails/order', { order_number: orderNum });
+  await loadBotOrders();
+  btn.disabled = false;
+  if (result?.error) {
+    btn.innerHTML = '<i class="fa fa-exclamation-triangle"></i> Error';
+    setTimeout(() => { btn.innerHTML = '<i class="fa fa-search"></i> Scan Order'; }, 3000);
+  } else {
+    btn.innerHTML = `<i class="fa fa-check"></i> ${result?.found||0} email(s)`;
+    setTimeout(() => { btn.innerHTML = '<i class="fa fa-search"></i> Scan Order'; }, 3000);
+  }
 }
 
 async function botScanEmails() {

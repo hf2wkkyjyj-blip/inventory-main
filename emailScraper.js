@@ -255,4 +255,87 @@ async function runEmailScraper(db) {
   });
 }
 
-module.exports = { runEmailScraper };
+// ── Scan a specific order number — searches ALL Gmail, not just UNSEEN ────────
+
+function fetchByOrderNumber(imap, orderNumber, db) {
+  return new Promise((resolve, reject) => {
+    imap.openBox('INBOX', true, (err) => {
+      if (err) return reject(err);
+
+      // TEXT searches headers + body — catches order number anywhere in the email
+      imap.search([['TEXT', orderNumber]], (err, uids) => {
+        if (err) return reject(err);
+        if (!uids || !uids.length) {
+          console.log(`   No emails found for order #${orderNumber}`);
+          return resolve({ found: 0, updated: 0 });
+        }
+
+        console.log(`   Found ${uids.length} email(s) for order #${orderNumber}`);
+        const f = imap.fetch(uids, { bodies: '' }); // read-only, don't mark seen
+        const jobs = [];
+
+        f.on('message', (msg) => {
+          let raw = '';
+          msg.on('body', stream => stream.on('data', c => raw += c.toString()));
+          msg.once('end', () => {
+            jobs.push(
+              simpleParser(raw)
+                .then(parsed => processEmail(parsed, db))
+                .catch(e => { console.log('   ⚠️  parse error:', e.message); return false; })
+            );
+          });
+        });
+
+        f.once('error', reject);
+        f.once('end', () =>
+          Promise.all(jobs).then(results => resolve({
+            found: uids.length,
+            updated: results.filter(Boolean).length
+          }))
+        );
+      });
+    });
+  });
+}
+
+async function scrapeByOrderNumber(db, orderNumber) {
+  if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) return { error: 'GMAIL env vars not set' };
+  if (!orderNumber) return { error: 'No order number provided' };
+
+  console.log(`\n📧 Order scan: searching Gmail for #${orderNumber}…`);
+
+  const imap = new Imap({
+    user:        process.env.GMAIL_USER,
+    password:    process.env.GMAIL_APP_PASSWORD,
+    host:        'imap.gmail.com',
+    port:        993,
+    tls:         true,
+    tlsOptions:  { rejectUnauthorized: false },
+    connTimeout: 20000,
+    authTimeout: 10000,
+  });
+
+  return new Promise((resolve) => {
+    imap.once('ready', async () => {
+      try {
+        const result = await fetchByOrderNumber(imap, orderNumber, db);
+        console.log(`📧 Order scan done: ${result.found} email(s) found, ${result.updated} update(s)\n`);
+        resolve(result);
+      } catch(e) {
+        console.error('📧 Order scan error:', e.message);
+        resolve({ error: e.message });
+      } finally {
+        try { imap.end(); } catch(_) {}
+      }
+    });
+
+    imap.once('error', e => {
+      console.error('📧 IMAP error:', e.message);
+      resolve({ error: e.message });
+    });
+
+    imap.connect();
+  });
+}
+
+module.exports = { runEmailScraper, scrapeByOrderNumber };
