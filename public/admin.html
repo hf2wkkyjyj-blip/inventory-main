@@ -465,6 +465,9 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <option>Confirmed</option><option>Shipped</option><option>Unship</option>
         <option>Delivered</option><option>Cancelled</option><option>Refunded</option>
       </select>
+      <select id="bot-filter-address" onchange="renderBotOrders()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);max-width:180px;">
+        <option value="">All addresses</option>
+      </select>
       <input type="text" id="bot-search" oninput="renderBotOrders()" placeholder="Search order #, item, buyer…" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:200px;">
       <button class="btn btn-ghost btn-sm" onclick="loadBotOrders()"><i class="fa fa-sync"></i> Refresh</button>
       <button class="btn btn-primary btn-sm" onclick="showBotAddForm()"><i class="fa fa-plus"></i> Add Order</button>
@@ -515,7 +518,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
           <th onclick="botSort('order_total')" style="text-align:right;">TOTAL</th>
           <th onclick="botSort('shipping_name')">BUYER</th>
           <th>TRACKING</th>
-          <th>NOTES</th>
+          <th onclick="botSort('shipping_address')">ADDRESS</th>
           <th></th>
         </tr>
       </thead>
@@ -1748,6 +1751,7 @@ async function loadBotOrders() {
   buildBotStats();
   buildBotCatTabs();
   buildBotRetailerFilter();
+  buildBotAddressFilter();
   renderBotOrders();
 }
 
@@ -1790,6 +1794,13 @@ function buildBotRetailerFilter() {
   sel.innerHTML = '<option value="">All retailers</option>' + retailers.map(r=>`<option${r===cur?' selected':''}>${esc(r)}</option>`).join('');
 }
 
+function buildBotAddressFilter() {
+  const addrs = [...new Set(_botOrders.map(o=>o.shipping_address).filter(Boolean))].sort();
+  const sel = document.getElementById('bot-filter-address');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All addresses</option>' + addrs.map(a=>`<option value="${esc(a)}"${a===cur?' selected':''}>${esc(a)}</option>`).join('');
+}
+
 function botSetCat(cat) {
   document.getElementById('bot-cat-tabs').dataset.active = cat;
   document.querySelectorAll('.btab').forEach(b => b.classList.toggle('active', b.textContent.trim().startsWith(cat)));
@@ -1818,13 +1829,15 @@ function renderBotOrders() {
   const cat = document.getElementById('bot-cat-tabs').dataset.active || 'All';
   const retailer = document.getElementById('bot-filter-retailer').value;
   const status = document.getElementById('bot-filter-status').value || _botStatusFilter;
+  const addrFilter = document.getElementById('bot-filter-address').value;
   const search = (document.getElementById('bot-search').value||'').toLowerCase();
   let rows = _botOrders.filter(o => {
     if (cat !== 'All' && (o.category||'Other') !== cat) return false;
     if (retailer && o.retailer !== retailer) return false;
     if (status && o.status !== status) return false;
+    if (addrFilter && o.shipping_address !== addrFilter) return false;
     if (search) {
-      const hay = [(o.order_number||''),(o.items||''),(o.shipping_name||''),(o.retailer||''),(o.notes||'')].join(' ').toLowerCase();
+      const hay = [(o.order_number||''),(o.items||''),(o.shipping_name||''),(o.retailer||''),(o.shipping_address||'')].join(' ').toLowerCase();
       if (!hay.includes(search)) return false;
     }
     return true;
@@ -1858,7 +1871,7 @@ function renderBotOrders() {
       <td style="text-align:right;font-variant-numeric:tabular-nums;">${o.order_total?'$'+Number(o.order_total).toFixed(2):'—'}</td>
       <td>${esc(o.shipping_name||'—')}</td>
       <td style="white-space:nowrap;">${o.tracking ? `<a href="${botTrackingUrl(o.retailer, o.tracking)}" target="_blank" style="color:#60a5fa;font-size:12px;font-weight:600;">${esc(o.tracking)}</a>` : '<span style="color:var(--muted);">—</span>'}</td>
-      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px;" title="${esc(o.notes||'')}">${esc(o.notes||'')}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px;" title="${esc(o.shipping_address||'')}">${esc(o.shipping_address||'—')}</td>
       <td style="white-space:nowrap;">
         <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:4px;" onclick="botEditRow(${o.id})" title="Edit"><i class="fa fa-pen" style="font-size:11px;"></i></button>
         <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;" onclick="deleteBotOrder(${o.id})" title="Delete"><i class="fa fa-trash" style="font-size:11px;"></i></button>
