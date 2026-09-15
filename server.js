@@ -931,11 +931,24 @@ app.get('/admin/orders', (req, res) => {
   }
 });
 
+// ─── EMAIL SCRAPER ───────────────────────────────────────────────────────────
+const { runEmailScraper } = require('./emailScraper');
+
+// Manual trigger — Scan Emails button in UI calls this
+app.post('/api/admin/scrape-emails', auth, adminOnly, (req, res) => {
+  res.json({ started: true });
+  runEmailScraper(db).catch(e => console.error('scrape-emails error:', e));
+});
+
+// Auto-run: 5 min after server start, then every 2 hours
+setTimeout(() => runEmailScraper(db), 5 * 60 * 1000);
+setInterval(() => runEmailScraper(db), 2 * 60 * 60 * 1000);
+
 // ─── AUTO TRACKING UPDATE ────────────────────────────────────────────────────
 const https = require('https');
 const http  = require('http');
 
-function fetchUrlPost(url, jsonBody) {
+function fetchUrlPost(url, jsonBody, timeoutMs=8000) {
   return new Promise((resolve, reject) => {
     const data = JSON.stringify(jsonBody);
     const parsed = new URL(url);
@@ -955,7 +968,7 @@ function fetchUrlPost(url, jsonBody) {
     });
     req.on('error', reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
-    req.setTimeout(15000);
+    req.setTimeout(timeoutMs);
     req.write(data);
     req.end();
   });
@@ -969,7 +982,7 @@ function fetchUrl(url) {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/json,*/*'
       },
-      timeout: 15000
+      timeout: 7000
     }, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
@@ -1015,36 +1028,8 @@ async function checkTracking(tracking, carrier) {
   try {
     let res, b, bl;
     if (carrier === 'ups') {
-      // Use UPS's internal JSON API (same one their website uses)
-      res = await fetchUrlPost('https://www.ups.com/track/api/Track/GetStatus?loc=en_US', {
-        Locale: 'en_US', TrackingNumber: [tracking]
-      });
-      console.log(`   UPS API status: ${res.status}, body[:200]: ${res.body.slice(0,200)}`);
-      try {
-        const json = JSON.parse(res.body);
-        const pkg = json?.trackResponse?.shipment?.[0]?.package?.[0];
-        const activity = (pkg?.activity || [])[0];
-        const statusType = (activity?.status?.type || '').toUpperCase();
-        const desc = (activity?.status?.description || '').toLowerCase();
-        console.log(`   UPS parsed → type:${statusType} desc:${desc}`);
-        if (statusType === 'D' || desc.includes('delivered')) {
-          result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered';
-        } else if (desc.includes('out for delivery')) {
-          result.trackingStatus = 'OFD';
-        } else {
-          result.trackingStatus = 'In Transit';
-          const sd = pkg?.scheduledDelivery?.date;
-          if (sd && sd.length === 8) result.expectedDate = `${sd.slice(0,4)}-${sd.slice(4,6)}-${sd.slice(6,8)}`;
-        }
-      } catch(e) {
-        console.log(`   UPS JSON parse failed (${e.message}), trying HTML fallback`);
-        res = await fetchUrl(`https://www.ups.com/track?loc=en_US&tracknum=${tracking}&requester=WT/trackdetails`);
-        b = res.body; bl = b.toLowerCase();
-        console.log(`   UPS HTML status:${res.status} body[:200]: ${b.slice(0,200)}`);
-        if (bl.includes('"delivered"') || bl.includes('>delivered<')) { result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered'; }
-        else if (bl.includes('out for delivery')) { result.trackingStatus = 'OFD'; }
-        else { result.expectedDate = parseExpectedDate(b); }
-      }
+      // UPS blocks cloud/server IPs — use the ✓ Del button in the UI to mark manually
+      console.log(`   ⏭️  Skipping UPS ${tracking} (blocked from server — use manual ✓ Del button)`);
     } else if (carrier === 'narvar') {
       res = await fetchUrl(`https://pokemoncenter.narvar.com/pokemoncenter/tracking?tracking_numbers=${tracking}&locale=en_US`);
       b = res.body; bl = b.toLowerCase();
@@ -1122,7 +1107,7 @@ async function autoUpdateTracking() {
       const carrier = detectCarrier(order.tracking);
       if (!carrier) { _refreshProgress.checked++; continue; }
 
-      await new Promise(r => setTimeout(r, 1500)); // be polite to carrier sites
+      await new Promise(r => setTimeout(r, 800)); // brief pause between requests
 
       const { newStatus, trackingStatus, expectedDate } = await checkTracking(order.tracking, carrier);
       if (newStatus === 'Delivered') {

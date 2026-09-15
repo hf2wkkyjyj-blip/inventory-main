@@ -471,6 +471,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <option value="">All addresses</option>
       </select>
       <input type="text" id="bot-search" oninput="renderBotOrders()" placeholder="Search order #, item, buyer…" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:200px;">
+      <button class="btn btn-ghost btn-sm" id="bot-scan-btn" onclick="botScanEmails()"><i class="fa fa-envelope"></i> Scan Emails</button>
       <button class="btn btn-ghost btn-sm" id="bot-refresh-btn" onclick="botRefresh()"><i class="fa fa-sync"></i> Refresh</button>
       <button class="btn btn-primary btn-sm" onclick="showBotAddForm()"><i class="fa fa-plus"></i> Add Order</button>
     </div>
@@ -1979,6 +1980,18 @@ async function addBotOrder() {
   await api('POST', '/admin/bot-orders', o);
   document.getElementById('bot-add-form').style.display = 'none';
   await loadBotOrders();
+}
+
+async function botScanEmails() {
+  const btn = document.getElementById('bot-scan-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa fa-envelope fa-spin"></i> Scanning…';
+  await api('POST', '/admin/scrape-emails').catch(()=>{});
+  // Give Railway ~8s to scan and parse emails
+  await new Promise(r => setTimeout(r, 8000));
+  await loadBotOrders();
+  btn.disabled = false;
+  btn.innerHTML = '<i class="fa fa-envelope"></i> Scan Emails';
 }
 
 async function markDelivered(id) {
