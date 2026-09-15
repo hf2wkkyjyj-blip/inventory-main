@@ -125,6 +125,8 @@ try { db.exec("ALTER TABLE bot_orders ADD COLUMN shipping_address TEXT"); } catc
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN order_total REAL DEFAULT 0"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN refunded_amount REAL DEFAULT 0"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN notes TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN tracking_status TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN expected_date TEXT"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='ordered'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE status='delivered' OR status='out_for_delivery'"); } catch(e) {}
@@ -875,6 +877,38 @@ app.get('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
   res.json(orders);
 });
 
+// Manual refresh: check all Shipped orders against carrier sites right now
+app.post('/api/admin/bot-orders/refresh-tracking', auth, adminOnly, async (req, res) => {
+  try {
+    const shipped = db.prepare(
+      `SELECT id, order_number, tracking, retailer FROM bot_orders WHERE status='Shipped' AND tracking IS NOT NULL AND tracking != ''`
+    ).all([]);
+    const today = new Date().toISOString().split('T')[0];
+    const results = [];
+    for (const order of shipped) {
+      const carrier = detectCarrier(order.tracking);
+      if (!carrier) continue;
+      await new Promise(r => setTimeout(r, 800));
+      const { newStatus, trackingStatus, expectedDate } = await checkTracking(order.tracking, carrier);
+      if (newStatus === 'Delivered') {
+        db.prepare(`UPDATE bot_orders SET status='Delivered', delivered_date=?, tracking_status='Delivered', expected_date=NULL WHERE id=?`).run([today, order.id]);
+        results.push({ id: order.id, order_number: order.order_number, result: 'Delivered' });
+      } else {
+        const fields = []; const vals = [];
+        if (trackingStatus) { fields.push("tracking_status=?"); vals.push(trackingStatus); }
+        if (expectedDate)   { fields.push("expected_date=?");   vals.push(expectedDate); }
+        if (fields.length) {
+          db.prepare(`UPDATE bot_orders SET ${fields.join(',')} WHERE id=?`).run([...vals, order.id]);
+          results.push({ id: order.id, order_number: order.order_number, result: trackingStatus||'', expected_date: expectedDate });
+        }
+      }
+    }
+    res.json({ checked: shipped.length, results });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
   const { category, retailer, order_number, account_email, order_date, shipping_name, shipping_address, status, items, order_total, notes } = req.body;
   const r = db.prepare(`INSERT INTO bot_orders (category,retailer,order_number,account_email,order_date,shipping_name,shipping_address,status,items,order_total,notes,received_at)
@@ -949,28 +983,99 @@ function detectCarrier(tracking) {
   return null;
 }
 
+function parseExpectedDate(text) {
+  // Try to pull a date from text like "Sep 16, 2026" or "September 16" or "09/16/2026"
+  const patterns = [
+    /(?:scheduled|estimated|expected)\s+delivery[^:]*:\s*([A-Za-z]+\.?\s+\d{1,2},?\s+\d{4})/i,
+    /(?:scheduled|estimated|expected)\s+delivery[^:]*:\s*([A-Za-z]+\.?\s+\d{1,2})/i,
+    /by\s+([A-Za-z]+\.?\s+\d{1,2},?\s+\d{4})/i,
+    /(\d{1,2}\/\d{1,2}\/\d{4})/
+  ];
+  for (const p of patterns) {
+    const m = text.match(p);
+    if (m) {
+      try {
+        const d = new Date(m[1]);
+        if (!isNaN(d)) return d.toISOString().split('T')[0];
+      } catch(e) {}
+    }
+  }
+  return null;
+}
+
 async function checkTracking(tracking, carrier) {
+  // Returns { newStatus: 'Delivered'|null, trackingStatus: 'Delivered'|'OFD'|'In Transit'|null, expectedDate: 'YYYY-MM-DD'|null }
+  const result = { newStatus: null, trackingStatus: null, expectedDate: null };
   try {
-    let res;
+    let res, b, bl;
     if (carrier === 'ups') {
       res = await fetchUrl(`https://www.ups.com/track?loc=en_US&tracknum=${tracking}&requester=WT/trackdetails`);
-      const b = res.body.toLowerCase();
-      if (b.includes('delivered')) return 'Delivered';
+      b = res.body; bl = b.toLowerCase();
+      if (bl.includes('delivered')) {
+        result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered';
+      } else if (bl.includes('out for delivery')) {
+        result.trackingStatus = 'OFD';
+      } else if (bl.includes('in transit') || bl.includes('on its way')) {
+        result.trackingStatus = 'In Transit';
+        result.expectedDate = parseExpectedDate(b);
+      } else {
+        result.expectedDate = parseExpectedDate(b);
+      }
     } else if (carrier === 'narvar') {
       res = await fetchUrl(`https://pokemoncenter.narvar.com/pokemoncenter/tracking?tracking_numbers=${tracking}&locale=en_US`);
-      const b = res.body.toLowerCase();
-      if (b.includes('"delivered"') || (b.includes('delivered') && !b.includes('estimated'))) return 'Delivered';
+      b = res.body; bl = b.toLowerCase();
+      try {
+        const json = JSON.parse(b);
+        // Narvar response shape: look for status and estimated delivery
+        const info = json.tracking_details || json.shipment || json;
+        const statusRaw = (info?.tracking_status || info?.status || '').toLowerCase();
+        const estDate = info?.estimated_delivery_date || info?.expected_delivery || info?.delivery_date;
+        if (statusRaw.includes('delivered') || bl.includes('"delivered"')) {
+          result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered';
+        } else if (statusRaw.includes('out_for_delivery') || statusRaw.includes('out for delivery') || bl.includes('out_for_delivery')) {
+          result.trackingStatus = 'OFD';
+        } else if (statusRaw || bl.includes('in_transit') || bl.includes('in transit')) {
+          result.trackingStatus = 'In Transit';
+        }
+        if (estDate) { try { const d = new Date(estDate); if (!isNaN(d)) result.expectedDate = d.toISOString().split('T')[0]; } catch(e){} }
+        // Fallback text scan
+        if (!result.expectedDate) result.expectedDate = parseExpectedDate(b);
+      } catch(e) {
+        // Not JSON, fall back to text scan
+        if (bl.includes('"delivered"') || (bl.includes('delivered') && !bl.includes('estimated'))) {
+          result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered';
+        } else if (bl.includes('out for delivery') || bl.includes('out_for_delivery')) {
+          result.trackingStatus = 'OFD';
+        }
+        result.expectedDate = parseExpectedDate(b);
+      }
     } else if (carrier === 'usps') {
       res = await fetchUrl(`https://tools.usps.com/go/TrackConfirmAction?tLabels=${tracking}`);
-      if (res.body.toLowerCase().includes('delivered')) return 'Delivered';
+      b = res.body; bl = b.toLowerCase();
+      if (bl.includes('delivered')) {
+        result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered';
+      } else if (bl.includes('out for delivery')) {
+        result.trackingStatus = 'OFD';
+      } else {
+        result.trackingStatus = 'In Transit';
+        result.expectedDate = parseExpectedDate(b);
+      }
     } else if (carrier === 'fedex') {
       res = await fetchUrl(`https://www.fedex.com/apps/fedextrack/?action=track&trackingnumber=${tracking}`);
-      if (res.body.toLowerCase().includes('delivered')) return 'Delivered';
+      b = res.body; bl = b.toLowerCase();
+      if (bl.includes('delivered')) {
+        result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered';
+      } else if (bl.includes('out for delivery')) {
+        result.trackingStatus = 'OFD';
+      } else {
+        result.trackingStatus = 'In Transit';
+        result.expectedDate = parseExpectedDate(b);
+      }
     }
   } catch (e) {
     console.log(`  ⚠️  Tracking check failed for ${tracking}: ${e.message}`);
   }
-  return null;
+  return result;
 }
 
 async function autoUpdateTracking() {
@@ -990,11 +1095,19 @@ async function autoUpdateTracking() {
 
       await new Promise(r => setTimeout(r, 1500)); // be polite to carrier sites
 
-      const newStatus = await checkTracking(order.tracking, carrier);
+      const { newStatus, trackingStatus, expectedDate } = await checkTracking(order.tracking, carrier);
       if (newStatus === 'Delivered') {
-        db.prepare(`UPDATE bot_orders SET status='Delivered', delivered_date=? WHERE id=?`).run([today, order.id]);
+        db.prepare(`UPDATE bot_orders SET status='Delivered', delivered_date=?, tracking_status='Delivered', expected_date=NULL WHERE id=?`).run([today, order.id]);
         console.log(`   ✅ Delivered: #${order.order_number} (${order.tracking})`);
         updated++;
+      } else {
+        const fields = []; const vals = [];
+        if (trackingStatus) { fields.push("tracking_status=?"); vals.push(trackingStatus); }
+        if (expectedDate) { fields.push("expected_date=?"); vals.push(expectedDate); }
+        if (fields.length) {
+          db.prepare(`UPDATE bot_orders SET ${fields.join(',')} WHERE id=?`).run([...vals, order.id]);
+          console.log(`   📦 #${order.order_number}: ${trackingStatus||''}${expectedDate?' exp '+expectedDate:''}`);
+        }
       }
     }
 

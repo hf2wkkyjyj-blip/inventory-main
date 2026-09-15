@@ -430,6 +430,8 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   .bpill-Delivered{background:#12233d;color:#60a5fa;}
   .bpill-Cancelled{background:#3a1518;color:#f87171;}
   .bpill-Refunded{background:#331a29;color:#f472b6;}
+  .bpill-OFD{background:#2a1a08;color:#fb923c;}
+  .exp-date{display:block;font-size:10px;color:#94a3b8;margin-top:2px;}
   .btab{padding:6px 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--muted);font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;}
   .btab:hover{border-color:#3a3f4d;color:var(--text);}
   .btab.active{background:#153029;border-color:#34d399;color:#34d399;}
@@ -469,7 +471,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <option value="">All addresses</option>
       </select>
       <input type="text" id="bot-search" oninput="renderBotOrders()" placeholder="Search order #, item, buyer…" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:200px;">
-      <button class="btn btn-ghost btn-sm" onclick="loadBotOrders()"><i class="fa fa-sync"></i> Refresh</button>
+      <button class="btn btn-ghost btn-sm" id="bot-refresh-btn" onclick="botRefresh()"><i class="fa fa-sync"></i> Refresh</button>
       <button class="btn btn-primary btn-sm" onclick="showBotAddForm()"><i class="fa fa-plus"></i> Add Order</button>
     </div>
   </div>
@@ -1755,6 +1757,19 @@ async function loadBotOrders() {
   renderBotOrders();
 }
 
+async function botRefresh() {
+  const btn = document.getElementById('bot-refresh-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa fa-sync fa-spin"></i> Checking…';
+  try {
+    // Hit carrier sites for all Shipped orders, then reload
+    await api('POST', '/admin/bot-orders/refresh-tracking');
+  } catch(e) { /* still reload even if check fails */ }
+  await loadBotOrders();
+  btn.disabled = false;
+  btn.innerHTML = '<i class="fa fa-sync"></i> Refresh';
+}
+
 function buildBotStats() {
   const o = _botOrders;
   const counts = {};
@@ -1866,7 +1881,7 @@ function renderBotOrders() {
       <td>${esc(o.retailer||'—')}</td>
       <td style="font-weight:600;">${esc(o.order_number||'—')}</td>
       <td style="color:var(--muted);">${(o.order_date||'').slice(0,10)||'—'}</td>
-      <td><span class="bpill bpill-${o.status||'Confirmed'}">${o.status||'Confirmed'}</span></td>
+      <td>${botStatusCell(o)}</td>
       <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(items)}">${esc(items||'—')}</td>
       <td style="text-align:right;font-variant-numeric:tabular-nums;">${o.order_total?'$'+Number(o.order_total).toFixed(2):'—'}</td>
       <td>${esc(o.shipping_name||'—')}</td>
@@ -1878,6 +1893,28 @@ function renderBotOrders() {
       </td>
     </tr>`;
   }).join('');
+}
+
+function botStatusCell(o) {
+  const st = o.status || 'Confirmed';
+  const ts = o.tracking_status || '';
+  const exp = o.expected_date || '';
+  // Show OFD badge if out for delivery
+  if (ts === 'OFD' && st === 'Shipped') {
+    const expStr = exp ? `<span class="exp-date">Exp ${fmtShortDate(exp)}</span>` : '';
+    return `<span class="bpill bpill-OFD">OFD</span>${expStr}`;
+  }
+  // Show expected date under Shipped pill
+  if (st === 'Shipped' && exp) {
+    return `<span class="bpill bpill-Shipped">Shipped</span><span class="exp-date">Exp ${fmtShortDate(exp)}</span>`;
+  }
+  return `<span class="bpill bpill-${st}">${st}</span>`;
+}
+
+function fmtShortDate(d) {
+  if (!d) return '';
+  const dt = new Date(d + 'T12:00:00');
+  return dt.toLocaleDateString('en-US', { month:'short', day:'numeric' });
 }
 
 function botTrackingUrl(retailer, tracking) {
