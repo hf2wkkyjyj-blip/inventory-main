@@ -917,6 +917,97 @@ app.get('/admin/orders', (req, res) => {
   }
 });
 
+// ─── AUTO TRACKING UPDATE ────────────────────────────────────────────────────
+const https = require('https');
+const http  = require('http');
+
+function fetchUrl(url) {
+  return new Promise((resolve, reject) => {
+    const client = url.startsWith('https') ? https : http;
+    const req = client.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/json,*/*'
+      },
+      timeout: 15000
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+
+function detectCarrier(tracking) {
+  if (!tracking) return null;
+  if (tracking.startsWith('1Z')) return 'ups';
+  if (/^87\d{10}$/.test(tracking)) return 'narvar';   // Pokemon Center / Narvar
+  if (/^9[24]\d{20}$/.test(tracking)) return 'usps';
+  if (/^(96|7489)/.test(tracking) || /^\d{12}$/.test(tracking)) return 'fedex';
+  return null;
+}
+
+async function checkTracking(tracking, carrier) {
+  try {
+    let res;
+    if (carrier === 'ups') {
+      res = await fetchUrl(`https://www.ups.com/track?loc=en_US&tracknum=${tracking}&requester=WT/trackdetails`);
+      const b = res.body.toLowerCase();
+      if (b.includes('delivered')) return 'Delivered';
+    } else if (carrier === 'narvar') {
+      res = await fetchUrl(`https://pokemoncenter.narvar.com/pokemoncenter/tracking?tracking_numbers=${tracking}&locale=en_US`);
+      const b = res.body.toLowerCase();
+      if (b.includes('"delivered"') || (b.includes('delivered') && !b.includes('estimated'))) return 'Delivered';
+    } else if (carrier === 'usps') {
+      res = await fetchUrl(`https://tools.usps.com/go/TrackConfirmAction?tLabels=${tracking}`);
+      if (res.body.toLowerCase().includes('delivered')) return 'Delivered';
+    } else if (carrier === 'fedex') {
+      res = await fetchUrl(`https://www.fedex.com/apps/fedextrack/?action=track&trackingnumber=${tracking}`);
+      if (res.body.toLowerCase().includes('delivered')) return 'Delivered';
+    }
+  } catch (e) {
+    console.log(`  ⚠️  Tracking check failed for ${tracking}: ${e.message}`);
+  }
+  return null;
+}
+
+async function autoUpdateTracking() {
+  console.log('\n🔄 Auto-tracking check started...');
+  try {
+    const shipped = db.prepare(
+      `SELECT id, order_number, tracking, retailer FROM bot_orders WHERE status='Shipped' AND tracking IS NOT NULL AND tracking != ''`
+    ).all([]);
+    console.log(`   Checking ${shipped.length} shipped orders`);
+
+    let updated = 0;
+    const today = new Date().toISOString().split('T')[0];
+
+    for (const order of shipped) {
+      const carrier = detectCarrier(order.tracking);
+      if (!carrier) { console.log(`   ⚠️  Unknown carrier for ${order.order_number} (${order.tracking})`); continue; }
+
+      await new Promise(r => setTimeout(r, 1500)); // be polite to carrier sites
+
+      const newStatus = await checkTracking(order.tracking, carrier);
+      if (newStatus === 'Delivered') {
+        db.prepare(`UPDATE bot_orders SET status='Delivered', delivered_date=? WHERE id=?`).run([today, order.id]);
+        console.log(`   ✅ Delivered: #${order.order_number} (${order.tracking})`);
+        updated++;
+      }
+    }
+
+    console.log(`🔄 Auto-tracking done: ${updated} updated to Delivered\n`);
+  } catch (e) {
+    console.error('Auto-tracking error:', e.message);
+  }
+}
+
+// Run 2 minutes after server start, then every 24 hours
+setTimeout(autoUpdateTracking, 2 * 60 * 1000);
+setInterval(autoUpdateTracking, 24 * 60 * 60 * 1000);
+
 // ─── START ───────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n✅ Inventory Site v2 running at http://localhost:${PORT}`);
