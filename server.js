@@ -934,6 +934,32 @@ app.get('/admin/orders', (req, res) => {
 const https = require('https');
 const http  = require('http');
 
+function fetchUrlPost(url, jsonBody) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(jsonBody);
+    const parsed = new URL(url);
+    const opts = {
+      hostname: parsed.hostname, path: parsed.pathname + parsed.search,
+      method: 'POST',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data),
+        'Accept': 'application/json', 'Origin': 'https://www.ups.com', 'Referer': 'https://www.ups.com/'
+      }
+    };
+    const req = https.request(opts, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+    req.setTimeout(15000);
+    req.write(data);
+    req.end();
+  });
+}
+
 function fetchUrl(url) {
   return new Promise((resolve, reject) => {
     const client = url.startsWith('https') ? https : http;
@@ -988,17 +1014,33 @@ async function checkTracking(tracking, carrier) {
   try {
     let res, b, bl;
     if (carrier === 'ups') {
-      res = await fetchUrl(`https://www.ups.com/track?loc=en_US&tracknum=${tracking}&requester=WT/trackdetails`);
-      b = res.body; bl = b.toLowerCase();
-      if (bl.includes('delivered')) {
-        result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered';
-      } else if (bl.includes('out for delivery')) {
-        result.trackingStatus = 'OFD';
-      } else if (bl.includes('in transit') || bl.includes('on its way')) {
-        result.trackingStatus = 'In Transit';
-        result.expectedDate = parseExpectedDate(b);
-      } else {
-        result.expectedDate = parseExpectedDate(b);
+      // Use UPS's internal JSON API (same one their website uses)
+      res = await fetchUrlPost('https://www.ups.com/track/api/Track/GetStatus?loc=en_US', {
+        Locale: 'en_US', TrackingNumber: [tracking]
+      });
+      try {
+        const json = JSON.parse(res.body);
+        const pkg = json?.trackResponse?.shipment?.[0]?.package?.[0];
+        const activity = (pkg?.activity || [])[0];
+        const statusType = (activity?.status?.type || '').toUpperCase();
+        const desc = (activity?.status?.description || '').toLowerCase();
+        if (statusType === 'D' || desc.includes('delivered')) {
+          result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered';
+        } else if (desc.includes('out for delivery')) {
+          result.trackingStatus = 'OFD';
+        } else {
+          result.trackingStatus = 'In Transit';
+          // Scheduled delivery date comes as YYYYMMDD
+          const sd = pkg?.scheduledDelivery?.date;
+          if (sd && sd.length === 8) result.expectedDate = `${sd.slice(0,4)}-${sd.slice(4,6)}-${sd.slice(6,8)}`;
+        }
+      } catch(e) {
+        // Fallback: scrape the HTML page
+        res = await fetchUrl(`https://www.ups.com/track?loc=en_US&tracknum=${tracking}&requester=WT/trackdetails`);
+        b = res.body; bl = b.toLowerCase();
+        if (bl.includes('"delivered"') || bl.includes('>delivered<')) { result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered'; }
+        else if (bl.includes('out for delivery')) { result.trackingStatus = 'OFD'; }
+        else { result.expectedDate = parseExpectedDate(b); }
       }
     } else if (carrier === 'narvar') {
       res = await fetchUrl(`https://pokemoncenter.narvar.com/pokemoncenter/tracking?tracking_numbers=${tracking}&locale=en_US`);
