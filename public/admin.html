@@ -1760,11 +1760,21 @@ async function loadBotOrders() {
 async function botRefresh() {
   const btn = document.getElementById('bot-refresh-btn');
   btn.disabled = true;
-  btn.innerHTML = '<i class="fa fa-sync fa-spin"></i> Checking…';
-  try {
-    // Hit carrier sites for all Shipped orders, then reload
-    await api('POST', '/admin/bot-orders/refresh-tracking');
-  } catch(e) { /* still reload even if check fails */ }
+  btn.innerHTML = '<i class="fa fa-sync fa-spin"></i> Starting…';
+  // Fire tracking check — server returns instantly, runs in background
+  api('POST', '/admin/bot-orders/refresh-tracking').catch(()=>{});
+  // Poll progress every 700ms and update button text
+  let lastChecked = -1;
+  for (let i = 0; i < 300; i++) { // max ~3.5 min safety cap
+    await new Promise(r => setTimeout(r, 700));
+    const prog = await api('GET', '/admin/bot-orders/refresh-status').catch(()=>null);
+    if (!prog) break;
+    if (prog.total > 0) {
+      btn.innerHTML = `<i class="fa fa-sync fa-spin"></i> ${prog.checked}/${prog.total}`;
+    }
+    lastChecked = prog.checked;
+    if (!prog.running) break;
+  }
   await loadBotOrders();
   btn.disabled = false;
   btn.innerHTML = '<i class="fa fa-sync"></i> Refresh';
@@ -1809,11 +1819,29 @@ function buildBotRetailerFilter() {
   sel.innerHTML = '<option value="">All retailers</option>' + retailers.map(r=>`<option${r===cur?' selected':''}>${esc(r)}</option>`).join('');
 }
 
+function normalizeAddr(addr) {
+  if (!addr) return '';
+  // Strip trailing unit/apt tokens like "J1G", "Apt 2", "#3B", "Unit B" etc.
+  return addr
+    .replace(/,?\s+(?:apt\.?|unit|ste\.?|suite|#|fl\.?|floor)\s*[\w\d-]{1,6}$/i, '')
+    .replace(/,?\s+[\w\d]{1,4}$/i, s => /\d/.test(s) && s.replace(/\D/g,'').length >= 2 ? s : '')
+    .trim();
+}
+
 function buildBotAddressFilter() {
-  const addrs = [...new Set(_botOrders.map(o=>o.shipping_address).filter(Boolean))].sort();
+  // Deduplicate by normalized address; store the most common raw value as the key
+  const normMap = {};
+  _botOrders.forEach(o => {
+    if (!o.shipping_address) return;
+    const norm = normalizeAddr(o.shipping_address);
+    if (!normMap[norm]) normMap[norm] = o.shipping_address;
+  });
   const sel = document.getElementById('bot-filter-address');
   const cur = sel.value;
-  sel.innerHTML = '<option value="">All addresses</option>' + addrs.map(a=>`<option value="${esc(a)}"${a===cur?' selected':''}>${esc(a)}</option>`).join('');
+  const opts = Object.entries(normMap).sort((a,b)=>a[0].localeCompare(b[0]));
+  sel.innerHTML = '<option value="">All addresses</option>' + opts.map(([norm, raw]) =>
+    `<option value="${esc(norm)}"${norm===cur||normalizeAddr(cur)===norm?' selected':''}>${esc(norm)}</option>`
+  ).join('');
 }
 
 function botSetCat(cat) {
@@ -1850,7 +1878,7 @@ function renderBotOrders() {
     if (cat !== 'All' && (o.category||'Other') !== cat) return false;
     if (retailer && o.retailer !== retailer) return false;
     if (status && o.status !== status) return false;
-    if (addrFilter && o.shipping_address !== addrFilter) return false;
+    if (addrFilter && normalizeAddr(o.shipping_address) !== addrFilter) return false;
     if (search) {
       const hay = [(o.order_number||''),(o.items||''),(o.shipping_name||''),(o.retailer||''),(o.shipping_address||'')].join(' ').toLowerCase();
       if (!hay.includes(search)) return false;

@@ -877,36 +877,15 @@ app.get('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
   res.json(orders);
 });
 
-// Manual refresh: check all Shipped orders against carrier sites right now
-app.post('/api/admin/bot-orders/refresh-tracking', auth, adminOnly, async (req, res) => {
-  try {
-    const shipped = db.prepare(
-      `SELECT id, order_number, tracking, retailer FROM bot_orders WHERE status='Shipped' AND tracking IS NOT NULL AND tracking != ''`
-    ).all([]);
-    const today = new Date().toISOString().split('T')[0];
-    const results = [];
-    for (const order of shipped) {
-      const carrier = detectCarrier(order.tracking);
-      if (!carrier) continue;
-      await new Promise(r => setTimeout(r, 800));
-      const { newStatus, trackingStatus, expectedDate } = await checkTracking(order.tracking, carrier);
-      if (newStatus === 'Delivered') {
-        db.prepare(`UPDATE bot_orders SET status='Delivered', delivered_date=?, tracking_status='Delivered', expected_date=NULL WHERE id=?`).run([today, order.id]);
-        results.push({ id: order.id, order_number: order.order_number, result: 'Delivered' });
-      } else {
-        const fields = []; const vals = [];
-        if (trackingStatus) { fields.push("tracking_status=?"); vals.push(trackingStatus); }
-        if (expectedDate)   { fields.push("expected_date=?");   vals.push(expectedDate); }
-        if (fields.length) {
-          db.prepare(`UPDATE bot_orders SET ${fields.join(',')} WHERE id=?`).run([...vals, order.id]);
-          results.push({ id: order.id, order_number: order.order_number, result: trackingStatus||'', expected_date: expectedDate });
-        }
-      }
-    }
-    res.json({ checked: shipped.length, results });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
+// Manual refresh: fires immediately, runs tracking check in background
+app.post('/api/admin/bot-orders/refresh-tracking', auth, adminOnly, (req, res) => {
+  res.json({ started: true }); // return right away so browser doesn't hang
+  autoUpdateTracking().catch(e => console.error('refresh-tracking error:', e));
+});
+
+// Progress poll — client calls this every 700ms to show live counter
+app.get('/api/admin/bot-orders/refresh-status', auth, adminOnly, (req, res) => {
+  res.json(_refreshProgress);
 });
 
 app.post('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
@@ -1078,20 +1057,25 @@ async function checkTracking(tracking, carrier) {
   return result;
 }
 
+// Progress state — polled by the client during manual refresh
+let _refreshProgress = { running: false, checked: 0, total: 0 };
+
 async function autoUpdateTracking() {
+  if (_refreshProgress.running) return; // prevent overlap
   console.log('\n🔄 Auto-tracking check started...');
   try {
     const shipped = db.prepare(
       `SELECT id, order_number, tracking, retailer FROM bot_orders WHERE status='Shipped' AND tracking IS NOT NULL AND tracking != ''`
     ).all([]);
     console.log(`   Checking ${shipped.length} shipped orders`);
+    _refreshProgress = { running: true, checked: 0, total: shipped.length };
 
     let updated = 0;
     const today = new Date().toISOString().split('T')[0];
 
     for (const order of shipped) {
       const carrier = detectCarrier(order.tracking);
-      if (!carrier) { console.log(`   ⚠️  Unknown carrier for ${order.order_number} (${order.tracking})`); continue; }
+      if (!carrier) { _refreshProgress.checked++; continue; }
 
       await new Promise(r => setTimeout(r, 1500)); // be polite to carrier sites
 
@@ -1109,11 +1093,14 @@ async function autoUpdateTracking() {
           console.log(`   📦 #${order.order_number}: ${trackingStatus||''}${expectedDate?' exp '+expectedDate:''}`);
         }
       }
+      _refreshProgress.checked++;
     }
 
     console.log(`🔄 Auto-tracking done: ${updated} updated to Delivered\n`);
   } catch (e) {
     console.error('Auto-tracking error:', e.message);
+  } finally {
+    _refreshProgress.running = false;
   }
 }
 
