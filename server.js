@@ -903,8 +903,9 @@ app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
     account_email=COALESCE(?,account_email), order_date=COALESCE(?,order_date), delivered_date=COALESCE(?,delivered_date),
     shipping_name=COALESCE(?,shipping_name), shipping_address=COALESCE(?,shipping_address),
     status=COALESCE(?,status), items=COALESCE(?,items), order_total=COALESCE(?,order_total),
-    refunded_amount=COALESCE(?,refunded_amount), notes=COALESCE(?,notes), tracking=COALESCE(?,tracking) WHERE id=?`)
-    .run([o.category||null,o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||null,o.items?JSON.stringify(o.items):null,o.order_total!=null?o.order_total:null,o.refunded_amount!=null?o.refunded_amount:null,o.notes||null,o.tracking||null,req.params.id]);
+    refunded_amount=COALESCE(?,refunded_amount), notes=COALESCE(?,notes), tracking=COALESCE(?,tracking),
+    tracking_status=COALESCE(?,tracking_status), expected_date=COALESCE(?,expected_date) WHERE id=?`)
+    .run([o.category||null,o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||null,o.items?JSON.stringify(o.items):null,o.order_total!=null?o.order_total:null,o.refunded_amount!=null?o.refunded_amount:null,o.notes||null,o.tracking||null,o.tracking_status||null,o.expected_date||null,req.params.id]);
   res.json({ success: true });
 });
 
@@ -1018,26 +1019,28 @@ async function checkTracking(tracking, carrier) {
       res = await fetchUrlPost('https://www.ups.com/track/api/Track/GetStatus?loc=en_US', {
         Locale: 'en_US', TrackingNumber: [tracking]
       });
+      console.log(`   UPS API status: ${res.status}, body[:200]: ${res.body.slice(0,200)}`);
       try {
         const json = JSON.parse(res.body);
         const pkg = json?.trackResponse?.shipment?.[0]?.package?.[0];
         const activity = (pkg?.activity || [])[0];
         const statusType = (activity?.status?.type || '').toUpperCase();
         const desc = (activity?.status?.description || '').toLowerCase();
+        console.log(`   UPS parsed → type:${statusType} desc:${desc}`);
         if (statusType === 'D' || desc.includes('delivered')) {
           result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered';
         } else if (desc.includes('out for delivery')) {
           result.trackingStatus = 'OFD';
         } else {
           result.trackingStatus = 'In Transit';
-          // Scheduled delivery date comes as YYYYMMDD
           const sd = pkg?.scheduledDelivery?.date;
           if (sd && sd.length === 8) result.expectedDate = `${sd.slice(0,4)}-${sd.slice(4,6)}-${sd.slice(6,8)}`;
         }
       } catch(e) {
-        // Fallback: scrape the HTML page
+        console.log(`   UPS JSON parse failed (${e.message}), trying HTML fallback`);
         res = await fetchUrl(`https://www.ups.com/track?loc=en_US&tracknum=${tracking}&requester=WT/trackdetails`);
         b = res.body; bl = b.toLowerCase();
+        console.log(`   UPS HTML status:${res.status} body[:200]: ${b.slice(0,200)}`);
         if (bl.includes('"delivered"') || bl.includes('>delivered<')) { result.newStatus = 'Delivered'; result.trackingStatus = 'Delivered'; }
         else if (bl.includes('out for delivery')) { result.trackingStatus = 'OFD'; }
         else { result.expectedDate = parseExpectedDate(b); }
