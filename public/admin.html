@@ -1826,27 +1826,56 @@ function buildBotRetailerFilter() {
 
 function normalizeAddr(addr) {
   if (!addr) return '';
-  // Strip trailing unit/apt tokens like "J1G", "Apt 2", "#3B", "Unit B" etc.
-  return addr
-    .replace(/,?\s+(?:apt\.?|unit|ste\.?|suite|#|fl\.?|floor)\s*[\w\d-]{1,6}$/i, '')
-    .replace(/,?\s+[\w\d]{1,4}$/i, s => /\d/.test(s) && s.replace(/\D/g,'').length >= 2 ? s : '')
-    .trim();
+
+  // Take only street portion — drop city/state/zip after first comma
+  let s = addr.split(',')[0].trim();
+
+  // Strip Scout/forwarding internal codes appended to words: "Boulevard-nh" → "Boulevard", "North-kl" → "North"
+  s = s.replace(/([a-zA-Z])-[a-z]{1,3}\b/g, '$1');
+
+  // Strip unit/apt/floor/room/door/ste keywords and everything after them
+  s = s.replace(/\s*(?:apt\.?|apartment|unit|ste\.?|suite|rm\.?|room|fl\.?|floor|door|bldg\.?|#)\s*[-\w\d]*.*$/i, '');
+
+  // Strip trailing number-led tokens (unit numbers: "109", "3f", "109-in", "109-out")
+  s = s.replace(/\s+\d[\w\-]*\s*$/, '');
+
+  // Normalize street type abbreviations so variants collapse to same string
+  s = s.replace(/\bboulevard\b/gi, 'Blvd');
+  s = s.replace(/\bavenue\b/gi,    'Ave');
+  s = s.replace(/\bdrive\b/gi,     'Dr');
+  s = s.replace(/\broad\b/gi,      'Rd');
+  s = s.replace(/\bplace\b/gi,     'Pl');
+  s = s.replace(/\bstreet\b/gi,    'St');
+  s = s.replace(/\bcourt\b/gi,     'Ct');
+  s = s.replace(/\bnorth\b/gi,     'N');
+  s = s.replace(/\bsouth\b/gi,     'S');
+  s = s.replace(/\beast\b/gi,      'E');
+  s = s.replace(/\bwest\b/gi,      'W');
+
+  return s.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function toTitleCase(s) {
+  return s.replace(/\b([a-z])/g, c => c.toUpperCase());
 }
 
 function buildBotAddressFilter() {
-  // Deduplicate by normalized address; store the most common raw value as the key
-  const normMap = {};
+  // Deduplicate by normalized address; count occurrences per norm key
+  const normMap = {};   // norm → count
   _botOrders.forEach(o => {
     if (!o.shipping_address) return;
     const norm = normalizeAddr(o.shipping_address);
-    if (!normMap[norm]) normMap[norm] = o.shipping_address;
+    if (!norm) return;
+    normMap[norm] = (normMap[norm] || 0) + 1;
   });
   const sel = document.getElementById('bot-filter-address');
   const cur = sel.value;
   const opts = Object.entries(normMap).sort((a,b)=>a[0].localeCompare(b[0]));
-  sel.innerHTML = '<option value="">All addresses</option>' + opts.map(([norm, raw]) =>
-    `<option value="${esc(norm)}"${norm===cur||normalizeAddr(cur)===norm?' selected':''}>${esc(norm)}</option>`
-  ).join('');
+  sel.innerHTML = '<option value="">All addresses</option>' + opts.map(([norm, count]) => {
+    const label = toTitleCase(norm) + (count > 1 ? ` (${count})` : '');
+    const sel_ = norm === cur ? ' selected' : '';
+    return `<option value="${esc(norm)}"${sel_}>${esc(label)}</option>`;
+  }).join('');
 }
 
 function botSetCat(cat) {
