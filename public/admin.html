@@ -1761,19 +1761,19 @@ async function botRefresh() {
   const btn = document.getElementById('bot-refresh-btn');
   btn.disabled = true;
   btn.innerHTML = '<i class="fa fa-sync fa-spin"></i> Starting…';
-  // Fire tracking check — server returns instantly, runs in background
-  api('POST', '/admin/bot-orders/refresh-tracking').catch(()=>{});
-  // Poll progress every 700ms and update button text
-  let lastChecked = -1;
-  for (let i = 0; i < 300; i++) { // max ~3.5 min safety cap
+  // Await the POST so the server has received it before we start polling
+  await api('POST', '/admin/bot-orders/refresh-tracking').catch(()=>{});
+  // Poll every 700ms; only break once the job actually started AND finished
+  const startTime = Date.now();
+  for (let i = 0; i < 300; i++) {
     await new Promise(r => setTimeout(r, 700));
     const prog = await api('GET', '/admin/bot-orders/refresh-status').catch(()=>null);
     if (!prog) break;
     if (prog.total > 0) {
       btn.innerHTML = `<i class="fa fa-sync fa-spin"></i> ${prog.checked}/${prog.total}`;
     }
-    lastChecked = prog.checked;
-    if (!prog.running) break;
+    // Break when job ran and finished, OR give up after 12s if it never started
+    if (!prog.running && (prog.total > 0 || Date.now() - startTime > 12000)) break;
   }
   await loadBotOrders();
   btn.disabled = false;
