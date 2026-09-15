@@ -136,6 +136,8 @@ try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE order_number='9020
 try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0309059483' WHERE order_number='25293' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0308841629' WHERE order_number='25164' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0304222055' WHERE order_number='24662' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
+// Fix Pokemon/Mattel orders stuck as Unship — they were waiting to ship, not delayed
+try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='Unship' AND retailer IN ('Pokemon Center','Mattel','Pokémon Center')"); } catch(e) {}
 // Pokemon Center shipped 2026-09-14
 try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876893093507' WHERE order_number='24171550' AND status='Confirmed'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876911355367' WHERE order_number='24175171' AND status='Confirmed'"); } catch(e) {}
