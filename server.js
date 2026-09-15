@@ -136,6 +136,23 @@ try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE order_number='9020
 try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0309059483' WHERE order_number='25293' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0308841629' WHERE order_number='25164' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0304222055' WHERE order_number='24662' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
+// Pokemon Center shipped 2026-09-14
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876893093507' WHERE order_number='24171550' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876911355367' WHERE order_number='24175171' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876920927416' WHERE order_number='24283028' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876921456036' WHERE order_number='24286522' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876921445510' WHERE order_number='24287182' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876921717791' WHERE order_number='24289782' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876922922325' WHERE order_number='24302389' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876923650600' WHERE order_number='24309634' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876924193616' WHERE order_number='24317125' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876928855241' WHERE order_number='24387629' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876929344074' WHERE order_number='24392869' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876937209516' WHERE order_number='24473098' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876937213416' WHERE order_number='24473193' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876937255320' WHERE order_number='24473611' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876937413400' WHERE order_number='24476183' AND status='Confirmed'"); } catch(e) {}
+try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876940016644' WHERE order_number='24494789' AND status='Confirmed'"); } catch(e) {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS members (
