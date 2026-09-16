@@ -166,54 +166,102 @@ async function processEmail(parsed, db) {
   } else if (orderNumber && dbStatus) {
     // Create new order
     const { retailer, category } = retailerInfo;
-    const receivedAt = parsed.date ? parsed.date.toISOString() : new Date().toISOString();
+    const emailDate   = parsed.date ? parsed.date.toISOString() : new Date().toISOString();
+    const orderDate   = emailDate.split('T')[0];   // YYYY-MM-DD for proper sort
     db.prepare(`INSERT OR IGNORE INTO bot_orders
-      (category, retailer, order_number, tracking, status, tracking_status, expected_date, received_at, created_at)
-      VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
-      .run([category, retailer, orderNumber, tracking||null, dbStatus, trackingStatus||null, expectedDate||null, receivedAt]);
+      (category, retailer, order_number, tracking, status, tracking_status, expected_date, order_date, received_at, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+      .run([category, retailer, orderNumber, tracking||null, dbStatus, trackingStatus||null, expectedDate||null, orderDate, emailDate]);
     console.log(`   ➕ New: ${orderNumber} (${retailer}) — ${rawStatus}${expectedDate?' exp '+expectedDate:''}`);
     return true;
   }
   return false;
 }
 
-// ── IMAP fetch — UNSEEN only, mark read after ─────────────────────────────────
+// ── Settings helpers (uses existing settings table in DB) ────────────────────
 
-function fetchUnseenAndProcess(imap, db) {
+function getSetting(db, key, def) {
+  try {
+    const row = db.prepare('SELECT value FROM settings WHERE key=?').get([key]);
+    return row ? row.value : def;
+  } catch(_) { return def; }
+}
+function setSetting(db, key, value) {
+  try {
+    db.prepare('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)').run([key, String(value)]);
+  } catch(_) {}
+}
+
+// ── IMAP fetch — ALL emails since last run, deduplicated by Message-ID ───────
+// Does NOT rely on UNSEEN flag, so works even if you've read the email on your phone.
+
+function formatImapDate(d) {
+  // IMAP SINCE wants "1-Jan-2026" format
+  return d.getDate() + '-' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + '-' + d.getFullYear();
+}
+
+function fetchNewAndProcess(imap, db) {
   return new Promise((resolve, reject) => {
-    // Read-write so we can mark emails as seen
-    imap.openBox('INBOX', false, (err) => {
+    // Read-only — we track what's been processed ourselves, don't touch read/unread
+    imap.openBox('INBOX', true, (err) => {
       if (err) return reject(err);
 
-      // Only UNSEEN emails — never reprocesses the same email twice
-      imap.search(['UNSEEN'], (err, uids) => {
+      // Load seen Message-IDs from DB
+      const seenRaw = getSetting(db, 'email_scraper_seen_ids', '[]');
+      let seenIds;
+      try { seenIds = new Set(JSON.parse(seenRaw)); } catch(_) { seenIds = new Set(); }
+
+      // Search since last run date (default: 30 days ago on first run)
+      const sinceStr  = getSetting(db, 'email_scraper_since', null);
+      const sinceDate = sinceStr ? new Date(sinceStr) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const imapDate  = formatImapDate(sinceDate);
+
+      console.log(`   Searching emails since ${imapDate}…`);
+
+      imap.search([['SINCE', imapDate]], (err, uids) => {
         if (err) return reject(err);
         if (!uids || !uids.length) {
-          console.log('   No new emails.');
+          console.log('   No emails in range.');
+          // Advance the since date so next run doesn't re-scan old range
+          setSetting(db, 'email_scraper_since', new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString());
           return resolve(0);
         }
 
-        console.log(`   Found ${uids.length} unread email(s), filtering for orders…`);
+        console.log(`   Found ${uids.length} email(s) in range, checking for new ones…`);
 
-        // Fetch with markSeen:true — marks as read so next run skips them
-        const f = imap.fetch(uids, { bodies: '', markSeen: true });
+        const f    = imap.fetch(uids, { bodies: '' });
         const jobs = [];
+        const newIds = [];
 
         f.on('message', (msg) => {
           let raw = '';
           msg.on('body', stream => stream.on('data', c => raw += c.toString()));
           msg.once('end', () => {
             jobs.push(
-              simpleParser(raw)
-                .then(parsed => processEmail(parsed, db))
-                .catch(e => { console.log('   ⚠️  parse error:', e.message); return false; })
+              simpleParser(raw).then(parsed => {
+                const msgId = parsed.messageId || null;
+                // Skip already-processed emails
+                if (msgId && seenIds.has(msgId)) return false;
+                if (msgId) newIds.push(msgId);
+                return processEmail(parsed, db);
+              }).catch(e => { console.log('   ⚠️  parse error:', e.message); return false; })
             );
           });
         });
 
         f.once('error', reject);
         f.once('end', () =>
-          Promise.all(jobs).then(results => resolve(results.filter(Boolean).length))
+          Promise.all(jobs).then(results => {
+            // Persist updated seen-IDs (keep last 3000 to avoid unbounded growth)
+            newIds.forEach(id => seenIds.add(id));
+            const arr = [...seenIds];
+            setSetting(db, 'email_scraper_seen_ids', JSON.stringify(arr.slice(-3000)));
+            // Advance since date (keep 2-day buffer so timezone edge cases don't miss anything)
+            setSetting(db, 'email_scraper_since', new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString());
+            const updated = results.filter(Boolean).length;
+            console.log(`   Processed ${newIds.length} new email(s), ${updated} order(s) updated.`);
+            resolve(updated);
+          })
         );
       });
     });
@@ -244,7 +292,7 @@ async function runEmailScraper(db) {
   return new Promise((resolve) => {
     imap.once('ready', async () => {
       try {
-        const updated = await fetchUnseenAndProcess(imap, db);
+        const updated = await fetchNewAndProcess(imap, db);
         console.log(`📧 Email scraper done: ${updated} order(s) created/updated\n`);
         resolve(updated);
       } catch (e) {

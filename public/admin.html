@@ -1827,19 +1827,30 @@ function buildBotRetailerFilter() {
 function normalizeAddr(addr) {
   if (!addr) return '';
 
+  // Strip parenthetical prefixes e.g. "(Digital Product - Billing Address Only)"
+  let s = addr.replace(/^\s*\([^)]*\)\s*/g, '').trim();
+
+  // If string doesn't start with a digit, fast-forward to where the number begins
+  const firstDigit = s.search(/\d/);
+  if (firstDigit > 0) s = s.slice(firstDigit);
+
   // Take only street portion — drop city/state/zip after first comma
-  let s = addr.split(',')[0].trim();
+  s = s.split(',')[0].trim();
 
-  // Strip Scout/forwarding internal codes appended to words: "Boulevard-nh" → "Boulevard", "North-kl" → "North"
-  s = s.replace(/([a-zA-Z])-[a-z]{1,3}\b/g, '$1');
+  // Strip Scout/forwarding codes on ANY word (case-insensitive): "Blvd-nh"→"Blvd", "Ave-Qu"→"Ave", "N-kl"→"N"
+  s = s.replace(/([a-zA-Z])-[a-zA-Z]{1,3}\b/g, '$1');
 
-  // Strip unit/apt/floor/room/door/ste keywords and everything after them
-  s = s.replace(/\s*(?:apt\.?|apartment|unit|ste\.?|suite|rm\.?|room|fl\.?|floor|door|bldg\.?|#)\s*[-\w\d]*.*$/i, '');
+  // Strip unit/apt/floor/room/bsmt/office/dept keywords and everything after
+  s = s.replace(/\s*(?:apt\.?|apartment|unit|ste\.?|suite|rm\.?|room|fl\.?|floor|door|bldg\.?|bsmt|basement|office|dept\.?|department|#)\s*[-\w\d]*.*$/i, '');
 
-  // Strip trailing number-led tokens (unit numbers: "109", "3f", "109-in", "109-out")
+  // Strip trailing number-led tokens (bare unit numbers: "109", "3f", "109-in")
   s = s.replace(/\s+\d[\w\-]*\s*$/, '');
 
-  // Normalize street type abbreviations so variants collapse to same string
+  // Normalize house number: strip leading zeros AND trailing single-letter unit code
+  // "013564d" → 13564, "06543c" → 6543, "08805b" → 8805, "013564" → 13564
+  s = s.replace(/^0*(\d+)[a-zA-Z]?\b/, (_, n) => String(parseInt(n, 10)));
+
+  // Normalize street type abbreviations
   s = s.replace(/\bboulevard\b/gi, 'Blvd');
   s = s.replace(/\bavenue\b/gi,    'Ave');
   s = s.replace(/\bdrive\b/gi,     'Dr');
@@ -2037,10 +2048,25 @@ async function botScanOrder() {
 async function botScanEmails() {
   const btn = document.getElementById('bot-scan-btn');
   btn.disabled = true;
+  btn.innerHTML = '<i class="fa fa-envelope fa-spin"></i> Connecting…';
+  const res = await api('POST', '/admin/scrape-emails').catch(()=>null);
+  if (!res) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa fa-exclamation-triangle"></i> Error';
+    setTimeout(() => { btn.innerHTML = '<i class="fa fa-envelope"></i> Scan Emails'; btn.disabled = false; }, 3000);
+    return;
+  }
+  // Poll for completion (scraper runs in background, signals via /scrape-status)
   btn.innerHTML = '<i class="fa fa-envelope fa-spin"></i> Scanning…';
-  await api('POST', '/admin/scrape-emails').catch(()=>{});
-  // Give Railway ~8s to scan and parse emails
-  await new Promise(r => setTimeout(r, 8000));
+  const deadline = Date.now() + 45000;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 1500));
+    const status = await api('GET', '/admin/scrape-emails/status').catch(()=>null);
+    if (!status) break;
+    if (status.updated !== undefined)
+      btn.innerHTML = `<i class="fa fa-envelope fa-spin"></i> Found ${status.updated}…`;
+    if (!status.running) break;
+  }
   await loadBotOrders();
   btn.disabled = false;
   btn.innerHTML = '<i class="fa fa-envelope"></i> Scan Emails';
