@@ -52,9 +52,12 @@ function findOrderNumber(text, fromEmail) {
     const m = text.match(/\b(P\d{9,12})\b/);
     if (m) return m[1];
   }
-  // Generic: "Order #12345", "Order Number: ABC-123"
-  const g = text.match(/[Oo]rder\s*[#№Nn](?:umber)?[:\s]*([A-Z0-9-]{4,20})/);
+  // Generic: "Order #12345", "Order Number: ABC-123", "Order: 102-123-456", "Order 102-123-456"
+  const g = text.match(/[Oo]rder\s*(?:[#№]|[Nn](?:umber|o\.?)?)?[:\s]+([A-Z0-9][\w\-]{3,24})/);
   if (g) return g[1].trim();
+  // Also catch Target-style "102-XXXXXXX-XXXXXXX" bare patterns
+  const t = text.match(/\b(\d{3}-\d{7}-\d{7})\b/);
+  if (t) return t[1].trim();
   return null;
 }
 
