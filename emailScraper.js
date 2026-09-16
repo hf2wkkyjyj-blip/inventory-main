@@ -55,8 +55,8 @@ function findOrderNumber(text, fromEmail) {
   // Generic: "Order #12345", "Order Number: ABC-123", "Order: 102-123-456", "Order 102-123-456"
   const g = text.match(/[Oo]rder\s*(?:[#№]|[Nn](?:umber|o\.?)?)?[:\s]+([A-Z0-9][\w\-]{3,24})/);
   if (g) return g[1].trim();
-  // Also catch Target-style "102-XXXXXXX-XXXXXXX" bare patterns
-  const t = text.match(/\b(\d{3}-\d{7}-\d{7})\b/);
+  // Also catch Target-style bare numbers: "102003676904439" or "102-1234567-1234567"
+  const t = text.match(/\b(\d{3}-\d{7}-\d{7}|\d{15})\b/);
   if (t) return t[1].trim();
   return null;
 }
@@ -92,18 +92,24 @@ function findExpectedDate(text) {
 // Returns: 'Confirmed' | 'Shipped' | 'OFD' | 'Delivered' | 'Cancelled' | 'Refunded' | null
 function determineStatus(subject, bodyText) {
   const s = ((subject || '') + ' ' + (bodyText || '')).toLowerCase();
-  if (s.includes('delivered') && !s.includes('estimated') && !s.includes('expected'))
+  if (s.includes('cancel'))  return 'Cancelled';
+  if (s.includes('refund'))  return 'Refunded';
+  if (s.includes('delivered') && !s.includes('estimated') && !s.includes('expected') && !s.includes('delivery date') && !s.includes('delivery by'))
     return 'Delivered';
   if (s.includes('out for delivery'))
     return 'OFD';
-  if (s.includes('shipped') || s.includes('on its way') || s.includes('tracking number') ||
-      s.includes('in transit') || s.includes('has been shipped'))
+  if (s.includes('shipped')        || s.includes('on its way')       || s.includes('tracking number') ||
+      s.includes('in transit')     || s.includes('has been shipped')  || s.includes('your order has left') ||
+      s.includes('your package')   || s.includes('order shipped')     || s.includes('is on the way'))
     return 'Shipped';
-  if (s.includes('order confirmed') || s.includes('thank you for your order') ||
-      s.includes('order received') || s.includes('we received your order'))
+  if (s.includes('order confirmed')        || s.includes('thank you for your order') ||
+      s.includes('order received')         || s.includes('we received your order')   ||
+      s.includes('thanks for shopping')    || s.includes('thanks for your order')    ||
+      s.includes('is confirmed')           || s.includes('we got your order')        ||
+      s.includes("we've got your order")   || s.includes('your order is placed')     ||
+      s.includes('order is being prepared')|| s.includes('order #')                  ||
+      s.includes('your recent order'))
     return 'Confirmed';
-  if (s.includes('cancel'))  return 'Cancelled';
-  if (s.includes('refund'))  return 'Refunded';
   return null;
 }
 
