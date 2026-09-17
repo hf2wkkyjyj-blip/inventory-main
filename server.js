@@ -127,6 +127,9 @@ try { db.exec("ALTER TABLE bot_orders ADD COLUMN refunded_amount REAL DEFAULT 0"
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN notes TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN tracking_status TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN expected_date TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN tax_amount REAL DEFAULT 0"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN ship_cost REAL DEFAULT 0"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN finder_fee REAL DEFAULT 0"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='ordered'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE status='delivered' OR status='out_for_delivery'"); } catch(e) {}
@@ -904,8 +907,10 @@ app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
     shipping_name=COALESCE(?,shipping_name), shipping_address=COALESCE(?,shipping_address),
     status=COALESCE(?,status), items=COALESCE(?,items), order_total=COALESCE(?,order_total),
     refunded_amount=COALESCE(?,refunded_amount), notes=COALESCE(?,notes), tracking=COALESCE(?,tracking),
-    tracking_status=COALESCE(?,tracking_status), expected_date=COALESCE(?,expected_date) WHERE id=?`)
-    .run([o.category||null,o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||null,o.items?JSON.stringify(o.items):null,o.order_total!=null?o.order_total:null,o.refunded_amount!=null?o.refunded_amount:null,o.notes||null,o.tracking||null,o.tracking_status||null,o.expected_date||null,req.params.id]);
+    tracking_status=COALESCE(?,tracking_status), expected_date=COALESCE(?,expected_date),
+    tax_amount=COALESCE(?,tax_amount), ship_cost=COALESCE(?,ship_cost), finder_fee=COALESCE(?,finder_fee)
+    WHERE id=?`)
+    .run([o.category||null,o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||null,o.items?JSON.stringify(o.items):null,o.order_total!=null?o.order_total:null,o.refunded_amount!=null?o.refunded_amount:null,o.notes||null,o.tracking||null,o.tracking_status||null,o.expected_date||null,o.tax_amount!=null?o.tax_amount:null,o.ship_cost!=null?o.ship_cost:null,o.finder_fee!=null?o.finder_fee:null,req.params.id]);
   res.json({ success: true });
 });
 

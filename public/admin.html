@@ -746,6 +746,47 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   </div>
 </div>
 
+<!-- ══ MODAL: EDIT BOT ORDER ═════════════════════════════════════════════════ -->
+<div class="overlay" id="bot-edit-overlay" onclick="if(event.target.id==='bot-edit-overlay')closeBotEdit()">
+  <div class="modal" style="width:520px;max-height:90vh;overflow-y:auto;">
+    <h2 style="margin-bottom:16px;"><i class="fa fa-pen" style="color:var(--accent)"></i> Edit Order <span id="bot-edit-ordnum" style="color:var(--muted);font-size:14px;"></span></h2>
+    <input type="hidden" id="bot-edit-id">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Status</label>
+        <select id="bot-edit-status" style="width:100%;"><option>Confirmed</option><option>Shipped</option><option>Unship</option><option>Delivered</option><option>Cancelled</option><option>Refunded</option></select></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Tracking #</label>
+        <input type="text" id="bot-edit-tracking" placeholder="Tracking number" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;grid-column:span 2;"><label style="font-size:11px;">Notes</label>
+        <input type="text" id="bot-edit-notes" placeholder="Notes…" style="width:100%;"></div>
+    </div>
+
+    <!-- Cost Breakdown -->
+    <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:14px;">
+      <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.06em;margin-bottom:10px;">COST BREAKDOWN</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Order Subtotal ($)</label>
+          <input type="number" id="bot-edit-total" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Tax ($)</label>
+          <input type="number" id="bot-edit-tax" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Shipping ($)</label>
+          <input type="number" id="bot-edit-ship" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Finder Fee ($)</label>
+          <input type="number" id="bot-edit-finder" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
+      </div>
+      <!-- Landed cost summary -->
+      <div id="bot-edit-summary" style="margin-top:12px;background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.2);border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-size:12px;color:var(--muted);">Landed cost per unit</div>
+        <div id="bot-edit-perunit" style="font-size:18px;font-weight:700;color:#60a5fa;">—</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-ghost btn-sm" onclick="closeBotEdit()">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="saveBotEdit()"><i class="fa fa-save"></i> Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ MODAL: EDIT SALE ══════════════════════════════════════════════════════ -->
 <div class="overlay" id="edit-sale-overlay">
   <div class="modal" style="width:400px;">
@@ -1957,7 +1998,10 @@ function renderBotOrders() {
       <td style="color:var(--muted);">${(o.order_date||'').slice(0,10)||'—'}</td>
       <td>${botStatusCell(o)}</td>
       <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(items)}">${esc(items||'—')}</td>
-      <td style="text-align:right;font-variant-numeric:tabular-nums;">${o.order_total?'$'+Number(o.order_total).toFixed(2):'—'}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">
+        ${o.order_total?'$'+Number(o.order_total).toFixed(2):'—'}
+        ${(()=>{const cpu=botLandedPerUnit(o);return cpu?`<div style="font-size:10px;color:#60a5fa;margin-top:1px;">$${cpu.toFixed(2)}/unit</div>`:''})()}
+      </td>
       <td>${esc(o.shipping_name||'—')}</td>
       <td style="white-space:nowrap;">${o.tracking ? `<a href="${botTrackingUrl(o.retailer, o.tracking)}" target="_blank" style="color:#60a5fa;font-size:12px;font-weight:600;">${esc(o.tracking)}</a>` : '<span style="color:var(--muted);">—</span>'}</td>
       <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px;" title="${esc(o.shipping_address||'')}">${esc(o.shipping_address||'—')}</td>
@@ -2101,16 +2145,74 @@ async function markDelivered(id) {
   await loadBotOrders();
 }
 
-async function botEditRow(id) {
+// ── Bot order edit modal helpers ──────────────────────────────────────────────
+function botTotalQty(o) {
+  try {
+    const arr = JSON.parse(o.items || '[]');
+    let total = 0;
+    for (const item of arr) {
+      const m = String(item).match(/^(\d+)\s*[xX×]\s+/) || String(item).match(/\s+[xX×]\s*(\d+)$/);
+      total += m ? parseInt(m[1]) : 1;
+    }
+    return total || 1;
+  } catch(_) { return 1; }
+}
+function botLandedPerUnit(o) {
+  const hasBreakdown = (o.tax_amount||0) + (o.ship_cost||0) + (o.finder_fee||0) > 0;
+  if (!o.order_total && !hasBreakdown) return null;
+  const qty = botTotalQty(o);
+  const total = (o.order_total||0) + (o.tax_amount||0) + (o.ship_cost||0) + (o.finder_fee||0);
+  return total / qty;
+}
+
+function botEditRow(id) {
   const o = _botOrders.find(x=>x.id===id);
   if (!o) return;
-  const status = prompt('Status (Confirmed/Shipped/Unship/Delivered/Cancelled/Refunded):', o.status||'Confirmed');
-  if (status === null) return;
-  const tracking = prompt('Tracking number:', o.tracking||'');
-  if (tracking === null) return;
-  const notes = prompt('Notes:', o.notes||'');
-  if (notes === null) return;
-  await api('PATCH', '/admin/bot-orders/'+id, { status, tracking: tracking||null, notes });
+  document.getElementById('bot-edit-id').value = id;
+  document.getElementById('bot-edit-ordnum').textContent = o.order_number ? '#'+o.order_number : '';
+  document.getElementById('bot-edit-status').value = o.status || 'Confirmed';
+  document.getElementById('bot-edit-tracking').value = o.tracking || '';
+  document.getElementById('bot-edit-notes').value = o.notes || '';
+  document.getElementById('bot-edit-total').value = o.order_total || '';
+  document.getElementById('bot-edit-tax').value = o.tax_amount || '';
+  document.getElementById('bot-edit-ship').value = o.ship_cost || '';
+  document.getElementById('bot-edit-finder').value = o.finder_fee || '';
+  document.getElementById('bot-edit-overlay').style.display = 'flex';
+  // Store qty for calc
+  document.getElementById('bot-edit-overlay').dataset.qty = botTotalQty(o);
+  botEditCalc();
+}
+function closeBotEdit() {
+  document.getElementById('bot-edit-overlay').style.display = 'none';
+}
+function botEditCalc() {
+  const qty   = parseInt(document.getElementById('bot-edit-overlay').dataset.qty) || 1;
+  const total = parseFloat(document.getElementById('bot-edit-total').value) || 0;
+  const tax   = parseFloat(document.getElementById('bot-edit-tax').value) || 0;
+  const ship  = parseFloat(document.getElementById('bot-edit-ship').value) || 0;
+  const finder= parseFloat(document.getElementById('bot-edit-finder').value) || 0;
+  const landed = total + tax + ship + finder;
+  const perUnit = landed / qty;
+  const el = document.getElementById('bot-edit-perunit');
+  if (landed > 0) {
+    el.textContent = '$' + perUnit.toFixed(2) + (qty > 1 ? ' × '+qty+' units' : '');
+  } else {
+    el.textContent = '—';
+  }
+}
+async function saveBotEdit() {
+  const id = document.getElementById('bot-edit-id').value;
+  const payload = {
+    status:     document.getElementById('bot-edit-status').value,
+    tracking:   document.getElementById('bot-edit-tracking').value.trim() || null,
+    notes:      document.getElementById('bot-edit-notes').value.trim() || null,
+    order_total: parseFloat(document.getElementById('bot-edit-total').value) || null,
+    tax_amount:  parseFloat(document.getElementById('bot-edit-tax').value) || null,
+    ship_cost:   parseFloat(document.getElementById('bot-edit-ship').value) || null,
+    finder_fee:  parseFloat(document.getElementById('bot-edit-finder').value) || null,
+  };
+  await api('PATCH', '/admin/bot-orders/'+id, payload);
+  closeBotEdit();
   await loadBotOrders();
 }
 
