@@ -2264,7 +2264,10 @@ async function markDelivered(id) {
 // ── Bot order edit modal helpers ──────────────────────────────────────────────
 function botTotalQty(o) {
   try {
-    const arr = JSON.parse(o.items || '[]');
+    const raw = JSON.parse(o.items || '[]');
+    // Expand items separated by " | " or newlines
+    const arr = [];
+    for (const r of raw) String(r||'').split(/\s*\|\s*|\n+/).map(p=>p.trim()).filter(Boolean).forEach(p=>arr.push(p));
     let total = 0;
     for (const item of arr) {
       const m = String(item).match(/^(\d+)\s*[xX×]\s+/) || String(item).match(/\s+[xX×]\s*(\d+)$/);

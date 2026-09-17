@@ -134,6 +134,21 @@ try { db.exec("CREATE TABLE IF NOT EXISTS bot_sku_prices (sku TEXT PRIMARY KEY, 
 try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='ordered'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE status='delivered' OR status='out_for_delivery'"); } catch(e) {}
+// Remove junk orders created by bad order-number parsing ("Your", "Summary", CSS values like "16px")
+// A real order number always has 3+ consecutive digits somewhere in it.
+// We detect "no 3-digit run" by checking that replacing all digits leaves the string as long as original minus <3 chars.
+try {
+  const junk = db.prepare(
+    `SELECT id, order_number FROM bot_orders WHERE order_number IS NOT NULL`
+  ).all();
+  const toDelete = junk.filter(r => !/\d{3,}/.test(r.order_number)).map(r => r.id);
+  if (toDelete.length) {
+    db.prepare(`DELETE FROM bot_orders WHERE id IN (${toDelete.map(()=>'?').join(',')})`)
+      .run(toDelete);
+    console.log(`🧹 Removed ${toDelete.length} junk order(s) with invalid order numbers:`,
+      junk.filter(r=>toDelete.includes(r.id)).map(r=>r.order_number));
+  }
+} catch(e) { console.error('Cleanup error:', e.message); }
 try { db.exec("UPDATE bot_orders SET status='Cancelled' WHERE status='cancelled'"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN tracking TEXT"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Unship' WHERE status='Delayed' OR status='delayed'"); } catch(e) {}
@@ -900,15 +915,22 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
   for (const order of orders) {
     let arr; try { arr = JSON.parse(order.items||'[]'); } catch(_) { arr = []; }
     if (!arr.length) continue;
-    const totalQty   = arr.reduce((s,i)=>s+parseQty(String(i)),0)||1;
+
+    // Expand items that contain " | " or newline separators (e.g. "Item A | 1x Item B" → two rows)
+    const expanded = [];
+    for (const raw of arr) {
+      String(raw||'').split(/\s*\|\s*|\n+/).map(p => p.trim()).filter(Boolean).forEach(p => expanded.push(p));
+    }
+    if (!expanded.length) continue;
+
+    const totalQty   = expanded.reduce((s,i)=>s+parseQty(i),0)||1;
     const totalCost  = (order.order_total||0)+(order.tax_amount||0)+(order.ship_cost||0)+(order.finder_fee||0);
     const pItem      = Math.round((order.order_total||0)/totalQty*100)/100;
     const pTax       = Math.round((order.tax_amount||0)/totalQty*100)/100;
     const pShip      = Math.round((order.ship_cost||0)/totalQty*100)/100;
     const pFinder    = Math.round((order.finder_fee||0)/totalQty*100)/100;
     const pTotal     = Math.round(totalCost/totalQty*100)/100;
-    for (const raw of arr) {
-      const s    = String(raw||'').trim();
+    for (const s of expanded) {
       const name = parseName(s);
       const qty  = parseQty(s);
       const key  = name.toLowerCase()+'|||'+pTotal;
@@ -980,6 +1002,18 @@ app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
 });
 
 app.delete('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
+  // Before deleting, remember this order_number so the scraper doesn't recreate it
+  const row = db.prepare('SELECT order_number FROM bot_orders WHERE id=?').get([req.params.id]);
+  if (row && row.order_number) {
+    try {
+      const raw = db.prepare("SELECT value FROM settings WHERE key='scraper_blocked_orders'").get();
+      const blocked = raw ? JSON.parse(raw.value) : [];
+      if (!blocked.includes(row.order_number)) {
+        blocked.push(row.order_number);
+        db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('scraper_blocked_orders',?)").run([JSON.stringify(blocked)]);
+      }
+    } catch(_) {}
+  }
   db.prepare('DELETE FROM bot_orders WHERE id=?').run([req.params.id]);
   res.json({ success: true });
 });

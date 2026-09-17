@@ -27,7 +27,40 @@ function getRetailerInfo(fromEmail) {
   return null;
 }
 
+// Detect category from email content (for generic retailers like Target that sell everything)
+function detectCategoryFromContent(subject, text, defaultCategory) {
+  const s = ((subject || '') + ' ' + (text || '')).toLowerCase();
+  if (s.includes('pokemon') || s.includes('pikachu') || s.includes('charizard') ||
+      s.includes('eevee') || s.includes('mewtwo') || s.includes('bulbasaur') ||
+      s.includes('squirtle') || s.includes('charmander') || s.includes('tcg') ||
+      s.includes('poke ball') || s.includes('pokeball'))
+    return 'Pokemon';
+  if (s.includes('one piece') || s.includes('luffy') || s.includes('zoro') ||
+      s.includes('nami') || s.includes('sanji') || s.includes('chopper'))
+    return 'One Piece';
+  if (s.includes('mattel') || s.includes('hot wheel') || s.includes('barbie') ||
+      s.includes('fisher-price') || s.includes('fisher price') || s.includes('uno '))
+    return 'Mattel';
+  return defaultCategory;
+}
+
 // ── Extraction helpers ────────────────────────────────────────────────────────
+
+// Strip HTML tags, adding spaces between block elements so words don't run together
+function stripHtml(html) {
+  if (!html) return '';
+  return html
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/?(p|div|li|tr|td|th|h[1-6]|section|article|header|footer|span)[^>]*>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#\d+;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function findTracking(text) {
   if (!text) return null;
@@ -46,18 +79,33 @@ function findTracking(text) {
 }
 
 function findOrderNumber(text, fromEmail) {
+  if (!text) return null;
   const f = (fromEmail || '').toLowerCase();
-  // Pokemon Center P-format
-  if (f.includes('pokemon') || f.includes('narvar') || f.includes('shopify')) {
+
+  // Pokemon Center P-format (always starts with P followed by digits)
+  if (f.includes('pokemon') || f.includes('narvar')) {
     const m = text.match(/\b(P\d{9,12})\b/);
     if (m) return m[1];
   }
-  // Generic: "Order #12345", "Order Number: ABC-123", "Order: 102-123-456", "Order 102-123-456"
-  const g = text.match(/[Oo]rder\s*(?:[#№]|[Nn](?:umber|o\.?)?)?[:\s]+([A-Z0-9][\w\-]{3,24})/);
-  if (g) return g[1].trim();
-  // Also catch Target-style bare numbers: "102003676904439" or "102-1234567-1234567"
+
+  // Target bare 15-digit or hyphenated format — try this FIRST for target emails
+  // because generic "Order" text in Target emails always matches junk words first
+  if (f.includes('target.com')) {
+    const t = text.match(/\b(\d{3}-\d{7}-\d{7}|\d{15})\b/);
+    if (t) return t[1].trim();
+  }
+
+  // Generic: scan ALL "Order #..." matches and return first one with 3+ consecutive digits.
+  // This skips false positives like "Order Summary" → "Summary", "Your Order" → "Your", CSS "16px".
+  const re = /[Oo]rder\s*(?:[#№]|[Nn](?:umber|o\.?)?)?[:\s]+([A-Z0-9][\w\-]{3,24})/g;
+  for (const m of text.matchAll(re)) {
+    if (/\d{3,}/.test(m[1])) return m[1].trim();
+  }
+
+  // Fallback: bare 15-digit or Amazon-style hyphenated number anywhere in text
   const t = text.match(/\b(\d{3}-\d{7}-\d{7}|\d{15})\b/);
   if (t) return t[1].trim();
+
   return null;
 }
 
@@ -122,22 +170,28 @@ async function processEmail(parsed, db) {
   const subject    = parsed.subject || '';
   const bodyText   = parsed.text    || '';
   const bodyHtml   = parsed.html    || '';
-  const fullText   = bodyText + ' ' + bodyHtml;
+  // Use HTML-stripped text as fallback — Target and many retailers send HTML-only emails
+  const strippedHtml = stripHtml(bodyHtml);
+  const plainText    = bodyText || strippedHtml;   // best plain text we have
+  const fullText     = plainText + ' ' + bodyHtml; // raw HTML included for regex searches
 
   const retailerInfo = getRetailerInfo(fromEmail);
   if (!retailerInfo) return false;
 
   const tracking    = findTracking(fullText);
   const orderNumber = findOrderNumber(fullText, fromEmail);
-  const rawStatus   = determineStatus(subject, bodyText);
-  const expectedDate= findExpectedDate(bodyText);
+  const rawStatus   = determineStatus(subject, plainText);  // use stripped text, not raw HTML
+  const expectedDate= findExpectedDate(plainText);
 
   if (!orderNumber && !tracking) return false;
 
-  const dbStatus = rawStatus === 'OFD' ? 'Shipped' : rawStatus; // DB status stays Shipped, tracking_status = OFD
-  const trackingStatus = rawStatus === 'OFD' ? 'OFD' : (rawStatus === 'Delivered' ? 'Delivered' : null);
+  // If we found an order number but couldn't determine status, assume Confirmed
+  const resolvedStatus = rawStatus || (orderNumber ? 'Confirmed' : null);
 
-  console.log(`   📧 ${retailerInfo.retailer} | order=${orderNumber||'?'} tracking=${tracking||'?'} status=${rawStatus||'?'}${expectedDate?' exp='+expectedDate:''}`);
+  const dbStatus = resolvedStatus === 'OFD' ? 'Shipped' : resolvedStatus;
+  const trackingStatus = resolvedStatus === 'OFD' ? 'OFD' : (resolvedStatus === 'Delivered' ? 'Delivered' : null);
+
+  console.log(`   📧 ${retailerInfo.retailer} | order=${orderNumber||'?'} tracking=${tracking||'?'} status=${resolvedStatus||'?'}${expectedDate?' exp='+expectedDate:''}`);
 
   // Find existing record
   let existing = null;
@@ -145,14 +199,14 @@ async function processEmail(parsed, db) {
   if (!existing && tracking) existing = db.prepare('SELECT * FROM bot_orders WHERE tracking=?').get([tracking]);
 
   if (existing) {
-    const curRank = STATUS_RANK[existing.status] || 0;
-    const newRank = STATUS_RANK[rawStatus]        || 0;
+    const curRank = STATUS_RANK[existing.status]    || 0;
+    const newRank = STATUS_RANK[resolvedStatus]     || 0;
     const updates = []; const vals = [];
 
     if (tracking && !existing.tracking)  { updates.push('tracking=?');        vals.push(tracking); }
     if (expectedDate)                    { updates.push('expected_date=?');    vals.push(expectedDate); }
     if (trackingStatus)                  { updates.push('tracking_status=?');  vals.push(trackingStatus); }
-    if (rawStatus === 'Delivered') {
+    if (resolvedStatus === 'Delivered') {
       updates.push('delivered_date=?');  vals.push(new Date().toISOString().split('T')[0]);
       updates.push('expected_date=?');   vals.push(null); // clear expected once delivered
     }
@@ -164,8 +218,18 @@ async function processEmail(parsed, db) {
       return true;
     }
   } else if (orderNumber && dbStatus) {
-    // Create new order
-    const { retailer, category } = retailerInfo;
+    // Check blocklist — don't recreate manually-deleted orders
+    try {
+      const raw = db.prepare("SELECT value FROM settings WHERE key='scraper_blocked_orders'").get();
+      const blocked = raw ? JSON.parse(raw.value) : [];
+      if (blocked.includes(orderNumber)) {
+        console.log(`   🚫 Skipped blocked order #${orderNumber}`);
+        return false;
+      }
+    } catch(_) {}
+    // Create new order — detect category from email content for generic retailers
+    const { retailer } = retailerInfo;
+    const category = detectCategoryFromContent(subject, plainText, retailerInfo.category);
     const emailDate   = parsed.date ? parsed.date.toISOString() : new Date().toISOString();
     const orderDate   = emailDate.split('T')[0];   // YYYY-MM-DD for proper sort
     db.prepare(`INSERT OR IGNORE INTO bot_orders
@@ -238,12 +302,14 @@ function fetchNewAndProcess(imap, db) {
           msg.on('body', stream => stream.on('data', c => raw += c.toString()));
           msg.once('end', () => {
             jobs.push(
-              simpleParser(raw).then(parsed => {
+              simpleParser(raw).then(async parsed => {
                 const msgId = parsed.messageId || null;
                 // Skip already-processed emails
                 if (msgId && seenIds.has(msgId)) return false;
-                if (msgId) newIds.push(msgId);
-                return processEmail(parsed, db);
+                const result = await processEmail(parsed, db);
+                // Only mark as seen AFTER successful processing (so failed emails get retried next run)
+                if (msgId && result !== false) newIds.push(msgId);
+                return result;
               }).catch(e => { console.log('   ⚠️  parse error:', e.message); return false; })
             );
           });
