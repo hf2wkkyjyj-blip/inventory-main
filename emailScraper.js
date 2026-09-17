@@ -161,6 +161,146 @@ function determineStatus(subject, bodyText) {
   return null;
 }
 
+// ── Order detail extraction (items, prices, tax, shipping) ───────────────────
+
+// Parse a dollar amount from a string like "$43.52" or "43.52"
+function parseDollar(s) {
+  const m = String(s||'').match(/\$?([\d,]+\.?\d*)/);
+  return m ? parseFloat(m[1].replace(/,/g,'')) : null;
+}
+
+// Extract order financial summary (subtotal, tax, shipping, total) from plain text
+function findOrderFinancials(text) {
+  if (!text) return {};
+  const result = {};
+  // subtotal / item total
+  const subM = text.match(/(?:subtotal|item(?:s)?\s+total|merchandise\s+total)[:\s]+\$?([\d,]+\.\d{2})/i);
+  if (subM) result.subtotal = parseFloat(subM[1].replace(/,/g,''));
+  // tax
+  const taxM = text.match(/(?:estimated\s+)?tax(?:es)?[:\s]+\$?([\d,]+\.\d{2})/i);
+  if (taxM) result.tax = parseFloat(taxM[1].replace(/,/g,''));
+  // shipping
+  const shipM = text.match(/(?:shipping|delivery|standard\s+shipping)[:\s]+(?:free|\$?([\d,]+\.\d{2}))/i);
+  if (shipM) result.shipping = shipM[1] ? parseFloat(shipM[1].replace(/,/g,'')) : 0;
+  // order total
+  const totM = text.match(/(?:order\s+total|grand\s+total|total\s+charged|total)[:\s]+\$?([\d,]+\.\d{2})/i);
+  if (totM) result.total = parseFloat(totM[1].replace(/,/g,''));
+  return result;
+}
+
+// Extract items from Target order confirmation HTML
+// Target format: item rows with name (may contain SKU), qty, price
+function extractTargetItems(html) {
+  if (!html) return [];
+  const items = [];
+
+  // Strategy 1: Look for patterns like "Qty: 2" near a price "$xx.xx" near a product name
+  // Target emails have product names in <td> or <p> elements near qty/price cells
+  // We'll scan the stripped text for patterns
+
+  const text = stripHtml(html);
+
+  // Pattern: find "Qty N" or "Quantity: N" followed by product context
+  // Target plain text often has: "ProductName Qty 2 $40.00"
+  // Try to find lines with both a qty and a dollar amount
+  const lines = text.split(/\n|\r|  {2,}/).map(l => l.trim()).filter(Boolean);
+
+  // Look for price patterns $XX.XX and qty patterns
+  const priceRe  = /\$(\d+\.?\d{0,2})/g;
+  const qtyRe    = /\bqty[:\s]+(\d+)\b|\bquantity[:\s]+(\d+)\b|\b(\d+)\s*x\b/i;
+
+  // Scan HTML for structured item blocks
+  // Target typically wraps each item in a table row or div with data-automation attributes
+  // Try regex on raw HTML for item data
+  const itemBlockRe = /<td[^>]*>[\s\S]*?<\/td>/gi;
+  const cells = html.match(itemBlockRe) || [];
+
+  // Collect cell text values
+  const cellTexts = cells.map(c => stripHtml(c).trim()).filter(t => t.length > 0 && t.length < 300);
+
+  // Slide a window: look for a non-price non-qty cell (product name) followed by qty+price cells
+  for (let i = 0; i < cellTexts.length - 2; i++) {
+    const nameCandidate = cellTexts[i];
+    const next1 = cellTexts[i+1] || '';
+    const next2 = cellTexts[i+2] || '';
+    const next3 = cellTexts[i+3] || '';
+
+    // Skip if name looks like a number/price/label
+    if (/^\$?\d/.test(nameCandidate)) continue;
+    if (/^(?:qty|quantity|price|subtotal|total|tax|shipping|item|order)/i.test(nameCandidate)) continue;
+    if (nameCandidate.length < 8) continue;
+
+    // Find qty in surrounding cells
+    let qty = 1;
+    for (const c of [next1, next2, next3]) {
+      const qm = c.match(/^(\d+)$/) || c.match(/qty[:\s]*(\d+)/i);
+      if (qm) { qty = parseInt(qm[1]); break; }
+    }
+
+    // Find unit price in surrounding cells
+    let price = null;
+    for (const c of [next1, next2, next3]) {
+      const pm = c.match(/^\$?([\d,]+\.\d{2})$/);
+      if (pm) { price = parseFloat(pm[1].replace(/,/g,'')); break; }
+    }
+
+    if (price && price > 0.5 && nameCandidate.length > 8) {
+      // Clean the name: remove "Item #NNNNN" suffixes if desired (keep SKU info)
+      const cleanName = nameCandidate.replace(/\s{2,}/g,' ').substring(0, 120);
+      items.push({ name: cleanName, qty, price });
+      i += 2; // skip consumed cells
+    }
+  }
+
+  return items;
+}
+
+// Extract items from Pokemon Center / generic order HTML
+// PKC format: item table with product name, qty, price columns
+function extractPKCItems(html) {
+  if (!html) return [];
+  const items = [];
+
+  // PKC emails have a clean table: Name | Qty | Price
+  // Look for table rows with product data
+  const rowRe = /<tr[\s\S]*?<\/tr>/gi;
+  const rows  = html.match(rowRe) || [];
+
+  for (const row of rows) {
+    const cells = (row.match(/<td[\s\S]*?<\/td>/gi) || []).map(c => stripHtml(c).trim());
+    if (cells.length < 2) continue;
+
+    // Look for a cell that has a product name (long text, not just a number/price)
+    let nameIdx = -1, qtyIdx = -1, priceIdx = -1;
+    for (let i = 0; i < cells.length; i++) {
+      const c = cells[i];
+      if (/^\$[\d,.]+$/.test(c) || /^[\d,.]+$/.test(c) && parseFloat(c) < 10000) {
+        if (/^\$/.test(c)) priceIdx = i;
+        else if (parseInt(c) > 0 && parseInt(c) < 1000 && c.length <= 4) qtyIdx = i;
+      } else if (c.length > 10 && !/^(?:subtotal|total|tax|ship|order|qty|quantity|price|amount)/i.test(c)) {
+        nameIdx = i;
+      }
+    }
+
+    if (nameIdx >= 0 && priceIdx >= 0) {
+      const name  = cells[nameIdx].replace(/\s{2,}/g,' ').substring(0, 120);
+      const price = parseDollar(cells[priceIdx]);
+      const qty   = qtyIdx >= 0 ? (parseInt(cells[qtyIdx]) || 1) : 1;
+      if (price && price > 0.5) items.push({ name, qty, price });
+    }
+  }
+
+  return items;
+}
+
+// Format extracted items as strings: "3x ETB @ $40.00"
+function formatItems(itemObjs) {
+  return itemObjs.map(i => {
+    const base = i.qty > 1 ? `${i.qty}x ${i.name}` : i.name;
+    return i.price ? `${base} @ $${i.price.toFixed(2)}` : base;
+  });
+}
+
 // ── DB update logic ───────────────────────────────────────────────────────────
 
 const STATUS_RANK = { Confirmed:1, Unship:1, Shipped:2, OFD:3, Delivered:4, Cancelled:5, Refunded:5 };
@@ -180,20 +320,36 @@ async function processEmail(parsed, db) {
 
   const tracking    = findTracking(fullText);
   const orderNumber = findOrderNumber(fullText, fromEmail);
-  const rawStatus   = determineStatus(subject, plainText);  // use stripped text, not raw HTML
+  const rawStatus   = determineStatus(subject, plainText);
   const expectedDate= findExpectedDate(plainText);
 
   if (!orderNumber && !tracking) return false;
 
-  // If we found an order number but couldn't determine status, assume Confirmed
   const resolvedStatus = rawStatus || (orderNumber ? 'Confirmed' : null);
-
-  const dbStatus = resolvedStatus === 'OFD' ? 'Shipped' : resolvedStatus;
+  const dbStatus       = resolvedStatus === 'OFD' ? 'Shipped' : resolvedStatus;
   const trackingStatus = resolvedStatus === 'OFD' ? 'OFD' : (resolvedStatus === 'Delivered' ? 'Delivered' : null);
 
-  console.log(`   📧 ${retailerInfo.retailer} | order=${orderNumber||'?'} tracking=${tracking||'?'} status=${resolvedStatus||'?'}${expectedDate?' exp='+expectedDate:''}`);
+  // ── Extract items + financials from confirmation emails only ─────────────────
+  let extractedItems  = [];
+  let financials      = {};
+  const isConfirmation = resolvedStatus === 'Confirmed';
+  if (isConfirmation && bodyHtml) {
+    const f = fromEmail.toLowerCase();
+    if (f.includes('target.com'))           extractedItems = extractTargetItems(bodyHtml);
+    else if (f.includes('pokemoncenter') || f.includes('narvar')) extractedItems = extractPKCItems(bodyHtml);
+    else                                    extractedItems = extractPKCItems(bodyHtml); // generic fallback
+    financials = findOrderFinancials(plainText);
+  }
+  const itemStrings  = formatItems(extractedItems);
+  const itemsJson    = itemStrings.length ? JSON.stringify(itemStrings) : null;
+  const orderTotal   = financials.total    || financials.subtotal || null;
+  const taxAmount    = financials.tax      || null;
+  const shipCost     = financials.shipping !== undefined ? financials.shipping : null;
 
-  // Find existing record
+  if (extractedItems.length)
+    console.log(`   🛒 ${extractedItems.length} item(s) extracted, total=${orderTotal||'?'} tax=${taxAmount||'?'} ship=${shipCost||'?'}`);
+
+  // ── Find existing record ─────────────────────────────────────────────────────
   let existing = null;
   if (orderNumber) existing = db.prepare('SELECT * FROM bot_orders WHERE order_number=?').get([orderNumber]);
   if (!existing && tracking) existing = db.prepare('SELECT * FROM bot_orders WHERE tracking=?').get([tracking]);
@@ -203,14 +359,19 @@ async function processEmail(parsed, db) {
     const newRank = STATUS_RANK[resolvedStatus]     || 0;
     const updates = []; const vals = [];
 
-    if (tracking && !existing.tracking)  { updates.push('tracking=?');        vals.push(tracking); }
-    if (expectedDate)                    { updates.push('expected_date=?');    vals.push(expectedDate); }
-    if (trackingStatus)                  { updates.push('tracking_status=?');  vals.push(trackingStatus); }
+    if (tracking && !existing.tracking)                    { updates.push('tracking=?');        vals.push(tracking); }
+    if (expectedDate)                                      { updates.push('expected_date=?');    vals.push(expectedDate); }
+    if (trackingStatus)                                    { updates.push('tracking_status=?');  vals.push(trackingStatus); }
     if (resolvedStatus === 'Delivered') {
       updates.push('delivered_date=?');  vals.push(new Date().toISOString().split('T')[0]);
-      updates.push('expected_date=?');   vals.push(null); // clear expected once delivered
+      updates.push('expected_date=?');   vals.push(null);
     }
-    if (dbStatus && newRank > curRank)   { updates.push('status=?');           vals.push(dbStatus); }
+    if (dbStatus && newRank > curRank)                     { updates.push('status=?');           vals.push(dbStatus); }
+    // Fill in items/financials if missing on existing order
+    if (itemsJson && !existing.items)                      { updates.push('items=?');            vals.push(itemsJson); }
+    if (orderTotal  && !existing.order_total)              { updates.push('order_total=?');      vals.push(orderTotal); }
+    if (taxAmount   && !existing.tax_amount)               { updates.push('tax_amount=?');       vals.push(taxAmount); }
+    if (shipCost !== null && !existing.ship_cost)          { updates.push('ship_cost=?');        vals.push(shipCost); }
 
     if (updates.length) {
       db.prepare(`UPDATE bot_orders SET ${updates.join(',')} WHERE id=?`).run([...vals, existing.id]);
@@ -218,7 +379,7 @@ async function processEmail(parsed, db) {
       return true;
     }
   } else if (orderNumber && dbStatus) {
-    // Check blocklist — don't recreate manually-deleted orders
+    // Check blocklist
     try {
       const raw = db.prepare("SELECT value FROM settings WHERE key='scraper_blocked_orders'").get();
       const blocked = raw ? JSON.parse(raw.value) : [];
@@ -227,16 +388,19 @@ async function processEmail(parsed, db) {
         return false;
       }
     } catch(_) {}
-    // Create new order — detect category from email content for generic retailers
+    // Create new order
     const { retailer } = retailerInfo;
-    const category = detectCategoryFromContent(subject, plainText, retailerInfo.category);
-    const emailDate   = parsed.date ? parsed.date.toISOString() : new Date().toISOString();
-    const orderDate   = emailDate.split('T')[0];   // YYYY-MM-DD for proper sort
+    const category  = detectCategoryFromContent(subject, plainText, retailerInfo.category);
+    const emailDate = parsed.date ? parsed.date.toISOString() : new Date().toISOString();
+    const orderDate = emailDate.split('T')[0];
     db.prepare(`INSERT OR IGNORE INTO bot_orders
-      (category, retailer, order_number, tracking, status, tracking_status, expected_date, order_date, received_at, created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
-      .run([category, retailer, orderNumber, tracking||null, dbStatus, trackingStatus||null, expectedDate||null, orderDate, emailDate]);
-    console.log(`   ➕ New: ${orderNumber} (${retailer}) — ${rawStatus}${expectedDate?' exp '+expectedDate:''}`);
+      (category, retailer, order_number, tracking, status, tracking_status, expected_date,
+       order_date, received_at, items, order_total, tax_amount, ship_cost, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+      .run([category, retailer, orderNumber, tracking||null, dbStatus, trackingStatus||null,
+            expectedDate||null, orderDate, emailDate,
+            itemsJson||null, orderTotal||null, taxAmount||null, shipCost||null]);
+    console.log(`   ➕ New: ${orderNumber} (${retailer}) — ${resolvedStatus}${itemStrings.length?' | '+itemStrings.length+' items':''}${expectedDate?' exp '+expectedDate:''}`);
     return true;
   }
   return false;

@@ -903,12 +903,19 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
     const m = str.match(/^(\d+)\s*[xX×]\s+/) || str.match(/\s+[xX×]\s*(\d+)$/);
     return m ? parseInt(m[1]) : 1;
   }
+  function parsePrice(str) {
+    // Extracts "@ $40.00" price suffix added by scraper
+    const m = String(str||'').match(/@\s*\$?([\d,]+\.?\d*)/);
+    return m ? parseFloat(m[1].replace(/,/g,'')) : null;
+  }
   function parseName(str) {
-    let m = str.match(/^(\d+)\s*[xX×]\s+(.+)/);
+    // Strip "@ $xx.xx" price suffix first
+    let s = String(str||'').replace(/@\s*\$?[\d,]+\.?\d*\s*$/, '').trim();
+    let m = s.match(/^(\d+)\s*[xX×]\s+(.+)/);
     if (m) return m[2].trim();
-    m = str.match(/^(.+)\s+[xX×]\s*(\d+)$/);
+    m = s.match(/^(.+)\s+[xX×]\s*(\d+)$/);
     if (m) return m[1].trim();
-    return str.trim();
+    return s.trim();
   }
 
   // groups keyed by name only — same SKU always merges into one row.
@@ -918,25 +925,53 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
     let arr; try { arr = JSON.parse(order.items||'[]'); } catch(_) { arr = []; }
     if (!arr.length) continue;
 
-    // Expand items that contain " | " or newline separators (e.g. "Item A | 1x Item B" → two rows)
+    // Expand items separated by " | " or newlines
     const expanded = [];
     for (const raw of arr) {
       String(raw||'').split(/\s*\|\s*|\n+/).map(p => p.trim()).filter(Boolean).forEach(p => expanded.push(p));
     }
     if (!expanded.length) continue;
 
-    const totalOrderQty = expanded.reduce((s,i)=>s+parseQty(i),0)||1;
-    const totalCost     = (order.order_total||0)+(order.tax_amount||0)+(order.ship_cost||0)+(order.finder_fee||0);
+    // Calculate order-level cost components
+    const orderSubtotal = order.order_total || 0;
+    const taxAmount     = order.tax_amount  || 0;
+    const shipCost      = order.ship_cost   || 0;
+    const finderFee     = order.finder_fee  || 0;
 
-    for (const s of expanded) {
-      const name    = parseName(s);
-      const qty     = parseQty(s);
-      // Each unit of this item bears its share of the order's costs (proportional by qty)
-      const unitItem   = (order.order_total||0) / totalOrderQty;
-      const unitTax    = (order.tax_amount||0)  / totalOrderQty;
-      const unitShip   = (order.ship_cost||0)   / totalOrderQty;
-      const unitFinder = (order.finder_fee||0)  / totalOrderQty;
-      const unitTotal  = totalCost              / totalOrderQty;
+    // Check if items have embedded prices (scraped format: "3x ETB @ $40.00")
+    const itemPrices  = expanded.map(s => parsePrice(s));
+    const hasPrices   = itemPrices.some(p => p !== null);
+    // Subtotal from item prices (for proportional split)
+    const priceSubtotal = hasPrices
+      ? expanded.reduce((sum, s, i) => sum + (itemPrices[i] || 0) * parseQty(s), 0) || 1
+      : null;
+    const totalOrderQty = expanded.reduce((s,i) => s + parseQty(i), 0) || 1;
+
+    for (let idx = 0; idx < expanded.length; idx++) {
+      const s     = expanded[idx];
+      const name  = parseName(s);
+      const qty   = parseQty(s);
+      const iPrice = itemPrices[idx]; // may be null
+
+      let unitItem, unitTax, unitShip, unitFinder;
+
+      if (hasPrices && priceSubtotal && iPrice !== null) {
+        // Proportional split: item's share = (unitPrice × qty) / totalItemValue
+        const itemValue = iPrice * qty;
+        const share     = itemValue / priceSubtotal;
+        unitItem   = iPrice;                            // actual price per unit
+        unitTax    = (taxAmount  * share) / qty;        // proportional tax per unit
+        unitShip   = (shipCost   * share) / qty;        // proportional ship per unit
+        unitFinder = (finderFee  * share) / qty;
+      } else {
+        // Fallback: even split across all units
+        unitItem   = orderSubtotal / totalOrderQty;
+        unitTax    = taxAmount     / totalOrderQty;
+        unitShip   = shipCost      / totalOrderQty;
+        unitFinder = finderFee     / totalOrderQty;
+      }
+      const unitTotal = unitItem + unitTax + unitShip + unitFinder;
+
       const key = name.toLowerCase();
       if (!groups[key]) {
         groups[key] = {
@@ -951,8 +986,8 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
       groups[key]._sumShip     += unitShip   * qty;
       groups[key]._sumFinder   += unitFinder * qty;
       groups[key]._sumTotal    += unitTotal  * qty;
-      const st = order.status||'Confirmed';
-      groups[key].statuses[st] = (groups[key].statuses[st]||0) + qty;
+      const st = order.status || 'Confirmed';
+      groups[key].statuses[st] = (groups[key].statuses[st] || 0) + qty;
       if (order.shipping_address) groups[key].addresses.push(order.shipping_address);
     }
   }
