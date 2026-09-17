@@ -189,66 +189,85 @@ function findOrderFinancials(text) {
 }
 
 // Extract items from Target order confirmation HTML
-// Target format: item rows with name (may contain SKU), qty, price
+// Uses two strategies: plain-text line scanning (primary) + HTML cell sliding window (fallback)
 function extractTargetItems(html) {
   if (!html) return [];
+
+  const seen  = new Set();
   const items = [];
 
-  // Strategy 1: Look for patterns like "Qty: 2" near a price "$xx.xx" near a product name
-  // Target emails have product names in <td> or <p> elements near qty/price cells
-  // We'll scan the stripped text for patterns
+  function isProductName(l) {
+    if (l.length < 8 || l.length > 250) return false;
+    if (/^\$?[\d,]+(\.\d+)?$/.test(l)) return false;           // pure number / price
+    if (/^(?:qty|quantity|price|subtotal|total|tax|shipping|item|order|estimated|standard|free|sold by|ships from|returns|eligible|add to|view|cart|account|hi |hello |dear )/i.test(l)) return false;
+    if (/^\d{3,}-\d{3,}/.test(l)) return false;                 // order number pattern
+    if (/^[A-Z]{1,3}\d{6,}$/.test(l)) return false;             // bare SKU code
+    return true;
+  }
 
-  const text = stripHtml(html);
+  // ── Strategy 1: plain-text line scan ──────────────────────────────────────
+  const text  = stripHtml(html);
+  const lines = text.split(/[\n\r]+/).map(l => l.trim()).filter(Boolean);
 
-  // Pattern: find "Qty N" or "Quantity: N" followed by product context
-  // Target plain text often has: "ProductName Qty 2 $40.00"
-  // Try to find lines with both a qty and a dollar amount
-  const lines = text.split(/\n|\r|  {2,}/).map(l => l.trim()).filter(Boolean);
+  for (let i = 0; i < lines.length; i++) {
+    // Find a line that IS or ENDS WITH a standalone dollar price
+    const priceMatch = lines[i].match(/^\$?([\d,]+\.\d{2})$/) ||
+                       lines[i].match(/\$\s*([\d,]+\.\d{2})\s*$/);
+    if (!priceMatch) continue;
+    const price = parseFloat(priceMatch[1].replace(/,/g,''));
+    if (price < 0.50 || price > 5000) continue;
 
-  // Look for price patterns $XX.XX and qty patterns
-  const priceRe  = /\$(\d+\.?\d{0,2})/g;
-  const qtyRe    = /\bqty[:\s]+(\d+)\b|\bquantity[:\s]+(\d+)\b|\b(\d+)\s*x\b/i;
-
-  // Scan HTML for structured item blocks
-  // Target typically wraps each item in a table row or div with data-automation attributes
-  // Try regex on raw HTML for item data
-  const itemBlockRe = /<td[^>]*>[\s\S]*?<\/td>/gi;
-  const cells = html.match(itemBlockRe) || [];
-
-  // Collect cell text values
-  const cellTexts = cells.map(c => stripHtml(c).trim()).filter(t => t.length > 0 && t.length < 300);
-
-  // Slide a window: look for a non-price non-qty cell (product name) followed by qty+price cells
-  for (let i = 0; i < cellTexts.length - 2; i++) {
-    const nameCandidate = cellTexts[i];
-    const next1 = cellTexts[i+1] || '';
-    const next2 = cellTexts[i+2] || '';
-    const next3 = cellTexts[i+3] || '';
-
-    // Skip if name looks like a number/price/label
-    if (/^\$?\d/.test(nameCandidate)) continue;
-    if (/^(?:qty|quantity|price|subtotal|total|tax|shipping|item|order)/i.test(nameCandidate)) continue;
-    if (nameCandidate.length < 8) continue;
-
-    // Find qty in surrounding cells
+    // Look for qty within ±4 lines
     let qty = 1;
-    for (const c of [next1, next2, next3]) {
-      const qm = c.match(/^(\d+)$/) || c.match(/qty[:\s]*(\d+)/i);
-      if (qm) { qty = parseInt(qm[1]); break; }
+    for (let j = Math.max(0, i - 4); j <= Math.min(lines.length - 1, i + 4); j++) {
+      if (j === i) continue;
+      const qm = lines[j].match(/^(?:qty|quantity)[:\s]*(\d+)$/i) ||
+                 lines[j].match(/^(\d+)$/) ||
+                 lines[j].match(/\bqty[:\s]+(\d+)\b/i);
+      if (qm) { const q = parseInt(qm[1]); if (q >= 1 && q <= 99) { qty = q; break; } }
     }
 
-    // Find unit price in surrounding cells
-    let price = null;
-    for (const c of [next1, next2, next3]) {
-      const pm = c.match(/^\$?([\d,]+\.\d{2})$/);
-      if (pm) { price = parseFloat(pm[1].replace(/,/g,'')); break; }
+    // Walk backwards (up to 6 lines) for a product name
+    for (let j = i - 1; j >= Math.max(0, i - 6); j--) {
+      const l = lines[j];
+      if (!isProductName(l)) continue;
+      const key = `${l.toLowerCase()}|${price}`;
+      if (seen.has(key)) break;
+      seen.add(key);
+      items.push({ name: l.replace(/\s{2,}/g, ' ').substring(0, 120), qty, price });
+      break;
     }
+  }
 
-    if (price && price > 0.5 && nameCandidate.length > 8) {
-      // Clean the name: remove "Item #NNNNN" suffixes if desired (keep SKU info)
-      const cleanName = nameCandidate.replace(/\s{2,}/g,' ').substring(0, 120);
-      items.push({ name: cleanName, qty, price });
-      i += 2; // skip consumed cells
+  // ── Strategy 2: HTML <td> sliding-window (fallback when text scan finds nothing) ──
+  if (items.length === 0) {
+    const cells = (html.match(/<td[^>]*>[\s\S]*?<\/td>/gi) || [])
+      .map(c => stripHtml(c).trim())
+      .filter(t => t.length > 0 && t.length < 300);
+
+    for (let i = 0; i < cells.length - 2; i++) {
+      const nameCandidate = cells[i];
+      if (/^\$?\d/.test(nameCandidate)) continue;
+      if (/^(?:qty|quantity|price|subtotal|total|tax|shipping|item|order)/i.test(nameCandidate)) continue;
+      if (nameCandidate.length < 8) continue;
+
+      let qty = 1, price = null;
+      for (const c of [cells[i+1], cells[i+2], cells[i+3]].filter(Boolean)) {
+        const qm = c.match(/^(\d+)$/) || c.match(/qty[:\s]*(\d+)/i);
+        if (qm && qty === 1) qty = parseInt(qm[1]);
+        const pm = c.match(/^\$?([\d,]+\.\d{2})$/);
+        if (pm && !price) price = parseFloat(pm[1].replace(/,/g,''));
+      }
+
+      if (price && price > 0.5) {
+        const cleanName = nameCandidate.replace(/\s{2,}/g, ' ').substring(0, 120);
+        const key = `${cleanName.toLowerCase()}|${price}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          items.push({ name: cleanName, qty, price });
+          i += 2;
+        }
+      }
     }
   }
 
@@ -456,9 +475,9 @@ function fetchNewAndProcess(imap, db) {
       let seenIds;
       try { seenIds = new Set(JSON.parse(seenRaw)); } catch(_) { seenIds = new Set(); }
 
-      // Search since last run date (default: today minus 2 days on first run)
+      // Search since last run date (default: today minus 1 day on first normal run)
       const sinceStr  = getSetting(db, 'email_scraper_since', null);
-      const sinceDate = sinceStr ? new Date(sinceStr) : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+      const sinceDate = sinceStr ? new Date(sinceStr) : new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
       const imapDate  = formatImapDate(sinceDate);
 
       // Only fetch emails from known retailer domains — ignores all other inbox mail
@@ -472,7 +491,7 @@ function fetchNewAndProcess(imap, db) {
         if (!uids || !uids.length) {
           console.log('   No emails in range.');
           // Advance the since date so next run doesn't re-scan old range
-          setSetting(db, 'email_scraper_since', new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString());
+          setSetting(db, 'email_scraper_since', new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString());
           return resolve(0);
         }
 
@@ -507,8 +526,8 @@ function fetchNewAndProcess(imap, db) {
             newIds.forEach(id => seenIds.add(id));
             const arr = [...seenIds];
             setSetting(db, 'email_scraper_seen_ids', JSON.stringify(arr.slice(-3000)));
-            // Advance since date (keep 2-day buffer so timezone edge cases don't miss anything)
-            setSetting(db, 'email_scraper_since', new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString());
+            // Advance since date (keep 1-day buffer so timezone edge cases don't miss anything)
+            setSetting(db, 'email_scraper_since', new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString());
             const updated = results.filter(Boolean).length;
             console.log(`   Processed ${newIds.length} new email(s), ${updated} order(s) updated.`);
             resolve(updated);
@@ -646,11 +665,11 @@ async function scrapeByOrderNumber(db, orderNumber) {
   });
 }
 
-// ── Reset scraper state — re-scans last 2 days only ─────────────────────────
+// ── Reset scraper state — Full Rescan goes back 30 days to recover lost orders ─
 function resetEmailScraper(db) {
   setSetting(db, 'email_scraper_seen_ids', '[]');
-  setSetting(db, 'email_scraper_since', new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString());
-  console.log('📧 Email scraper state reset — next run will re-scan last 2 days');
+  setSetting(db, 'email_scraper_since', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+  console.log('📧 Email scraper state reset — next run will re-scan last 30 days');
 }
 
 module.exports = { runEmailScraper, scrapeByOrderNumber, resetEmailScraper };
