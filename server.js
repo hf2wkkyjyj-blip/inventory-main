@@ -130,6 +130,7 @@ try { db.exec("ALTER TABLE bot_orders ADD COLUMN expected_date TEXT"); } catch(e
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN tax_amount REAL DEFAULT 0"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN ship_cost REAL DEFAULT 0"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN finder_fee REAL DEFAULT 0"); } catch(e) {}
+try { db.exec("CREATE TABLE IF NOT EXISTS bot_sku_prices (sku TEXT PRIMARY KEY, buyer_fee REAL DEFAULT 0, sale_price REAL DEFAULT 0)"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='ordered'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE status='delivered' OR status='out_for_delivery'"); } catch(e) {}
@@ -873,6 +874,70 @@ app.post('/api/bot/orders', (req, res) => {
     } catch(e) {}
   }
   res.json({ inserted });
+});
+
+// ── Item view endpoint: expand orders → per-item rows, merge by SKU+cost ───────
+app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
+  const { category } = req.query;
+  if (!category) return res.status(400).json({ error: 'category required' });
+  const orders = db.prepare(
+    "SELECT * FROM bot_orders WHERE category=? AND status NOT IN ('Cancelled','Refunded')"
+  ).all([category]);
+
+  function parseQty(str) {
+    const m = str.match(/^(\d+)\s*[xX×]\s+/) || str.match(/\s+[xX×]\s*(\d+)$/);
+    return m ? parseInt(m[1]) : 1;
+  }
+  function parseName(str) {
+    let m = str.match(/^(\d+)\s*[xX×]\s+(.+)/);
+    if (m) return m[2].trim();
+    m = str.match(/^(.+)\s+[xX×]\s*(\d+)$/);
+    if (m) return m[1].trim();
+    return str.trim();
+  }
+
+  const groups = {};
+  for (const order of orders) {
+    let arr; try { arr = JSON.parse(order.items||'[]'); } catch(_) { arr = []; }
+    if (!arr.length) continue;
+    const totalQty   = arr.reduce((s,i)=>s+parseQty(String(i)),0)||1;
+    const totalCost  = (order.order_total||0)+(order.tax_amount||0)+(order.ship_cost||0)+(order.finder_fee||0);
+    const pItem      = Math.round((order.order_total||0)/totalQty*100)/100;
+    const pTax       = Math.round((order.tax_amount||0)/totalQty*100)/100;
+    const pShip      = Math.round((order.ship_cost||0)/totalQty*100)/100;
+    const pFinder    = Math.round((order.finder_fee||0)/totalQty*100)/100;
+    const pTotal     = Math.round(totalCost/totalQty*100)/100;
+    for (const raw of arr) {
+      const s    = String(raw||'').trim();
+      const name = parseName(s);
+      const qty  = parseQty(s);
+      const key  = name.toLowerCase()+'|||'+pTotal;
+      if (!groups[key]) groups[key] = { name, qty:0, perUnitTotal:pTotal, perUnitItem:pItem, perUnitTax:pTax, perUnitShip:pShip, perUnitFinder:pFinder, statuses:{}, addresses:[] };
+      groups[key].qty += qty;
+      const st = order.status||'Confirmed';
+      groups[key].statuses[st] = (groups[key].statuses[st]||0) + qty;
+      if (order.shipping_address) groups[key].addresses.push(order.shipping_address);
+    }
+  }
+
+  // Load saved pricing
+  const pricing = {};
+  try { db.prepare('SELECT * FROM bot_sku_prices').all().forEach(r=>{ pricing[r.sku.toLowerCase()]=r; }); } catch(_) {}
+
+  const result = Object.values(groups).map(g => {
+    const p = pricing[g.name.toLowerCase()] || {};
+    return { ...g, buyer_fee: p.buyer_fee||0, sale_price: p.sale_price||0 };
+  }).sort((a,b)=>a.name.localeCompare(b.name));
+  res.json(result);
+});
+
+// Save per-SKU pricing (buyer_fee + sale_price)
+app.patch('/api/admin/bot-items/sku', auth, adminOnly, (req, res) => {
+  const { sku, buyer_fee, sale_price } = req.body;
+  if (!sku) return res.status(400).json({ error: 'sku required' });
+  db.prepare('INSERT OR REPLACE INTO bot_sku_prices (sku,buyer_fee,sale_price) VALUES (?,?,?)')
+    .run([sku, buyer_fee||0, sale_price||0]);
+  res.json({ success: true });
 });
 
 app.get('/api/admin/bot-orders', auth, adminOnly, (req, res) => {

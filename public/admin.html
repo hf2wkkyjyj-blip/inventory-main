@@ -512,8 +512,35 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     </div>
   </div>
 
+  <!-- Item view (shown for specific category tabs) -->
+  <div id="bot-item-view" style="display:none;">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+      <input type="text" id="bot-item-search" placeholder="Search item name…" oninput="renderBotItemView()" style="font-size:12px;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:240px;">
+      <span id="bot-item-count" style="color:var(--muted);font-size:12px;"></span>
+    </div>
+    <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead>
+          <tr>
+            <th style="padding:10px 12px;text-align:left;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">ITEM</th>
+            <th style="padding:10px 8px;text-align:center;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">QTY</th>
+            <th style="padding:10px 8px;text-align:right;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">LANDED/unit</th>
+            <th style="padding:10px 8px;text-align:right;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">BUYER FEE</th>
+            <th style="padding:10px 8px;text-align:right;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">SALE PRICE</th>
+            <th style="padding:10px 8px;text-align:right;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">PROFIT</th>
+            <th style="padding:10px 8px;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">STATUS</th>
+            <th style="padding:10px 8px;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">ADDRESS</th>
+          </tr>
+        </thead>
+        <tbody id="bot-item-tbody">
+          <tr><td colspan="8" style="text-align:center;padding:32px;color:var(--muted);">Select a category to view items.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Orders Table -->
-  <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
+  <div id="bot-orders-wrap" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
     <table id="bot-orders-table" style="width:100%;border-collapse:collapse;">
       <thead>
         <tr>
@@ -540,6 +567,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <button class="btn btn-ghost btn-sm" id="bot-next" onclick="botPageDelta(1)">Next →</button>
     </div>
   </div>
+  </div><!-- /bot-orders-wrap -->
 
 </div>
 
@@ -1935,7 +1963,14 @@ function botSetCat(cat) {
   document.getElementById('bot-cat-tabs').dataset.active = cat;
   document.querySelectorAll('.btab').forEach(b => b.classList.toggle('active', b.textContent.trim().startsWith(cat)));
   _botPage = 0;
-  renderBotOrders();
+  const isItemView = cat !== 'All';
+  document.getElementById('bot-item-view').style.display   = isItemView ? 'block' : 'none';
+  document.getElementById('bot-orders-wrap').style.display = isItemView ? 'none'  : 'block';
+  if (isItemView) {
+    loadBotItemView(cat);
+  } else {
+    renderBotOrders();
+  }
 }
 
 function botFilterStatus(s) {
@@ -2137,6 +2172,87 @@ async function botFullRescan() {
   await loadBotOrders();
   btn.disabled = false;
   btn.innerHTML = '<i class="fa fa-redo"></i> Full Rescan';
+}
+
+// ── Item View (per category tab) ──────────────────────────────────────────────
+let _botItems = [];
+
+async function loadBotItemView(cat) {
+  const tbody = document.getElementById('bot-item-tbody');
+  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--muted);">Loading ${esc(cat)} items…</td></tr>`;
+  document.getElementById('bot-item-search').value = '';
+  const items = await api('GET', '/admin/bot-items?category=' + encodeURIComponent(cat));
+  if (!items) return;
+  _botItems = items;
+  renderBotItemView();
+}
+
+function renderBotItemView() {
+  const search = (document.getElementById('bot-item-search').value || '').toLowerCase();
+  let rows = _botItems;
+  if (search) rows = rows.filter(i => i.name.toLowerCase().includes(search));
+  document.getElementById('bot-item-count').textContent = rows.length + ' item' + (rows.length !== 1 ? 's' : '');
+  const tbody = document.getElementById('bot-item-tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--muted);">No items found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map((item, idx) => {
+    const landed   = item.perUnitTotal || 0;
+    const buyerFee = item.buyer_fee   || 0;
+    const salePrice= item.sale_price  || 0;
+    const profit   = salePrice > 0 ? salePrice - landed - buyerFee : null;
+    const profitStr= profit != null ? (profit >= 0 ? '+' : '') + '$' + profit.toFixed(2) : '—';
+    const profitCol= profit == null ? 'color:var(--muted)' : profit >= 0 ? 'color:#4ade80;font-weight:700' : 'color:#f87171;font-weight:700';
+
+    const tip = `Item: $${(item.perUnitItem||0).toFixed(2)} + Tax: $${(item.perUnitTax||0).toFixed(2)} + Ship: $${(item.perUnitShip||0).toFixed(2)} + Finder: $${(item.perUnitFinder||0).toFixed(2)} = $${landed.toFixed(2)}/unit`;
+
+    const statusPills = Object.entries(item.statuses||{})
+      .map(([s,q]) => `<span class="bpill bpill-${s}" style="font-size:10px;padding:1px 5px;">${s}×${q}</span>`)
+      .join(' ');
+
+    const addrs = [...new Set((item.addresses||[]).filter(Boolean))];
+    const addrTip = addrs.join('\n');
+    const addrLabel = addrs.length === 0 ? '—' : addrs.length === 1 ? addrs[0].split(',')[0] : addrs.length + ' addresses';
+
+    const inStyle = 'width:68px;text-align:right;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 5px;color:var(--text);font-size:11px;font-variant-numeric:tabular-nums;';
+    const safeName = esc(item.name).replace(/'/g,'&#39;');
+
+    return `<tr style="border-bottom:1px solid var(--border);">
+      <td style="padding:8px 12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(item.name)}">${esc(item.name)}</td>
+      <td style="padding:8px;text-align:center;font-weight:700;">${item.qty}</td>
+      <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums;">
+        <span style="color:#60a5fa;cursor:help;" title="${esc(tip)}">$${landed.toFixed(2)}</span>
+        ${landed > 0 ? `<div style="font-size:9px;color:var(--muted);margin-top:1px;" title="${esc(tip)}">hover breakdown</div>` : ''}
+      </td>
+      <td style="padding:8px;text-align:right;">
+        <input type="number" step="0.01" value="${buyerFee||''}" placeholder="0.00" style="${inStyle}"
+          onchange="saveBotSkuField('${safeName}','buyer_fee',this)">
+      </td>
+      <td style="padding:8px;text-align:right;">
+        <input type="number" step="0.01" value="${salePrice||''}" placeholder="0.00" style="${inStyle}"
+          onchange="saveBotSkuField('${safeName}','sale_price',this)">
+      </td>
+      <td style="padding:8px;text-align:right;${profitCol}">${profitStr}</td>
+      <td style="padding:8px;">${statusPills}</td>
+      <td style="padding:8px;font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(addrTip)}">${esc(addrLabel)}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function saveBotSkuField(name, field, inputEl) {
+  const item = _botItems.find(i => i.name === name);
+  if (!item) return;
+  item[field] = parseFloat(inputEl.value) || 0;
+  await api('PATCH', '/admin/bot-items/sku', { sku: name, buyer_fee: item.buyer_fee||0, sale_price: item.sale_price||0 });
+  // Update profit cell in this row without full re-render
+  const row   = inputEl.closest('tr');
+  const profit = (item.sale_price||0) > 0 ? (item.sale_price||0) - (item.perUnitTotal||0) - (item.buyer_fee||0) : null;
+  const cells  = row.querySelectorAll('td');
+  if (cells[5]) {
+    cells[5].textContent = profit != null ? (profit >= 0 ? '+' : '') + '$' + profit.toFixed(2) : '—';
+    cells[5].style.cssText = profit == null ? 'padding:8px;text-align:right;color:var(--muted)' : profit >= 0 ? 'padding:8px;text-align:right;color:#4ade80;font-weight:700' : 'padding:8px;text-align:right;color:#f87171;font-weight:700';
+  }
 }
 
 async function markDelivered(id) {
