@@ -9,7 +9,7 @@ const { simpleParser } = require('mailparser');
 // ── Retailer detection ────────────────────────────────────────────────────────
 
 const RETAILERS = [
-  { match: ['pokemoncenter.com','narvar.com'],        retailer: 'Pokemon Center', category: 'Pokemon'   },
+  { match: ['pokemoncenter.com'],                     retailer: 'Pokemon Center', category: 'Pokemon'   },
   { match: ['bearwalker.com','bear-walker.com'],      retailer: 'Bear Walker',   category: 'One Piece'  },
   { match: ['shopifyemail.com','myshopify.com'],      retailer: 'Shopify Store', category: 'Other'      },
   { match: ['target.com'],                            retailer: 'Target',        category: 'Other'      },
@@ -17,12 +17,30 @@ const RETAILERS = [
   { match: ['gamestop.com'],                          retailer: 'GameStop',      category: 'Other'      },
   { match: ['bestbuy.com'],                           retailer: 'Best Buy',      category: 'Other'      },
   { match: ['amazon.com','amazon-hq.com'],            retailer: 'Amazon',        category: 'Other'      },
+  // Narvar is a 3rd-party shipping service used by Target, PKC, and others.
+  // Detect the actual retailer from the email body rather than the FROM address.
+  { match: ['narvar.com'],                            retailer: 'narvar',        category: 'Other'      },
 ];
 
-function getRetailerInfo(fromEmail) {
+function getRetailerInfo(fromEmail, bodyText) {
   const f = (fromEmail || '').toLowerCase();
   for (const r of RETAILERS) {
-    if (r.match.some(m => f.includes(m))) return r;
+    if (!r.match.some(m => f.includes(m))) continue;
+    // Narvar: detect actual retailer from body content
+    if (r.retailer === 'narvar') {
+      const b = (bodyText || '').toLowerCase();
+      if (b.includes('target.com') || b.includes('target.') || b.includes('for target'))
+        return { retailer: 'Target',        category: 'Other'    };
+      if (b.includes('pokemoncenter.com') || b.includes('pokemon center'))
+        return { retailer: 'Pokemon Center', category: 'Pokemon'  };
+      if (b.includes('walmart.com'))
+        return { retailer: 'Walmart',        category: 'Other'    };
+      if (b.includes('gamestop.com'))
+        return { retailer: 'GameStop',       category: 'Other'    };
+      // Unknown Narvar sender — treat as generic but still process
+      return { retailer: 'Narvar',           category: 'Other'    };
+    }
+    return r;
   }
   return null;
 }
@@ -83,16 +101,20 @@ function findOrderNumber(text, fromEmail) {
   const f = (fromEmail || '').toLowerCase();
 
   // Pokemon Center P-format (always starts with P followed by digits)
-  if (f.includes('pokemon') || f.includes('narvar')) {
+  // Only use this for actual pokemoncenter.com emails, NOT narvar (narvar serves Target too)
+  if (f.includes('pokemon') && !f.includes('narvar')) {
     const m = text.match(/\b(P\d{9,12})\b/);
     if (m) return m[1];
   }
 
-  // Target bare 15-digit or hyphenated format — try this FIRST for target emails
-  // because generic "Order" text in Target emails always matches junk words first
-  if (f.includes('target.com')) {
+  // Target bare 15-digit or hyphenated format — try this FIRST for target.com AND
+  // for narvar.com emails that contain Target order numbers in the body
+  if (f.includes('target.com') || f.includes('narvar')) {
     const t = text.match(/\b(\d{3}-\d{7}-\d{7}|\d{15})\b/);
     if (t) return t[1].trim();
+    // Also try Pokemon Center P-format in case it's a PKC order via Narvar
+    const p = text.match(/\b(P\d{9,12})\b/);
+    if (p) return p[1];
   }
 
   // Generic: scan ALL "Order #..." matches and return first one with 3+ consecutive digits.
@@ -163,6 +185,23 @@ function determineStatus(subject, bodyText) {
 
 // ── Order detail extraction (items, prices, tax, shipping) ───────────────────
 
+// Like stripHtml but preserves newlines at block-element boundaries.
+// Used for item extraction where we need lines, not one big blob.
+function htmlToLines(html) {
+  if (!html) return '';
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/?(p|div|li|tr|td|th|h[1-6]|section|article|header|footer|table|tbody|thead)[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&#\d+;/g, ' ')
+    .replace(/[ \t]+/g, ' ')          // collapse horizontal whitespace only
+    .replace(/\n[ \t]+/g, '\n')       // trim leading spaces on each line
+    .replace(/[ \t]+\n/g, '\n')       // trim trailing spaces on each line
+    .replace(/\n{3,}/g, '\n\n')       // at most 2 consecutive blank lines
+    .trim();
+}
+
 // Parse a dollar amount from a string like "$43.52" or "43.52"
 function parseDollar(s) {
   const m = String(s||'').match(/\$?([\d,]+\.?\d*)/);
@@ -206,7 +245,8 @@ function extractTargetItems(html) {
   }
 
   // ── Strategy 1: plain-text line scan ──────────────────────────────────────
-  const text  = stripHtml(html);
+  // htmlToLines preserves newlines at block boundaries so each cell/div is its own line
+  const text  = htmlToLines(html);
   const lines = text.split(/[\n\r]+/).map(l => l.trim()).filter(Boolean);
 
   for (let i = 0; i < lines.length; i++) {
@@ -242,7 +282,7 @@ function extractTargetItems(html) {
   // ── Strategy 2: HTML <td> sliding-window (fallback when text scan finds nothing) ──
   if (items.length === 0) {
     const cells = (html.match(/<td[^>]*>[\s\S]*?<\/td>/gi) || [])
-      .map(c => stripHtml(c).trim())
+      .map(c => htmlToLines(c).replace(/\n+/g, ' ').trim())
       .filter(t => t.length > 0 && t.length < 300);
 
     for (let i = 0; i < cells.length - 2; i++) {
@@ -334,7 +374,7 @@ async function processEmail(parsed, db) {
   const plainText    = bodyText || strippedHtml;   // best plain text we have
   const fullText     = plainText + ' ' + bodyHtml; // raw HTML included for regex searches
 
-  const retailerInfo = getRetailerInfo(fromEmail);
+  const retailerInfo = getRetailerInfo(fromEmail, plainText + ' ' + bodyHtml);
   if (!retailerInfo) return false;
 
   const tracking    = findTracking(fullText);
@@ -353,10 +393,10 @@ async function processEmail(parsed, db) {
   let financials      = {};
   const isConfirmation = resolvedStatus === 'Confirmed';
   if (isConfirmation && bodyHtml) {
-    const f = fromEmail.toLowerCase();
-    if (f.includes('target.com'))           extractedItems = extractTargetItems(bodyHtml);
-    else if (f.includes('pokemoncenter') || f.includes('narvar')) extractedItems = extractPKCItems(bodyHtml);
-    else                                    extractedItems = extractPKCItems(bodyHtml); // generic fallback
+    const actualRetailer = retailerInfo.retailer;
+    if (actualRetailer === 'Target')         extractedItems = extractTargetItems(bodyHtml);
+    else if (actualRetailer === 'Pokemon Center') extractedItems = extractPKCItems(bodyHtml);
+    else                                     extractedItems = extractPKCItems(bodyHtml); // generic fallback
     financials = findOrderFinancials(plainText);
   }
   const itemStrings  = formatItems(extractedItems);
