@@ -530,10 +530,11 @@ tr:hover>td{background:rgba(47,129,247,.03);}
             <th style="padding:10px 8px;text-align:right;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">PROFIT</th>
             <th style="padding:10px 8px;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">STATUS</th>
             <th style="padding:10px 8px;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">ADDRESS</th>
+            <th style="padding:10px 8px;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);"></th>
           </tr>
         </thead>
         <tbody id="bot-item-tbody">
-          <tr><td colspan="8" style="text-align:center;padding:32px;color:var(--muted);">Select a category to view items.</td></tr>
+          <tr><td colspan="9" style="text-align:center;padding:32px;color:var(--muted);">Select a category to view items.</td></tr>
         </tbody>
       </table>
     </div>
@@ -811,6 +812,28 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div style="display:flex;gap:8px;justify-content:flex-end;">
       <button class="btn btn-ghost btn-sm" onclick="closeBotEdit()">Cancel</button>
       <button class="btn btn-primary btn-sm" onclick="saveBotEdit()"><i class="fa fa-save"></i> Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: ITEM EDIT (item view) ═════════════════════════════════════════ -->
+<div class="overlay" id="bot-item-edit-overlay" onclick="if(event.target.id==='bot-item-edit-overlay')closeBotItemEdit()" style="display:none;">
+  <div class="modal" style="width:480px;">
+    <h2 style="margin-bottom:16px;"><i class="fa fa-pen" style="color:var(--accent)"></i> Edit Item</h2>
+    <input type="hidden" id="bie-orig-name">
+    <div class="form-group" style="margin-bottom:12px;">
+      <label style="font-size:11px;">Item Name <span style="color:var(--muted);font-weight:400;">(rename across all orders)</span></label>
+      <input type="text" id="bie-name" style="width:100%;">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Buyer Fee ($)</label>
+        <input type="number" id="bie-buyer-fee" step="0.01" placeholder="0.00" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Sale Price ($)</label>
+        <input type="number" id="bie-sale-price" step="0.01" placeholder="0.00" style="width:100%;"></div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-ghost btn-sm" onclick="closeBotItemEdit()">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="saveBotItemEdit()"><i class="fa fa-save"></i> Save</button>
     </div>
   </div>
 </div>
@@ -2194,7 +2217,7 @@ function renderBotItemView() {
   document.getElementById('bot-item-count').textContent = rows.length + ' item' + (rows.length !== 1 ? 's' : '');
   const tbody = document.getElementById('bot-item-tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--muted);">No items found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:32px;color:var(--muted);">No items found.</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((item, idx) => {
@@ -2236,6 +2259,10 @@ function renderBotItemView() {
       <td style="padding:8px;text-align:right;${profitCol}">${profitStr}</td>
       <td style="padding:8px;">${statusPills}</td>
       <td style="padding:8px;font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(addrTip)}">${esc(addrLabel)}</td>
+      <td style="padding:8px;white-space:nowrap;">
+        <button title="Edit item" onclick="openBotItemEdit('${safeName}')" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:3px;"><i class="fa fa-pen" style="font-size:10px;"></i></button>
+        <button title="Delete all orders for this item" onclick="deleteBotItemByName('${safeName}')" style="background:var(--surface);border:1px solid var(--border);color:#f87171;width:26px;height:26px;border-radius:6px;cursor:pointer;"><i class="fa fa-trash" style="font-size:10px;"></i></button>
+      </td>
     </tr>`;
   }).join('');
 }
@@ -2252,6 +2279,49 @@ async function saveBotSkuField(name, field, inputEl) {
   if (cells[5]) {
     cells[5].textContent = profit != null ? (profit >= 0 ? '+' : '') + '$' + profit.toFixed(2) : '—';
     cells[5].style.cssText = profit == null ? 'padding:8px;text-align:right;color:var(--muted)' : profit >= 0 ? 'padding:8px;text-align:right;color:#4ade80;font-weight:700' : 'padding:8px;text-align:right;color:#f87171;font-weight:700';
+  }
+}
+
+// ── Item view edit/delete ─────────────────────────────────────────────────────
+function openBotItemEdit(name) {
+  const item = _botItems.find(i => i.name === name);
+  if (!item) return;
+  document.getElementById('bie-orig-name').value  = item.name;
+  document.getElementById('bie-name').value        = item.name;
+  document.getElementById('bie-buyer-fee').value   = item.buyer_fee  || '';
+  document.getElementById('bie-sale-price').value  = item.sale_price || '';
+  document.getElementById('bot-item-edit-overlay').style.display = 'flex';
+}
+function closeBotItemEdit() {
+  document.getElementById('bot-item-edit-overlay').style.display = 'none';
+}
+async function saveBotItemEdit() {
+  const origName  = document.getElementById('bie-orig-name').value;
+  const newName   = document.getElementById('bie-name').value.trim();
+  const buyerFee  = parseFloat(document.getElementById('bie-buyer-fee').value)  || 0;
+  const salePrice = parseFloat(document.getElementById('bie-sale-price').value) || 0;
+  if (!newName) return;
+  // Rename if name changed
+  if (newName !== origName) {
+    const r = await api('PATCH', '/admin/bot-items/rename', { oldName: origName, newName });
+    if (r) console.log(`Renamed across ${r.updated} order(s)`);
+  }
+  // Save pricing
+  await api('PATCH', '/admin/bot-items/sku', { sku: newName, buyer_fee: buyerFee, sale_price: salePrice });
+  closeBotItemEdit();
+  // Reload current category view
+  const cat = document.getElementById('bot-cat-tabs').dataset.active;
+  if (cat && cat !== 'All') loadBotItemView(cat);
+}
+async function deleteBotItemByName(name) {
+  const item = _botItems.find(i => i.name === name);
+  const qty  = item ? item.qty : '?';
+  if (!confirm(`Delete ALL orders containing "${name}" (${qty} units)?\n\nThis cannot be undone. Those orders will also be blocked from being re-created by the scraper.`)) return;
+  const r = await api('DELETE', '/admin/bot-items/by-name', { name });
+  if (r) {
+    alert(`Deleted ${r.deleted} order(s).`);
+    const cat = document.getElementById('bot-cat-tabs').dataset.active;
+    if (cat && cat !== 'All') loadBotItemView(cat);
   }
 }
 

@@ -911,6 +911,8 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
     return str.trim();
   }
 
+  // groups keyed by name only — same SKU always merges into one row.
+  // Costs are accumulated and averaged (weighted by qty) at the end.
   const groups = {};
   for (const order of orders) {
     let arr; try { arr = JSON.parse(order.items||'[]'); } catch(_) { arr = []; }
@@ -923,19 +925,32 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
     }
     if (!expanded.length) continue;
 
-    const totalQty   = expanded.reduce((s,i)=>s+parseQty(i),0)||1;
-    const totalCost  = (order.order_total||0)+(order.tax_amount||0)+(order.ship_cost||0)+(order.finder_fee||0);
-    const pItem      = Math.round((order.order_total||0)/totalQty*100)/100;
-    const pTax       = Math.round((order.tax_amount||0)/totalQty*100)/100;
-    const pShip      = Math.round((order.ship_cost||0)/totalQty*100)/100;
-    const pFinder    = Math.round((order.finder_fee||0)/totalQty*100)/100;
-    const pTotal     = Math.round(totalCost/totalQty*100)/100;
+    const totalOrderQty = expanded.reduce((s,i)=>s+parseQty(i),0)||1;
+    const totalCost     = (order.order_total||0)+(order.tax_amount||0)+(order.ship_cost||0)+(order.finder_fee||0);
+
     for (const s of expanded) {
-      const name = parseName(s);
-      const qty  = parseQty(s);
-      const key  = name.toLowerCase()+'|||'+pTotal;
-      if (!groups[key]) groups[key] = { name, qty:0, perUnitTotal:pTotal, perUnitItem:pItem, perUnitTax:pTax, perUnitShip:pShip, perUnitFinder:pFinder, statuses:{}, addresses:[] };
-      groups[key].qty += qty;
+      const name    = parseName(s);
+      const qty     = parseQty(s);
+      // Each unit of this item bears its share of the order's costs (proportional by qty)
+      const unitItem   = (order.order_total||0) / totalOrderQty;
+      const unitTax    = (order.tax_amount||0)  / totalOrderQty;
+      const unitShip   = (order.ship_cost||0)   / totalOrderQty;
+      const unitFinder = (order.finder_fee||0)  / totalOrderQty;
+      const unitTotal  = totalCost              / totalOrderQty;
+      const key = name.toLowerCase();
+      if (!groups[key]) {
+        groups[key] = {
+          name, qty: 0,
+          _sumItem: 0, _sumTax: 0, _sumShip: 0, _sumFinder: 0, _sumTotal: 0,
+          statuses: {}, addresses: []
+        };
+      }
+      groups[key].qty          += qty;
+      groups[key]._sumItem     += unitItem   * qty;
+      groups[key]._sumTax      += unitTax    * qty;
+      groups[key]._sumShip     += unitShip   * qty;
+      groups[key]._sumFinder   += unitFinder * qty;
+      groups[key]._sumTotal    += unitTotal  * qty;
       const st = order.status||'Confirmed';
       groups[key].statuses[st] = (groups[key].statuses[st]||0) + qty;
       if (order.shipping_address) groups[key].addresses.push(order.shipping_address);
@@ -947,8 +962,17 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
   try { db.prepare('SELECT * FROM bot_sku_prices').all().forEach(r=>{ pricing[r.sku.toLowerCase()]=r; }); } catch(_) {}
 
   const result = Object.values(groups).map(g => {
-    const p = pricing[g.name.toLowerCase()] || {};
-    return { ...g, buyer_fee: p.buyer_fee||0, sale_price: p.sale_price||0 };
+    const p    = pricing[g.name.toLowerCase()] || {};
+    const qty  = g.qty || 1;
+    // Weighted-average per-unit costs across all orders containing this SKU
+    const perUnitItem   = Math.round(g._sumItem   / qty * 100) / 100;
+    const perUnitTax    = Math.round(g._sumTax    / qty * 100) / 100;
+    const perUnitShip   = Math.round(g._sumShip   / qty * 100) / 100;
+    const perUnitFinder = Math.round(g._sumFinder / qty * 100) / 100;
+    const perUnitTotal  = Math.round(g._sumTotal  / qty * 100) / 100;
+    const { _sumItem, _sumTax, _sumShip, _sumFinder, _sumTotal, ...rest } = g;
+    return { ...rest, perUnitItem, perUnitTax, perUnitShip, perUnitFinder, perUnitTotal,
+             buyer_fee: p.buyer_fee||0, sale_price: p.sale_price||0 };
   }).sort((a,b)=>a.name.localeCompare(b.name));
   res.json(result);
 });
@@ -960,6 +984,76 @@ app.patch('/api/admin/bot-items/sku', auth, adminOnly, (req, res) => {
   db.prepare('INSERT OR REPLACE INTO bot_sku_prices (sku,buyer_fee,sale_price) VALUES (?,?,?)')
     .run([sku, buyer_fee||0, sale_price||0]);
   res.json({ success: true });
+});
+
+// Rename item name across all orders (fixes typos like "LEGOPOKEMONEEVEE" → "LEGO Pokemon Eevee")
+app.patch('/api/admin/bot-items/rename', auth, adminOnly, (req, res) => {
+  const { oldName, newName } = req.body;
+  if (!oldName || !newName) return res.status(400).json({ error: 'oldName and newName required' });
+  const orders = db.prepare('SELECT id, items FROM bot_orders').all();
+  let updated = 0;
+  for (const o of orders) {
+    let arr; try { arr = JSON.parse(o.items||'[]'); } catch(_) { continue; }
+    let changed = false;
+    const newArr = arr.map(raw => {
+      // Each element may have multiple " | " parts
+      const parts = String(raw||'').split(/\s*\|\s*/);
+      const newParts = parts.map(p => {
+        const s = p.trim();
+        let m = s.match(/^((\d+)\s*[xX×]\s+)(.+)/);
+        if (m && m[3].trim().toLowerCase() === oldName.toLowerCase()) { changed = true; return m[1] + newName; }
+        m = s.match(/^(.+?)(\s+[xX×]\s*\d+)$/);
+        if (m && m[1].trim().toLowerCase() === oldName.toLowerCase()) { changed = true; return newName + m[2]; }
+        if (s.toLowerCase() === oldName.toLowerCase()) { changed = true; return newName; }
+        return p;
+      });
+      return newParts.join(' | ');
+    });
+    if (changed) {
+      db.prepare('UPDATE bot_orders SET items=? WHERE id=?').run([JSON.stringify(newArr), o.id]);
+      updated++;
+    }
+  }
+  // Move sku_prices entry to new name
+  try {
+    const existing = db.prepare('SELECT * FROM bot_sku_prices WHERE lower(sku)=lower(?)').get([oldName]);
+    if (existing) {
+      db.prepare('INSERT OR REPLACE INTO bot_sku_prices (sku,buyer_fee,sale_price) VALUES (?,?,?)').run([newName, existing.buyer_fee, existing.sale_price]);
+      db.prepare('DELETE FROM bot_sku_prices WHERE lower(sku)=lower(?) AND sku!=?').run([oldName, newName]);
+    }
+  } catch(_) {}
+  res.json({ updated });
+});
+
+// Delete all orders that contain a specific item name; adds order#s to blocklist
+app.delete('/api/admin/bot-items/by-name', auth, adminOnly, (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const orders = db.prepare('SELECT id, order_number, items FROM bot_orders').all();
+  const toDelete = [];
+  for (const o of orders) {
+    let arr; try { arr = JSON.parse(o.items||'[]'); } catch(_) { arr = []; }
+    const expanded = [];
+    for (const raw of arr) String(raw||'').split(/\s*\|\s*|\n+/).map(p=>p.trim()).filter(Boolean).forEach(p=>expanded.push(p));
+    const names = expanded.map(s => {
+      let m = s.match(/^(\d+)\s*[xX×]\s+(.+)/); if (m) return m[2].trim();
+      m = s.match(/^(.+?)\s+[xX×]\s*\d+$/); if (m) return m[1].trim();
+      return s.trim();
+    });
+    if (names.some(n => n.toLowerCase() === name.toLowerCase())) toDelete.push(o);
+  }
+  // Add to blocklist
+  try {
+    const raw = db.prepare("SELECT value FROM settings WHERE key='scraper_blocked_orders'").get();
+    const blocked = raw ? JSON.parse(raw.value) : [];
+    for (const o of toDelete) if (o.order_number && !blocked.includes(o.order_number)) blocked.push(o.order_number);
+    db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('scraper_blocked_orders',?)").run([JSON.stringify(blocked)]);
+  } catch(_) {}
+  if (toDelete.length) {
+    const ids = toDelete.map(o=>o.id);
+    db.prepare(`DELETE FROM bot_orders WHERE id IN (${ids.map(()=>'?').join(',')})`).run(ids);
+  }
+  res.json({ deleted: toDelete.length });
 });
 
 app.get('/api/admin/bot-orders', auth, adminOnly, (req, res) => {

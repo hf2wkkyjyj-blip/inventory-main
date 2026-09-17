@@ -264,6 +264,23 @@ function formatImapDate(d) {
   return d.getDate() + '-' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + '-' + d.getFullYear();
 }
 
+// Build nested IMAP OR criteria for multiple FROM domains
+// e.g. ['OR', ['FROM','a.com'], ['OR', ['FROM','b.com'], ['FROM','c.com']]]
+function buildFromOr(domains) {
+  if (domains.length === 1) return ['FROM', domains[0]];
+  if (domains.length === 2) return ['OR', ['FROM', domains[0]], ['FROM', domains[1]]];
+  return ['OR', ['FROM', domains[0]], buildFromOr(domains.slice(1))];
+}
+
+// All domains we care about across every retailer
+const RETAILER_DOMAINS = [
+  'target.com', 'pokemoncenter.com', 'narvar.com',
+  'bearwalker.com', 'bear-walker.com',
+  'shopifyemail.com', 'myshopify.com',
+  'walmart.com', 'gamestop.com', 'bestbuy.com',
+  'amazon.com', 'amazon-hq.com',
+];
+
 function fetchNewAndProcess(imap, db) {
   return new Promise((resolve, reject) => {
     // Read-only — we track what's been processed ourselves, don't touch read/unread
@@ -275,14 +292,18 @@ function fetchNewAndProcess(imap, db) {
       let seenIds;
       try { seenIds = new Set(JSON.parse(seenRaw)); } catch(_) { seenIds = new Set(); }
 
-      // Search since last run date (default: 30 days ago on first run)
+      // Search since last run date (default: today minus 2 days on first run)
       const sinceStr  = getSetting(db, 'email_scraper_since', null);
-      const sinceDate = sinceStr ? new Date(sinceStr) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const sinceDate = sinceStr ? new Date(sinceStr) : new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
       const imapDate  = formatImapDate(sinceDate);
 
-      console.log(`   Searching emails since ${imapDate}…`);
+      // Only fetch emails from known retailer domains — ignores all other inbox mail
+      const fromFilter = buildFromOr(RETAILER_DOMAINS);
+      const criteria   = [['SINCE', imapDate], fromFilter];
 
-      imap.search([['SINCE', imapDate]], (err, uids) => {
+      console.log(`   Searching retailer emails since ${imapDate}…`);
+
+      imap.search(criteria, (err, uids) => {
         if (err) return reject(err);
         if (!uids || !uids.length) {
           console.log('   No emails in range.');
@@ -461,11 +482,11 @@ async function scrapeByOrderNumber(db, orderNumber) {
   });
 }
 
-// ── Reset scraper state — forces full re-scan on next run ────────────────────
+// ── Reset scraper state — re-scans last 2 days only ─────────────────────────
 function resetEmailScraper(db) {
   setSetting(db, 'email_scraper_seen_ids', '[]');
-  setSetting(db, 'email_scraper_since', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
-  console.log('📧 Email scraper state reset — next run will re-scan 30 days');
+  setSetting(db, 'email_scraper_since', new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString());
+  console.log('📧 Email scraper state reset — next run will re-scan last 2 days');
 }
 
 module.exports = { runEmailScraper, scrapeByOrderNumber, resetEmailScraper };
