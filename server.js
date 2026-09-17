@@ -932,7 +932,7 @@ app.get('/admin/orders', (req, res) => {
 });
 
 // ─── EMAIL SCRAPER ───────────────────────────────────────────────────────────
-const { runEmailScraper, scrapeByOrderNumber } = require('./emailScraper');
+const { runEmailScraper, scrapeByOrderNumber, resetEmailScraper } = require('./emailScraper');
 
 // Manual trigger — Scan Emails button in UI calls this
 let _scrapeProgress = { running: false, updated: 0 };
@@ -946,6 +946,10 @@ app.post('/api/admin/scrape-emails', auth, adminOnly, (req, res) => {
 });
 app.get('/api/admin/scrape-emails/status', auth, adminOnly, (req, res) => {
   res.json(_scrapeProgress);
+});
+app.post('/api/admin/scrape-emails/reset', auth, adminOnly, (req, res) => {
+  resetEmailScraper(db);
+  res.json({ reset: true });
 });
 
 // Scan a specific order number — searches all Gmail history for it

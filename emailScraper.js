@@ -395,4 +395,11 @@ async function scrapeByOrderNumber(db, orderNumber) {
   });
 }
 
-module.exports = { runEmailScraper, scrapeByOrderNumber };
+// ── Reset scraper state — forces full re-scan on next run ────────────────────
+function resetEmailScraper(db) {
+  setSetting(db, 'email_scraper_seen_ids', '[]');
+  setSetting(db, 'email_scraper_since', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+  console.log('📧 Email scraper state reset — next run will re-scan 30 days');
+}
+
+module.exports = { runEmailScraper, scrapeByOrderNumber, resetEmailScraper };
