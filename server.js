@@ -219,9 +219,13 @@ db.exec(`
   );
 `);
 
-// ── One-time bot_orders import (runs once on deploy, then renames the file) ──
+// ── One-time bot_orders import (runs once ever, tracked by DB flag not file rename) ──
+// File rename didn't survive Railway redeploys — the .done file was never committed to Git,
+// so every deploy re-imported everything, resurrecting manually-deleted orders.
+// Now we store a flag in the settings table so the import is skipped on all future deploys.
 const importFile = path.join(__dirname, 'bot_orders_import.json');
-if (fs.existsSync(importFile)) {
+const alreadyImported = db.prepare("SELECT value FROM settings WHERE key='bot_orders_imported'").get();
+if (!alreadyImported && fs.existsSync(importFile)) {
   try {
     const importData = JSON.parse(fs.readFileSync(importFile, 'utf8'));
     const importOrders = importData.orders || [];
@@ -235,11 +239,14 @@ if (fs.existsSync(importFile)) {
         imported++;
       } catch(e) {}
     }
-    fs.renameSync(importFile, importFile + '.done');
-    console.log(`✅ Imported ${imported} bot orders from ${importFile}`);
+    // Mark as done in the DB — survives all future redeploys unlike file rename
+    db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('bot_orders_imported','1')").run();
+    console.log(`✅ Imported ${imported} bot orders from ${importFile} (will not re-import on future deploys)`);
   } catch(e) {
     console.error('⚠️  bot_orders import failed:', e.message);
   }
+} else if (alreadyImported) {
+  console.log('ℹ️  bot_orders import already done — skipping');
 }
 
 // Seed default settings
@@ -1181,8 +1188,10 @@ app.get('/api/admin/scrape-emails/status', auth, adminOnly, (req, res) => {
   res.json(_scrapeProgress);
 });
 app.post('/api/admin/scrape-emails/reset', auth, adminOnly, (req, res) => {
-  resetEmailScraper(db);
-  res.json({ reset: true });
+  const wipeOrders = req.body?.wipe === true;
+  const days = parseInt(req.body?.days) || 180;
+  resetEmailScraper(db, { wipeOrders, days });
+  res.json({ reset: true, wipeOrders, days });
 });
 
 // Scan a specific order number — searches all Gmail history for it

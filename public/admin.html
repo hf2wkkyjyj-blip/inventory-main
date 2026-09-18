@@ -472,7 +472,8 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       </select>
       <input type="text" id="bot-search" oninput="renderBotOrders()" placeholder="Search order #, item, buyer…" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:200px;">
       <button class="btn btn-ghost btn-sm" id="bot-scan-btn" onclick="botScanEmails()"><i class="fa fa-envelope"></i> Scan Emails</button>
-      <button class="btn btn-ghost btn-sm" id="bot-rescan-btn" onclick="botFullRescan()" title="Clear scanner history and re-scan last 30 days of Gmail" style="opacity:.7;"><i class="fa fa-redo"></i> Full Rescan</button>
+      <button class="btn btn-ghost btn-sm" id="bot-rescan-btn" onclick="botFullRescan(false)" title="Clear scanner history and re-scan last 180 days of Gmail" style="opacity:.7;"><i class="fa fa-redo"></i> Full Rescan</button>
+      <button class="btn btn-ghost btn-sm" id="bot-wipe-btn" onclick="botFullRescan(true)" title="Delete ALL orders and rebuild from emails (last 180 days)" style="opacity:.7;color:#e74c3c;"><i class="fa fa-trash"></i> Wipe & Rescan</button>
       <div style="display:flex;gap:4px;align-items:center;">
         <input type="text" id="bot-order-scan-input" placeholder="Order # …" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:130px;" onkeydown="if(event.key==='Enter')botScanOrder()">
         <button class="btn btn-ghost btn-sm" id="bot-order-scan-btn" onclick="botScanOrder()"><i class="fa fa-search"></i> Scan Order</button>
@@ -2175,15 +2176,18 @@ async function botScanEmails() {
   btn.innerHTML = '<i class="fa fa-envelope"></i> Scan Emails';
 }
 
-async function botFullRescan() {
-  const btn = document.getElementById('bot-rescan-btn');
+async function botFullRescan(wipe = false) {
+  const btn = document.getElementById(wipe ? 'bot-wipe-btn' : 'bot-rescan-btn');
+  if (wipe) {
+    const ok = confirm('⚠️ This will DELETE all existing orders and re-import everything from the last 180 days of emails.\n\nSam\'s Club, Mattel, Costco, and Bear Walker orders will NOT come back (no email extractor).\n\nContinue?');
+    if (!ok) return;
+  }
   btn.disabled = true;
-  btn.innerHTML = '<i class="fa fa-redo fa-spin"></i> Resetting…';
-  await api('POST', '/admin/scrape-emails/reset').catch(()=>{});
-  btn.innerHTML = '<i class="fa fa-envelope fa-spin"></i> Scanning 30 days…';
-  // Now trigger a fresh scan
+  btn.innerHTML = `<i class="fa fa-redo fa-spin"></i> ${wipe ? 'Wiping…' : 'Resetting…'}`;
+  await api('POST', '/admin/scrape-emails/reset', { wipe, days: 180 }).catch(()=>{});
+  btn.innerHTML = '<i class="fa fa-envelope fa-spin"></i> Scanning 180 days…';
   await api('POST', '/admin/scrape-emails').catch(()=>{});
-  const deadline = Date.now() + 60000;
+  const deadline = Date.now() + 120000;
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 2000));
     const status = await api('GET', '/admin/scrape-emails/status').catch(()=>null);
@@ -2194,7 +2198,7 @@ async function botFullRescan() {
   }
   await loadBotOrders();
   btn.disabled = false;
-  btn.innerHTML = '<i class="fa fa-redo"></i> Full Rescan';
+  btn.innerHTML = wipe ? '<i class="fa fa-trash"></i> Wipe & Rescan' : '<i class="fa fa-redo"></i> Full Rescan';
 }
 
 // ── Item View (per category tab) ──────────────────────────────────────────────

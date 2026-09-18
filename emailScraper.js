@@ -317,6 +317,7 @@ function extractPKCItems(html) {
   function isProductName(l) {
     if (l.length < 8 || l.length > 250) return false;
     if (/^\$?[\d,]+(\.\d+)?$/.test(l)) return false;
+    if (/:\s*$/.test(l)) return false;   // ends with colon = category label (e.g. "Pokemon TCG:"), not the product name
     if (/^(?:qty|quantity|price|subtotal|total|tax|shipping|sku|upc|item\s*#|order|estimated|retail delivery|sales tax|free|sold by|ships from|returns|eligible|rate|write|contact|help|terms|privacy)/i.test(l)) return false;
     if (/^\d{2,}-\d{2,}/.test(l)) return false;   // order number / SKU code like 10-10447-111
     if (/^[A-Z]{1,3}\d{6,}$/.test(l)) return false;
@@ -460,6 +461,11 @@ async function processEmail(parsed, db) {
       updates.push('expected_date=?');   vals.push(null);
     }
     if (dbStatus && newRank > curRank)                     { updates.push('status=?');           vals.push(dbStatus); }
+    // Fix wrong category: if existing order is "Other" but content reveals a real category, upgrade it
+    const redetectedCategory = detectCategoryFromContent(subject, plainText, retailerInfo.category);
+    if (redetectedCategory !== 'Other' && existing.category === 'Other') {
+      updates.push('category=?'); vals.push(redetectedCategory);
+    }
     // Items/financials: if we extracted fresh items from a confirmation email, ALWAYS overwrite
     // (fixes stale/wrong items from old scraper on rescan). Only use "fill-if-missing" logic
     // when we have no new items to offer (e.g. a shipping notification email).
@@ -749,11 +755,19 @@ async function scrapeByOrderNumber(db, orderNumber) {
   });
 }
 
-// ── Reset scraper state — Full Rescan goes back 90 days to recover lost orders ─
-function resetEmailScraper(db) {
+// ── Reset scraper state ──────────────────────────────────────────────────────
+// wipeOrders=true: delete all existing bot_orders first (start from zero)
+// days: how far back to scan (default 180 to cover ~6 months)
+function resetEmailScraper(db, { wipeOrders = false, days = 180 } = {}) {
+  if (wipeOrders) {
+    db.prepare('DELETE FROM bot_orders').run();
+    // Also clear the blocked list so nothing is accidentally permanently blocked
+    setSetting(db, 'scraper_blocked_orders', '[]');
+    console.log('🗑️  All bot_orders wiped — starting fresh');
+  }
   setSetting(db, 'email_scraper_seen_ids', '[]');
-  setSetting(db, 'email_scraper_since', new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString());
-  console.log('📧 Email scraper state reset — next run will re-scan last 90 days');
+  setSetting(db, 'email_scraper_since', new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString());
+  console.log(`📧 Email scraper reset — next run will re-scan last ${days} days`);
 }
 
 module.exports = { runEmailScraper, scrapeByOrderNumber, resetEmailScraper };
