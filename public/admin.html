@@ -2238,6 +2238,12 @@ async function botFullRescan(wipe = false) {
 
 // ── Item View (per category tab) ──────────────────────────────────────────────
 let _botItems = [];
+// The rows as currently rendered (after filter/search). Row buttons pass their
+// index into this array rather than the item name: names were previously
+// interpolated into inline onclick handlers, and since the browser decodes HTML
+// entities BEFORE parsing the JS, any name containing an apostrophe terminated
+// the string and the button did nothing at all. Indexes have no such problem.
+let _botItemRows = [];
 
 async function loadBotItemView(cat) {
   const tbody = document.getElementById('bot-item-tbody');
@@ -2259,6 +2265,7 @@ function renderBotItemView() {
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:32px;color:var(--muted);">No items found.</td></tr>';
     return;
   }
+  _botItemRows = rows;
   tbody.innerHTML = rows.map((item, idx) => {
     const landed   = item.perUnitTotal || 0;
     const buyerFee = item.buyer_fee   || 0;
@@ -2278,36 +2285,78 @@ function renderBotItemView() {
     const addrLabel = addrs.length === 0 ? '—' : addrs.length === 1 ? addrs[0].split(',')[0] : addrs.length + ' addresses';
 
     const inStyle = 'width:68px;text-align:right;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 5px;color:var(--text);font-size:11px;font-variant-numeric:tabular-nums;';
-    const safeName = esc(item.name).replace(/'/g,'&#39;');
 
     return `<tr style="border-bottom:1px solid var(--border);">
       <td style="padding:8px 12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(item.name)}">${esc(item.name)}</td>
       <td style="padding:8px;text-align:center;font-weight:700;">${item.qty}</td>
       <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums;">
-        <span style="color:#60a5fa;cursor:help;" title="${esc(tip)}">$${landed.toFixed(2)}</span>
+        <span style="color:#60a5fa;cursor:pointer;border-bottom:1px dotted #60a5fa;" title="${esc(tip)}"
+          onclick="showLandedBreakdown(${idx}, this)">$${landed.toFixed(2)}</span>
       </td>
       <td style="padding:8px;text-align:right;">
         <input type="number" step="0.01" value="${buyerFee||''}" placeholder="0.00" style="${inStyle}"
-          onchange="saveBotSkuField('${safeName}','buyer_fee',this)">
+          onchange="saveBotSkuField(${idx},'buyer_fee',this)">
       </td>
       <td style="padding:8px;text-align:right;">
         <input type="number" step="0.01" value="${salePrice||''}" placeholder="0.00" style="${inStyle}"
-          onchange="saveBotSkuField('${safeName}','sale_price',this)">
+          onchange="saveBotSkuField(${idx},'sale_price',this)">
       </td>
       <td style="padding:8px;text-align:right;${profitCol}">${profitStr}</td>
       <td style="padding:8px;">${statusPills}</td>
       <td style="padding:8px;font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(addrTip)}">${esc(addrLabel)}</td>
       <td style="padding:8px;white-space:nowrap;">
-        <button title="Edit item" onclick="openBotItemEdit('${safeName}')" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:3px;"><i class="fa fa-pen" style="font-size:10px;"></i></button>
-        <button title="Delete all orders for this item" onclick="deleteBotItemByName('${safeName}')" style="background:var(--surface);border:1px solid var(--border);color:#f87171;width:26px;height:26px;border-radius:6px;cursor:pointer;"><i class="fa fa-trash" style="font-size:10px;"></i></button>
+        <button title="Edit item" onclick="openBotItemEdit(${idx})" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:3px;"><i class="fa fa-pen" style="font-size:10px;"></i></button>
+        <button title="Delete all orders for this item" onclick="deleteBotItemByName(${idx})" style="background:var(--surface);border:1px solid var(--border);color:#f87171;width:26px;height:26px;border-radius:6px;cursor:pointer;"><i class="fa fa-trash" style="font-size:10px;"></i></button>
       </td>
     </tr>`;
   }).join('');
 }
 
-async function saveBotSkuField(name, field, inputEl) {
-  const item = _botItems.find(i => i.name === name);
+// Landed cost breakdown. This used to be a plain title="" tooltip, which only
+// appears on hover after a delay — clicking it did nothing, which read as broken.
+function showLandedBreakdown(idx, anchorEl) {
+  const item = _botItemRows[idx];
   if (!item) return;
+  document.getElementById('landed-popover')?.remove();
+
+  const rowsHtml = [
+    ['Item',   item.perUnitItem],
+    ['Tax',    item.perUnitTax],
+    ['Ship',   item.perUnitShip],
+    ['Finder', item.perUnitFinder],
+  ].map(([label, v]) => `
+    <div style="display:flex;justify-content:space-between;gap:24px;padding:3px 0;">
+      <span style="color:var(--muted);">${label}</span>
+      <span style="font-variant-numeric:tabular-nums;">$${(v || 0).toFixed(2)}</span>
+    </div>`).join('');
+
+  const pop = document.createElement('div');
+  pop.id = 'landed-popover';
+  pop.style.cssText = 'position:absolute;z-index:9999;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.5);min-width:200px;';
+  pop.innerHTML = `
+    <div style="font-weight:700;margin-bottom:6px;font-size:11px;color:var(--muted);">LANDED COST / UNIT</div>
+    ${rowsHtml}
+    <div style="display:flex;justify-content:space-between;gap:24px;border-top:1px solid var(--border);margin-top:5px;padding-top:5px;font-weight:700;">
+      <span>Total</span><span style="color:#60a5fa;font-variant-numeric:tabular-nums;">$${(item.perUnitTotal||0).toFixed(2)}</span>
+    </div>
+    <div style="margin-top:6px;font-size:10px;color:var(--muted);">${item.qty} unit${item.qty===1?'':'s'} · $${((item.perUnitTotal||0)*item.qty).toFixed(2)} total</div>`;
+
+  document.body.appendChild(pop);
+  const r = anchorEl.getBoundingClientRect();
+  pop.style.top  = (window.scrollY + r.bottom + 6) + 'px';
+  pop.style.left = (window.scrollX + Math.min(r.left, window.innerWidth - pop.offsetWidth - 16)) + 'px';
+
+  setTimeout(() => {
+    document.addEventListener('click', function off(e) {
+      if (!pop.contains(e.target)) { pop.remove(); document.removeEventListener('click', off); }
+    });
+  }, 0);
+}
+
+async function saveBotSkuField(idx, field, inputEl) {
+  const item = _botItemRows[idx];
+  if (!item) { console.warn('saveBotSkuField: no row at index', idx); return; }
+  const name = item.name;
   item[field] = parseFloat(inputEl.value) || 0;
   await api('PATCH', '/admin/bot-items/sku', { sku: name, buyer_fee: item.buyer_fee||0, sale_price: item.sale_price||0 });
   // Update profit cell in this row without full re-render
@@ -2321,9 +2370,9 @@ async function saveBotSkuField(name, field, inputEl) {
 }
 
 // ── Item view edit/delete ─────────────────────────────────────────────────────
-function openBotItemEdit(name) {
-  const item = _botItems.find(i => i.name === name);
-  if (!item) return;
+function openBotItemEdit(idx) {
+  const item = _botItemRows[idx];
+  if (!item) { alert('Could not open this item for editing — try refreshing.'); return; }
   document.getElementById('bie-orig-name').value  = item.name;
   document.getElementById('bie-name').value        = item.name;
   document.getElementById('bie-buyer-fee').value   = item.buyer_fee  || '';
@@ -2351,9 +2400,11 @@ async function saveBotItemEdit() {
   const cat = document.getElementById('bot-cat-tabs').dataset.active;
   if (cat && cat !== 'All') loadBotItemView(cat);
 }
-async function deleteBotItemByName(name) {
-  const item = _botItems.find(i => i.name === name);
-  const qty  = item ? item.qty : '?';
+async function deleteBotItemByName(idx) {
+  const item = _botItemRows[idx];
+  if (!item) { alert('Could not find this item — try refreshing.'); return; }
+  const name = item.name;
+  const qty  = item.qty;
   if (!confirm(`Delete ALL orders containing "${name}" (${qty} units)?\n\nThis cannot be undone. Those orders will also be blocked from being re-created by the scraper.`)) return;
   const r = await api('DELETE', '/admin/bot-items/by-name', { name });
   if (r) {
