@@ -923,11 +923,21 @@ app.post('/api/bot/orders', (req, res) => {
 
 // ── Item view endpoint: expand orders → per-item rows, merge by SKU+cost ───────
 app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
-  const { category } = req.query;
+  const { category, retailer, status } = req.query;
   if (!category) return res.status(400).json({ error: 'category required' });
-  const orders = db.prepare(
-    "SELECT * FROM bot_orders WHERE category=? AND status NOT IN ('Cancelled','Refunded')"
-  ).all([category]);
+
+  // Filter BEFORE grouping so the per-unit landed costs below are averaged over
+  // exactly the orders being displayed. Filtering after the fact would show a
+  // cost blended from stores the user had filtered out.
+  let sql = 'SELECT * FROM bot_orders WHERE category=?';
+  const params = [category];
+  if (retailer) { sql += ' AND retailer=?'; params.push(retailer); }
+  if (status)   { sql += ' AND status=?';   params.push(status); }
+  // Cancelled/Refunded carry no inventory, so they're excluded by default — but
+  // shown when explicitly selected, otherwise picking them looks broken.
+  else          { sql += " AND status NOT IN ('Cancelled','Refunded')"; }
+
+  const orders = db.prepare(sql).all(params);
 
   function parseQty(str) {
     const m = str.match(/^(\d+)\s*[xX×]\s+/) || str.match(/\s+[xX×]\s*(\d+)$/);
@@ -1007,7 +1017,10 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
         groups[key] = {
           name, qty: 0,
           _sumItem: 0, _sumTax: 0, _sumShip: 0, _sumFinder: 0, _sumTotal: 0,
-          statuses: {}, addresses: []
+          // retailers is needed so the UI can filter this view by store. Without
+          // it the retailer dropdown had nothing to match on and silently did
+          // nothing, showing every store's items under whichever store was picked.
+          statuses: {}, addresses: [], retailers: []
         };
       }
       groups[key].qty          += qty;
@@ -1019,6 +1032,9 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
       const st = order.status || 'Confirmed';
       groups[key].statuses[st] = (groups[key].statuses[st] || 0) + qty;
       if (order.shipping_address) groups[key].addresses.push(order.shipping_address);
+      if (order.retailer && !groups[key].retailers.includes(order.retailer)) {
+        groups[key].retailers.push(order.retailer);
+      }
     }
   }
 

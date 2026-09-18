@@ -459,15 +459,15 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
     <div id="bot-cat-tabs"></div>
     <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <select id="bot-filter-retailer" onchange="renderBotOrders()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+      <select id="bot-filter-retailer" onchange="botFilterChanged()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
         <option value="">All retailers</option>
       </select>
-      <select id="bot-filter-status" onchange="renderBotOrders()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+      <select id="bot-filter-status" onchange="botFilterChanged()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
         <option value="">All statuses</option>
         <option>Confirmed</option><option>Shipped</option><option>Unship</option>
         <option>Delivered</option><option>Cancelled</option><option>Refunded</option>
       </select>
-      <select id="bot-filter-address" onchange="renderBotOrders()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);max-width:180px;">
+      <select id="bot-filter-address" onchange="botFilterChanged()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);max-width:180px;">
         <option value="">All addresses</option>
       </select>
       <input type="text" id="bot-search" oninput="renderBotOrders()" placeholder="Search order #, item, buyer…" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:200px;">
@@ -1993,6 +1993,9 @@ function botSetCat(cat) {
   document.getElementById('bot-item-view').style.display   = isItemView ? 'block' : 'none';
   document.getElementById('bot-orders-wrap').style.display = isItemView ? 'none'  : 'block';
   if (isItemView) {
+    // Clear the item search only when switching category tabs — not on every
+    // filter change, which would wipe what the user just typed.
+    document.getElementById('bot-item-search').value = '';
     loadBotItemView(cat);
   } else {
     renderBotOrders();
@@ -2247,18 +2250,41 @@ let _botItemRows = [];
 
 async function loadBotItemView(cat) {
   const tbody = document.getElementById('bot-item-tbody');
-  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--muted);">Loading ${esc(cat)} items…</td></tr>`;
-  document.getElementById('bot-item-search').value = '';
-  const items = await api('GET', '/admin/bot-items?category=' + encodeURIComponent(cat));
+  tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:32px;color:var(--muted);">Loading ${esc(cat)} items…</td></tr>`;
+
+  // Retailer and status are applied server-side so the aggregated landed costs
+  // reflect only the orders on screen.
+  const retailer = document.getElementById('bot-filter-retailer').value;
+  const status   = document.getElementById('bot-filter-status').value;
+  const qs = new URLSearchParams({ category: cat });
+  if (retailer) qs.set('retailer', retailer);
+  if (status)   qs.set('status', status);
+
+  const items = await api('GET', '/admin/bot-items?' + qs.toString());
   if (!items) return;
   _botItems = items;
   renderBotItemView();
 }
 
+// Any filter dropdown changed — refresh whichever view is currently visible.
+// These used to call renderBotOrders() only, so in the per-item view the
+// dropdowns appeared to do nothing at all.
+function botFilterChanged() {
+  const cat = document.getElementById('bot-cat-tabs').dataset.active;
+  if (cat && cat !== 'All') loadBotItemView(cat);
+  else                      renderBotOrders();
+}
+
 function renderBotItemView() {
   const search = (document.getElementById('bot-item-search').value || '').toLowerCase();
+  const addr   = document.getElementById('bot-filter-address').value;
   let rows = _botItems;
   if (search) rows = rows.filter(i => i.name.toLowerCase().includes(search));
+  // Address is matched client-side against the same normalised form the
+  // dropdown was built from.
+  if (addr) {
+    rows = rows.filter(i => (i.addresses || []).some(a => normalizeAddr(a) === addr));
+  }
   document.getElementById('bot-item-count').textContent = rows.length + ' item' + (rows.length !== 1 ? 's' : '');
   const tbody = document.getElementById('bot-item-tbody');
   if (!rows.length) {
