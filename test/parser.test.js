@@ -4,7 +4,7 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { parseOrderEmail } = require('../parser');
+const { parseOrderEmail, findOrderNumberInText } = require('../parser');
 
 let passed = 0, failed = 0;
 const failures = [];
@@ -102,6 +102,87 @@ const toText = html => html
     eq('ship name',       r.shippingName,   'Sang Nguyen');
     check('address captured', /Brooklyn Park/.test(r.shippingAddress || ''), r.shippingAddress);
     check('high confidence',  r.confidence >= 0.9, String(r.confidence));
+  }
+
+  // ── 3b. Totals only present as flat text (the "tax=? ship=?" case) ─────────
+  // Items are in a clean table so the DOM layer finds them, but the summary is a
+  // flowing paragraph with no label/value structure to pair up.
+  console.log('\n── Flat-text order summary (tax/ship must still be found) ──');
+  {
+    const html = `<html><body>
+      <p>Order #112-9988776-5544332</p>
+      <table><tr>
+        <td>Mega Evolution Booster Bundle</td><td>Qty: 2</td><td>$32.55</td>
+      </tr></table>
+      <p>Subtotal: $65.10 &nbsp; Shipping: $5.99 &nbsp; Estimated tax: $4.72 &nbsp; Order Total: $75.81</p>
+    </body></html>`;
+    const r = await parseOrderEmail({ html, text: toText(html), subject: 'Your order has shipped', from: 'ship@somestore.com' });
+
+    eq('item found',  r.items.length, 1);
+    eq('subtotal',    r.subtotal,     65.10);
+    eq('tax',         r.tax,          4.72);
+    eq('shipping',    r.shipping,     5.99);
+    eq('total',       r.total,        75.81);
+  }
+
+  // ── 3c. Free shipping expressed as a word ──────────────────────────────────
+  console.log('\n── "Shipping: Free" must store 0, not null ──');
+  {
+    const html = `<html><body>
+      <p>Order Number: ABC-55512</p>
+      <table><tr><td>Poster Collection</td><td>Qty: 1</td><td>$19.99</td></tr></table>
+      <p>Subtotal $19.99 | Shipping: Free | Tax $1.37 | Total $21.36</p>
+    </body></html>`;
+    const r = await parseOrderEmail({ html, text: toText(html), subject: 'Order confirmation', from: 'x@store.com' });
+    eq('shipping is 0 not null', r.shipping, 0);
+    eq('tax',   r.tax,   1.37);
+    eq('total', r.total, 21.36);
+  }
+
+  // ── 3d. Shipping notice: total is derived, and must be flagged as such ──────
+  // These emails list what shipped but carry no tax/shipping/total lines. Summing
+  // the item rows produces a number that looks like a total but is missing tax —
+  // it must never overwrite the real total captured at confirmation time.
+  console.log('\n── Shipping notice (derived total must be flagged) ──');
+  {
+    const html = `<html><body>
+      <p>Your order #902003677072140 has shipped</p>
+      <p>Tracking: 1ZWY06570304019606</p>
+      <table>
+        <tr><td>Pokemon TCG Scarlet &amp; Violet Bundle</td><td>Qty: 1</td><td>$219.99</td></tr>
+        <tr><td>Pokemon TCG 30th Anniversary Pack</td><td>Qty: 1</td><td>$39.99</td></tr>
+      </table>
+    </body></html>`;
+    const r = await parseOrderEmail({ html, text: toText(html), subject: 'Your order has shipped', from: 'ship@target.com' });
+
+    eq('2 items', r.items.length, 2);
+    eq('total is the line sum', r.total, 259.98);
+    check('total flagged derived',    r.derived && r.derived.total === true,    JSON.stringify(r.derived));
+    check('subtotal flagged derived', r.derived && r.derived.subtotal === true, JSON.stringify(r.derived));
+    eq('tax genuinely absent', r.tax, null);
+  }
+
+  // ── 3e. Confirmation with a stated total is NOT derived ─────────────────────
+  console.log('\n── Stated total must not be flagged derived ──');
+  {
+    const html = fixture('target-confirmation.html');
+    const r = await parseOrderEmail({ html, text: toText(html), subject: 'Thanks for your order', from: 'orders@target.com' });
+    check('total not derived', r.derived && r.derived.total === false, JSON.stringify(r.derived));
+  }
+
+  // ── 3f. Order numbers without a colon (Mattel-style) ───────────────────────
+  console.log('\n── Order number formats ──');
+  {
+    const cases = [
+      ['Order Number CHP10033780',     'CHP10033780'],
+      ['Order Number: P0040756156',    'P0040756156'],
+      ['Order #902003676318858',       '902003676318858'],
+      ['Order No. 25293',              '25293'],
+      ['Confirmation # ABC-99812',     'ABC-99812'],
+    ];
+    for (const [input, expected] of cases) {
+      eq(`"${input}"`, findOrderNumberInText(input), expected);
+    }
   }
 
   // ── 4. Guard: a pure marketing email must not become an order ───────────────

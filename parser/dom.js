@@ -95,14 +95,23 @@ function nameScore(s) {
 }
 
 // Is this price inside a totals / payment / tax row?
+//
+// The walk upward must stop at the boundary of the line item, otherwise on a
+// short email it reaches <body> — which contains both the item and the order
+// summary — sees the word "Subtotal", and throws away a perfectly good item.
+// Two stopping rules: a <tr> is the natural unit of one line item, and any
+// ancestor holding more than one price means we have climbed out of the row.
 function inFinancialContext($, el) {
   let cur = $(el);
   for (let i = 0; i < 5; i++) {
     const t = norm(cur.text());
     if (t) {
       if (t.length > 220) break;               // too broad to judge reliably
+      const moneyCount = (t.match(MONEY_ALL_G) || []).length;
+      if (i > 0 && moneyCount > 1) break;      // escaped into a multi-row container
       if (FINANCIAL_LABEL.test(t)) return true;
     }
+    if (cur.is('tr')) break;                   // one row = one line item
     const p = cur.parent();
     if (!p.length) break;
     cur = p;

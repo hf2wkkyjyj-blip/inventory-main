@@ -474,6 +474,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <button class="btn btn-ghost btn-sm" id="bot-scan-btn" onclick="botScanEmails()"><i class="fa fa-envelope"></i> Scan Emails</button>
       <button class="btn btn-ghost btn-sm" id="bot-rescan-btn" onclick="botFullRescan(false)" title="Clear scanner history and re-scan last 180 days of Gmail" style="opacity:.7;"><i class="fa fa-redo"></i> Full Rescan</button>
       <button class="btn btn-ghost btn-sm" id="bot-reparse-btn" onclick="botReparse()" title="Re-run the parser over saved emails — no Gmail fetch, takes seconds" style="opacity:.7;"><i class="fa fa-bolt"></i> Reparse</button>
+      <button class="btn btn-ghost btn-sm" id="bot-restore-btn" onclick="botRestoreBaseline()" title="Re-add baseline orders (Mattel, Sam's Club, Costco, Bear Walker, older history). Safe: skips anything already present." style="opacity:.7;color:#2ecc71;"><i class="fa fa-undo"></i> Restore Baseline</button>
       <button class="btn btn-ghost btn-sm" id="bot-wipe-btn" onclick="botFullRescan(true)" title="Delete ALL orders and rebuild from emails (last 180 days)" style="opacity:.7;color:#e74c3c;"><i class="fa fa-trash"></i> Wipe & Rescan</button>
       <div style="display:flex;gap:4px;align-items:center;">
         <input type="text" id="bot-order-scan-input" placeholder="Order # …" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:130px;" onkeydown="if(event.key==='Enter')botScanOrder()">
@@ -2175,6 +2176,23 @@ async function botScanEmails() {
   await loadBotOrders();
   btn.disabled = false;
   btn.innerHTML = '<i class="fa fa-envelope"></i> Scan Emails';
+}
+
+// Re-add the baseline orders from bot_orders_import.json. Idempotent: anything
+// already in the DB (matched on order number) is skipped, so it never duplicates.
+async function botRestoreBaseline() {
+  const btn = document.getElementById('bot-restore-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa fa-undo fa-spin"></i> Restoring…';
+  try {
+    const r = await api('POST', '/admin/orders/restore-baseline', { force: true });
+    btn.innerHTML = `<i class="fa fa-check"></i> +${r.imported}`;
+    if (r.missing) alert('bot_orders_import.json is not deployed — cannot restore.');
+  } catch (e) {
+    btn.innerHTML = '<i class="fa fa-exclamation-triangle"></i> Failed';
+  }
+  await loadBotOrders();
+  setTimeout(() => { btn.disabled = false; btn.innerHTML = '<i class="fa fa-undo"></i> Restore Baseline'; }, 2500);
 }
 
 // Re-run the parser over emails already saved in the DB. No Gmail fetch, so this

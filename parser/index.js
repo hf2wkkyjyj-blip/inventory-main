@@ -12,15 +12,33 @@
 // retailers already publish, and only fall back to parsing markup when there
 // isn't any. It means retailers nobody wrote custom code for work automatically.
 
-const { extractJsonLd }    = require('./jsonld');
-const { extractMicrodata } = require('./microdata');
-const { extractDom }       = require('./dom');
-const { extractWithLlm }   = require('./llm');
+const { extractJsonLd }        = require('./jsonld');
+const { extractMicrodata }     = require('./microdata');
+const { extractDom }           = require('./dom');
+const { extractTextFinancials } = require('./text');
+const { extractWithLlm }       = require('./llm');
 const {
   emptyOrder, merge, round2, parseMoney, cleanName, hasAnything,
 } = require('./normalize');
 
 // ── Plain-text fallbacks for the few fields regex is genuinely good at ───────
+
+// Flatten HTML to text while keeping label/value adjacency intact. Block
+// boundaries become newlines so "Tax</td><td>$3.41" doesn't glue into "Tax$3.41".
+function htmlToText(html) {
+  if (!html) return '';
+  return String(html)
+    .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(td|th|tr|p|div|li|h[1-6]|table|section)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&#\d+;|&[a-z]+;/gi, ' ')
+    .replace(/[^\S\n]+/g, ' ')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
 
 const TRACKING_PATTERNS = [
   /\b(1Z[A-Z0-9]{16})\b/i,          // UPS
@@ -43,12 +61,20 @@ function findTrackingInText(text) {
 function findOrderNumberInText(text) {
   if (!text) return null;
 
-  const labelled = text.match(
-    /\b(?:order|confirmation|purchase|invoice|receipt)\s*(?:#|number|no\.?|id)?\s*[:#]\s*([A-Za-z0-9][A-Za-z0-9-]{4,29})\b/i
-  ) || text.match(
-    /\border\s*#\s*([A-Za-z0-9][A-Za-z0-9-]{4,29})\b/i
-  );
-  if (labelled && /\d/.test(labelled[1])) return labelled[1].trim();
+  // Tried in order of decreasing confidence. The colon/# is optional after an
+  // explicit "number"/"no"/"id" word, because plenty of retailers write
+  // "Order Number CHP10033780" with nothing between label and value.
+  const PATTERNS = [
+    /\b(?:order|confirmation|purchase|invoice|receipt)\s*(?:#|number|no\.?|id)\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9-]{4,29})\b/i,
+    /\b(?:order|confirmation|purchase|invoice|receipt)\s*[:#]\s*([A-Za-z0-9][A-Za-z0-9-]{4,29})\b/i,
+    /\border\s*#\s*([A-Za-z0-9][A-Za-z0-9-]{4,29})\b/i,
+  ];
+
+  for (const p of PATTERNS) {
+    const m = text.match(p);
+    // Require a digit so words like "Confirmation" are never mistaken for a value.
+    if (m && /\d/.test(m[1])) return m[1].trim();
+  }
 
   // Common bare formats: Amazon 111-2223334-5556667, Target 15–16 digits
   const bare = text.match(/\b(\d{3}-\d{7}-\d{7}|\d{15,16})\b/);
@@ -101,15 +127,24 @@ function reconcile(o) {
     for (const i of items) delete i._perEach;
   }
 
-  // Fill in whichever totals are missing.
+  // Fill in whichever totals are missing — but record that we INVENTED them.
+  // A shipping-notification email lists items with no financial summary, so the
+  // "total" here is just the sum of the lines. That must never be allowed to
+  // overwrite the real total captured from the confirmation email.
+  o.derived = { subtotal: false, total: false };
+
   const lineSum = items.length && items.every(i => i.lineTotal !== null && i.lineTotal !== undefined)
     ? round2(items.reduce((s, i) => s + i.lineTotal, 0))
     : null;
 
-  if (o.subtotal === null && lineSum !== null) o.subtotal = lineSum;
+  if (o.subtotal === null && lineSum !== null) {
+    o.subtotal = lineSum;
+    o.derived.subtotal = true;
+  }
 
   if (o.total === null && o.subtotal !== null) {
     o.total = round2(o.subtotal + (o.tax || 0) + (o.shipping || 0) - (o.discount || 0));
+    o.derived.total = true;
   }
 
   // Sanity: a "subtotal" larger than the total (with no discount) is a misread.
@@ -176,6 +211,25 @@ async function parseOrderEmail({ html, text, subject, from, allowLlm = false } =
       const d = extractDom(html);
       if (d && (d.items.length || d.total !== null)) { result = merge(result, d); layers.push('dom'); }
     } catch (e) {}
+  }
+
+  // 3b — Plain-text financials, only for amounts still missing.
+  // The DOM walker needs a label and a value it can pair structurally; when the
+  // summary is a flowing paragraph or a text/plain part, this catches it.
+  if (result.subtotal === null || result.tax === null ||
+      result.shipping === null || result.total === null) {
+    const sources = [text];
+    if (html) sources.push(htmlToText(html));
+
+    for (const src of sources) {
+      if (!src) continue;
+      const t = extractTextFinancials(src);
+      if (result.subtotal === null) result.subtotal = t.subtotal;
+      if (result.tax      === null) result.tax      = t.tax;
+      if (result.shipping === null) result.shipping = t.shipping;
+      if (result.discount === null) result.discount = t.discount;
+      if (result.total    === null) result.total    = t.total;
+    }
   }
 
   // 4 — Regex fallbacks for identifiers only

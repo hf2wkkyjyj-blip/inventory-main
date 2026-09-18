@@ -133,6 +133,12 @@ function findOrderNumber(text, fromEmail) {
   const t = text.match(/\b(\d{3}-\d{7}-\d{7}|\d{15,16})\b/);
   if (t) return t[1].trim();
 
+  // Pokemon Center P-format, regardless of sender. PKC sends its confirmations
+  // from a different domain than its shipping mail, so the sender-gated branch
+  // above misses them entirely.
+  const p = text.match(/\b(P\d{9,12})\b/);
+  if (p) return p[1];
+
   return null;
 }
 
@@ -165,28 +171,57 @@ function findExpectedDate(text) {
 
 // Determine order status from email subject + body
 // Returns: 'Confirmed' | 'Shipped' | 'OFD' | 'Delivered' | 'Cancelled' | 'Refunded' | null
-function determineStatus(subject, bodyText) {
-  const s = ((subject || '') + ' ' + (bodyText || '')).toLowerCase();
-  if (s.includes('cancel'))  return 'Cancelled';
-  if (s.includes('refund'))  return 'Refunded';
-  if (s.includes('delivered') && !s.includes('estimated') && !s.includes('expected') && !s.includes('delivery date') && !s.includes('delivery by'))
-    return 'Delivered';
-  if (s.includes('out for delivery'))
-    return 'OFD';
-  if (s.includes('shipped')        || s.includes('on its way')       || s.includes('tracking number') ||
-      s.includes('in transit')     || s.includes('has been shipped')  || s.includes('your order has left') ||
-      s.includes('your package')   || s.includes('order shipped')     || s.includes('is on the way'))
-    return 'Shipped';
-  if (s.includes('order confirmed')        || s.includes('thank you for your order') ||
-      s.includes('order received')         || s.includes('we received your order')   ||
-      s.includes('thanks for shopping')    || s.includes('thanks for your order')    ||
-      s.includes('is confirmed')           || s.includes('we got your order')        ||
-      s.includes("we've got your order")   || s.includes('your order is placed')     ||
-      s.includes('has been placed')        || s.includes('order confirmation')       ||
-      s.includes('placed your order')      || s.includes('we have your order')       ||
-      s.includes('order is being prepared')|| s.includes('order #')                  ||
-      s.includes('your recent order'))
-    return 'Confirmed';
+// Decide what an email is telling us about an order.
+//
+// CRITICAL: never test the body with a bare substring like "cancel" or "refund".
+// Every retailer footer contains "Cancel order", "cancellation policy" and
+// "refund policy", so a substring test marks literally every shipping email as
+// Cancelled — including ones carrying a UPS tracking number.
+//
+// The subject line is what actually states the purpose of the email, so it is
+// weighted first and the body is only consulted for unambiguous full phrases.
+function determineStatus(subject, bodyText, opts = {}) {
+  const subj = (subject  || '').toLowerCase();
+  const body = (bodyText || '').toLowerCase();
+  const both = `${subj} ${body}`;
+
+  // ── Cancelled ────────────────────────────────────────────────────────────
+  // Subject may be loose; body must be an explicit statement of fact.
+  const SUBJ_CANCEL = /\bcancell?(?:ed|ation)\b/;
+  const BODY_CANCEL = /\b(?:has\s+been|have\s+been|was|were|is)\s+cancell?ed\b|\bwe(?:'ve|\s+have)\s+cancell?ed\b|\byour\s+order\s+(?:was|has\s+been)\s+cancell?ed\b|\bcancell?ation\s+(?:confirm\w*|notice|complete\w*)\b/;
+  // "Cancel order", "you can cancel", "cancellation policy" are UI/legal text.
+  const isCancelled = SUBJ_CANCEL.test(subj) || BODY_CANCEL.test(body);
+
+  // An email carrying a tracking number is a shipping notice. Whatever cancel
+  // wording it contains is a footer link, not a cancellation.
+  if (isCancelled && !opts.hasTracking) return 'Cancelled';
+
+  // ── Refunded ─────────────────────────────────────────────────────────────
+  const SUBJ_REFUND = /\brefund(?:ed)?\b/;
+  const BODY_REFUND = /\brefund\s+(?:has\s+been|was)\s+(?:issued|processed|sent)\b|\bwe(?:'ve|\s+have)\s+(?:issued|processed)\s+(?:a\s+|your\s+)?refund\b|\byour\s+refund\s+(?:of|is|has)\b|\bhas\s+been\s+refunded\b/;
+  if (SUBJ_REFUND.test(subj) || BODY_REFUND.test(body)) return 'Refunded';
+
+  // ── Delivered ────────────────────────────────────────────────────────────
+  // "delivered" only — never "delivery", which appears in every estimate line.
+  const SUBJ_DELIVERED = /\bdelivered\b/;
+  const BODY_DELIVERED = /\b(?:was|has\s+been|been)\s+delivered\b|\bdelivered\s+(?:on|to)\b/;
+  const notAnEstimate  = !/\b(?:estimated|expected|scheduled|will\s+be|arriving|arrives)\b/.test(subj);
+  if ((SUBJ_DELIVERED.test(subj) && notAnEstimate) || BODY_DELIVERED.test(body)) return 'Delivered';
+
+  // ── Out for delivery ─────────────────────────────────────────────────────
+  if (/\bout\s+for\s+delivery\b/.test(both)) return 'OFD';
+
+  // ── Shipped ──────────────────────────────────────────────────────────────
+  const SHIPPED = /\b(?:has\s+shipped|has\s+been\s+shipped|order\s+shipped|now\s+shipping|on\s+its\s+way|on\s+the\s+way|in\s+transit|has\s+left\s+our|shipment\s+(?:confirm\w*|notice)|your\s+package)\b/;
+  if (SHIPPED.test(subj) || SHIPPED.test(body)) return 'Shipped';
+  // A tracking number with no contrary signal means it shipped.
+  if (opts.hasTracking) return 'Shipped';
+
+  // ── Confirmed ────────────────────────────────────────────────────────────
+  const CONFIRMED = /\b(?:order\s+confirm\w*|thank\s+you\s+for\s+your\s+order|thanks\s+for\s+your\s+order|thanks\s+for\s+shopping|order\s+received|we\s+received\s+your\s+order|we\s+have\s+your\s+order|we\s+got\s+your\s+order|we've\s+got\s+your\s+order|is\s+confirmed|your\s+order\s+is\s+placed|has\s+been\s+placed|placed\s+your\s+order|order\s+is\s+being\s+prepared|your\s+recent\s+order)\b/;
+  if (CONFIRMED.test(subj) || CONFIRMED.test(body)) return 'Confirmed';
+  if (/\border\s*#/.test(both)) return 'Confirmed';
+
   return null;
 }
 
@@ -451,7 +486,10 @@ async function processEmail(parsed, db) {
   // Accept the email if we recognize the sender OR the parser found real order data.
   // Previously an unknown sender was dropped outright, which is why Sam's Club,
   // Costco and Mattel never appeared — they were never even looked at.
-  if (!retailerInfo && !isStructured && !(P && P.items.length)) return false;
+  if (!retailerInfo && !isStructured && !(P && P.items.length)) {
+    console.log(`   ⏭️  Skipped [unknown sender, no order data] ${fromEmail} — "${subject.slice(0, 60)}"`);
+    return false;
+  }
 
   const retailer     = retailerInfo?.retailer || P?.retailer || retailerFromDomain(fromEmail);
   const baseCategory = retailerInfo?.category || 'Other';
@@ -463,10 +501,18 @@ async function processEmail(parsed, db) {
   const orderNumber =
     (isStructured ? P.orderNumber : null) || findOrderNumber(fullText, fromEmail) || P?.orderNumber || null;
 
-  const rawStatus    = (isStructured ? P.status : null) || determineStatus(subject, plainText) || P?.status || null;
+  // hasTracking stops a shipping notice's footer "Cancel order" link from being
+  // read as an actual cancellation.
+  const rawStatus =
+    (isStructured ? P.status : null) ||
+    determineStatus(subject, plainText, { hasTracking: !!tracking }) ||
+    P?.status || null;
   const expectedDate = P?.expectedDate || findExpectedDate(plainText);
 
-  if (!orderNumber && !tracking) return false;
+  if (!orderNumber && !tracking) {
+    console.log(`   ⏭️  Skipped [no order # or tracking found] ${retailer} — "${subject.slice(0, 60)}"`);
+    return false;
+  }
 
   const resolvedStatus = rawStatus || (orderNumber ? 'Confirmed' : null);
   const dbStatus       = resolvedStatus === 'OFD' ? 'Shipped' : resolvedStatus;
@@ -478,7 +524,17 @@ async function processEmail(parsed, db) {
 
   if (P && P.items.length) {
     itemStrings = formatParsedItems(P.items);
-    financials  = { subtotal: P.subtotal, tax: P.tax, shipping: P.shipping, total: P.total };
+    // Belt and braces: if the parser still came up empty on a money field, fall
+    // back to the original regex extractor over both the stripped HTML and the
+    // text/plain part. Costs nothing and covers layouts neither reader handles.
+    const finHtml = findOrderFinancials(strippedHtml);
+    const finText = bodyText ? findOrderFinancials(bodyText) : {};
+    financials = {
+      subtotal: P.subtotal ?? finHtml.subtotal ?? finText.subtotal ?? null,
+      tax:      P.tax      ?? finHtml.tax      ?? finText.tax      ?? null,
+      shipping: P.shipping ?? finHtml.shipping ?? finText.shipping ?? null,
+      total:    P.total    ?? finHtml.total    ?? finText.total    ?? null,
+    };
     console.log(`   🛒 ${P.items.length} item(s) via ${P.source} (confidence ${P.confidence})`);
   } else if (resolvedStatus === 'Confirmed' && bodyHtml) {
     // Last resort: the original hand-written extractors.
@@ -502,8 +558,13 @@ async function processEmail(parsed, db) {
   const taxAmount  = financials.tax      ?? null;
   const shipCost   = financials.shipping ?? null;
 
+  // True when the total was actually stated in this email rather than computed by
+  // summing item lines. A shipping notification has items but no money summary,
+  // so its "total" is a guess and must not clobber the confirmation email's figure.
+  const totalIsReal = !!(financials.total !== null && financials.total !== undefined && !(P && P.derived && P.derived.total));
+
   if (itemStrings.length)
-    console.log(`   💰 total=${orderTotal ?? '?'} tax=${taxAmount ?? '?'} ship=${shipCost ?? '?'}`);
+    console.log(`   💰 total=${orderTotal ?? '?'}${totalIsReal ? '' : ' (derived)'} tax=${taxAmount ?? '?'} ship=${shipCost ?? '?'}`);
 
   // ── Find existing record ─────────────────────────────────────────────────────
   let existing = null;
@@ -522,7 +583,18 @@ async function processEmail(parsed, db) {
       updates.push('delivered_date=?');  vals.push(new Date().toISOString().split('T')[0]);
       updates.push('expected_date=?');   vals.push(null);
     }
-    if (dbStatus && newRank > curRank)                     { updates.push('status=?');           vals.push(dbStatus); }
+    // Repair rows poisoned by the old footer-substring bug: if the stored status
+    // is Cancelled but this email carries a tracking number and reports movement,
+    // the earlier Cancelled was a misread of a "Cancel order" link. Allow the
+    // downgrade in that one specific case — otherwise status never goes backwards.
+    const correctingBadCancel =
+      existing.status === 'Cancelled' && !!tracking &&
+      (resolvedStatus === 'Shipped' || resolvedStatus === 'Delivered' || resolvedStatus === 'OFD');
+
+    if (dbStatus && (newRank > curRank || correctingBadCancel)) {
+      updates.push('status=?'); vals.push(dbStatus);
+      if (correctingBadCancel) console.log(`   🔧 Corrected bad Cancelled → ${dbStatus} (has tracking ${tracking})`);
+    }
     // Fix wrong category: if existing order is "Other" but content reveals a real category, upgrade it
     const redetectedCategory = detectCategoryFromContent(subject, plainText, baseCategory);
     if (redetectedCategory !== 'Other' && existing.category === 'Other') {
@@ -534,9 +606,14 @@ async function processEmail(parsed, db) {
     if (itemsJson) {
       // Fresh extraction — overwrite regardless of what was stored before
       updates.push('items=?'); vals.push(itemsJson);
-      if (orderTotal !== null) { updates.push('order_total=?'); vals.push(orderTotal); }
-      if (taxAmount  !== null) { updates.push('tax_amount=?');  vals.push(taxAmount); }
-      if (shipCost   !== null) { updates.push('ship_cost=?');   vals.push(shipCost); }
+      // ...but only replace the stored total with one this email actually stated.
+      // A derived total (items summed on a shipping notice, which carries no tax
+      // or shipping line) may only fill an empty field, never replace a real figure.
+      if (orderTotal !== null && (totalIsReal || !existing.order_total)) {
+        updates.push('order_total=?'); vals.push(orderTotal);
+      }
+      if (taxAmount !== null) { updates.push('tax_amount=?'); vals.push(taxAmount); }
+      if (shipCost  !== null) { updates.push('ship_cost=?');  vals.push(shipCost); }
     } else {
       // No items extracted — only fill in fields that are currently missing
       if (orderTotal  && !existing.order_total)             { updates.push('order_total=?'); vals.push(orderTotal); }
@@ -600,27 +677,52 @@ function formatImapDate(d) {
   return d.getDate() + '-' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + '-' + d.getFullYear();
 }
 
-// Build nested IMAP OR criteria for multiple FROM domains
-// e.g. ['OR', ['FROM','a.com'], ['OR', ['FROM','b.com'], ['FROM','c.com']]]
+// Superseded by the generic buildOr() above, which also handles SUBJECT terms.
 function buildFromOr(domains) {
-  if (domains.length === 1) return ['FROM', domains[0]];
-  if (domains.length === 2) return ['OR', ['FROM', domains[0]], ['FROM', domains[1]]];
-  return ['OR', ['FROM', domains[0]], buildFromOr(domains.slice(1))];
+  return buildOr(domains.map(d => ['FROM', d]));
 }
 
 // All domains we care about across every retailer
+// Sender domains we know send order mail. This is a HINT, not a gate — see the
+// search criteria below, which also matches on subject so retailers missing from
+// this list still get fetched.
+//
+// History: this used to be the only filter, and it silently lost every order from
+// any retailer not listed — all 50 Mattel Creations orders were never downloaded
+// from Gmail at all. It also lost Pokemon Center *confirmations*, because PKC
+// sends those from a different domain than its shipping mail; the only PKC orders
+// that survived arrived via narvar.com.
 const RETAILER_DOMAINS = [
-  'target.com', 'pokemoncenter.com', 'narvar.com',
+  'target.com', 'pokemoncenter.com', 'pokemon.com', 'narvar.com',
   'bearwalker.com', 'bear-walker.com',
-  'shopifyemail.com', 'myshopify.com',
+  'shopifyemail.com', 'myshopify.com', 'shopify.com',
   'walmart.com', 'gamestop.com', 'bestbuy.com',
   'amazon.com', 'amazon-hq.com',
+  'mattelcreations.com', 'mattel.com',
+  'samsclub.com', 'costco.com', 'sams.com',
 ];
+
+// Subject words that indicate a transactional order email. Matching on these
+// means a retailer does not need to be in RETAILER_DOMAINS to be picked up.
+const SUBJECT_KEYWORDS = [
+  'order', 'shipped', 'shipment', 'delivered', 'delivery',
+  'tracking', 'receipt', 'invoice', 'cancelled', 'canceled', 'refund',
+];
+
+// node-imap wants OR nested pairwise: ['OR', a, ['OR', b, c]]
+function buildOr(criteria) {
+  if (!criteria.length)      return null;
+  if (criteria.length === 1) return criteria[0];
+  return ['OR', criteria[0], buildOr(criteria.slice(1))];
+}
 
 function fetchNewAndProcess(imap, db) {
   return new Promise((resolve, reject) => {
     // Read-only — we track what's been processed ourselves, don't touch read/unread
-    imap.openBox('INBOX', true, (err) => {
+    // INBOX misses anything archived. Set scraper_mailbox to '[Gmail]/All Mail'
+    // to search the full account instead — slower, but nothing is hidden.
+    const mailbox = getSetting(db, 'scraper_mailbox', 'INBOX');
+    imap.openBox(mailbox, true, (err) => {
       if (err) return reject(err);
 
       // Load seen Message-IDs from DB
@@ -633,11 +735,20 @@ function fetchNewAndProcess(imap, db) {
       const sinceDate = sinceStr ? new Date(sinceStr) : new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
       const imapDate  = formatImapDate(sinceDate);
 
-      // Only fetch emails from known retailer domains — ignores all other inbox mail
-      const fromFilter = buildFromOr(RETAILER_DOMAINS);
-      const criteria   = [['SINCE', imapDate], fromFilter];
+      // Match a known retailer domain OR an order-ish subject line. The subject
+      // arm is what lets retailers absent from RETAILER_DOMAINS through — without
+      // it, their mail is never downloaded and no amount of parser work can help.
+      // Extra domains can be added at runtime via the scraper_extra_domains setting,
+      // so a new retailer doesn't require a code change.
+      let extraDomains = [];
+      try { extraDomains = JSON.parse(getSetting(db, 'scraper_extra_domains', '[]')); } catch (_) {}
 
-      console.log(`   Searching retailer emails since ${imapDate}…`);
+      const domains      = [...new Set([...RETAILER_DOMAINS, ...extraDomains])];
+      const fromFilter   = buildOr(domains.map(d => ['FROM', d]));
+      const subjectFilter= buildOr(SUBJECT_KEYWORDS.map(k => ['SUBJECT', k]));
+      const criteria     = [['SINCE', imapDate], buildOr([fromFilter, subjectFilter])];
+
+      console.log(`   Searching since ${imapDate} — ${domains.length} known domains + ${SUBJECT_KEYWORDS.length} subject keywords…`);
 
       imap.search(criteria, (err, uids) => {
         if (err) return reject(err);
@@ -682,7 +793,11 @@ function fetchNewAndProcess(imap, db) {
             // Advance since date (keep 1-day buffer so timezone edge cases don't miss anything)
             setSetting(db, 'email_scraper_since', new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString());
             const updated = results.filter(Boolean).length;
-            console.log(`   Processed ${newIds.length} new email(s), ${updated} order(s) updated.`);
+            // NB: this counts EMAILS that produced a write, not distinct orders.
+            // One order normally sends 3 emails (confirmed → shipped → delivered),
+            // so this number is expected to be several times the order count.
+            const distinct = db.prepare('SELECT COUNT(*) AS n FROM bot_orders').get()?.n ?? '?';
+            console.log(`   Processed ${newIds.length} new email(s); ${updated} produced a write. ${distinct} distinct order(s) now in DB.`);
             resolve(updated);
           })
         );
@@ -896,4 +1011,6 @@ function resetEmailScraper(db, { wipeOrders = false, days = 180 } = {}) {
 module.exports = {
   runEmailScraper, scrapeByOrderNumber, resetEmailScraper,
   reparseStoredEmails, ensureRawEmailTable,
+  // Exposed for unit tests only.
+  __test: { determineStatus, findOrderNumber, findTracking, findOrderFinancials },
 };

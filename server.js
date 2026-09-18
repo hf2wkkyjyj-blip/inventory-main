@@ -219,35 +219,58 @@ db.exec(`
   );
 `);
 
-// ── One-time bot_orders import (runs once ever, tracked by DB flag not file rename) ──
-// File rename didn't survive Railway redeploys — the .done file was never committed to Git,
-// so every deploy re-imported everything, resurrecting manually-deleted orders.
-// Now we store a flag in the settings table so the import is skipped on all future deploys.
-const importFile = path.join(__dirname, 'bot_orders_import.json');
-const alreadyImported = db.prepare("SELECT value FROM settings WHERE key='bot_orders_imported'").get();
-if (!alreadyImported && fs.existsSync(importFile)) {
+// ── Baseline bot_orders import ───────────────────────────────────────────────
+// Holds orders from retailers the email scraper cannot read (Mattel Creations,
+// Sam's Club, Costco, Bear Walker) plus history older than the scan window.
+// Losing this file means losing those orders permanently, so it stays in the repo.
+//
+// This runs on EVERY deploy and is safe to do so, because it is idempotent:
+//   • an order already present (matched on order_number) is skipped, so it can
+//     never duplicate rows the email scraper created for the same order;
+//   • an order in scraper_blocked_orders is skipped, so anything deliberately
+//     deleted stays deleted.
+// An earlier version used a run-once flag instead. That was wrong: after a
+// Wipe & Rescan the flag was still set, so the baseline never came back and
+// ~100 Pokemon Center and Mattel orders silently vanished.
+function importBaselineOrders(db, { force = false } = {}) {
+  const importFile = path.join(__dirname, 'bot_orders_import.json');
+  if (!fs.existsSync(importFile)) return { imported: 0, skipped: 0, blocked: 0, missing: true };
+
+  let blocked = [];
   try {
-    const importData = JSON.parse(fs.readFileSync(importFile, 'utf8'));
-    const importOrders = importData.orders || [];
-    let imported = 0;
-    for (const o of importOrders) {
-      try {
-        db.prepare(`INSERT OR IGNORE INTO bot_orders
-          (email_id,subject,from_email,category,retailer,order_number,account_email,order_date,delivered_date,shipping_name,shipping_address,status,items,order_total,refunded_amount,notes,raw_snippet,received_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-          .run([o.email_id||null,o.subject||null,o.from_email||null,o.category||'Other',o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||'Confirmed',JSON.stringify(o.items||[]),o.order_total||0,o.refunded_amount||0,o.notes||null,o.raw_snippet||null,o.received_at||null]);
-        imported++;
-      } catch(e) {}
-    }
-    // Mark as done in the DB — survives all future redeploys unlike file rename
-    db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('bot_orders_imported','1')").run();
-    console.log(`✅ Imported ${imported} bot orders from ${importFile} (will not re-import on future deploys)`);
-  } catch(e) {
-    console.error('⚠️  bot_orders import failed:', e.message);
+    const raw = db.prepare("SELECT value FROM settings WHERE key='scraper_blocked_orders'").get();
+    blocked = raw ? JSON.parse(raw.value) : [];
+  } catch (_) {}
+  const blockedSet = new Set(force ? [] : blocked);
+
+  const existing = new Set(
+    db.prepare('SELECT order_number FROM bot_orders WHERE order_number IS NOT NULL')
+      .all().map(r => String(r.order_number))
+  );
+
+  const orders = (JSON.parse(fs.readFileSync(importFile, 'utf8')).orders) || [];
+  let imported = 0, skipped = 0, blockedCount = 0;
+
+  for (const o of orders) {
+    const num = o.order_number ? String(o.order_number) : null;
+    if (num && existing.has(num))    { skipped++;      continue; }
+    if (num && blockedSet.has(num))  { blockedCount++; continue; }
+    try {
+      db.prepare(`INSERT INTO bot_orders
+        (email_id,subject,from_email,category,retailer,order_number,account_email,order_date,delivered_date,shipping_name,shipping_address,status,items,order_total,refunded_amount,notes,raw_snippet,received_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run([o.email_id||null,o.subject||null,o.from_email||null,o.category||'Other',o.retailer||null,num,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||'Confirmed',JSON.stringify(o.items||[]),o.order_total||0,o.refunded_amount||0,o.notes||null,o.raw_snippet||null,o.received_at||null]);
+      if (num) existing.add(num);
+      imported++;
+    } catch (e) { /* one bad row must not abort the rest */ }
   }
-} else if (alreadyImported) {
-  console.log('ℹ️  bot_orders import already done — skipping');
+
+  console.log(`📦 Baseline import: ${imported} added, ${skipped} already present, ${blockedCount} blocked (${orders.length} in file)`);
+  return { imported, skipped, blocked: blockedCount, total: orders.length };
 }
+
+try { importBaselineOrders(db); }
+catch (e) { console.error('⚠️  baseline import failed:', e.message); }
 
 // Seed default settings
 const defaultSettings = {
@@ -1191,7 +1214,21 @@ app.post('/api/admin/scrape-emails/reset', auth, adminOnly, (req, res) => {
   const wipeOrders = req.body?.wipe === true;
   const days = parseInt(req.body?.days) || 180;
   resetEmailScraper(db, { wipeOrders, days });
-  res.json({ reset: true, wipeOrders, days });
+  // A wipe clears the table, so put the baseline back immediately. Retailers the
+  // scraper can't read (Mattel, Sam's Club, Costco, Bear Walker) exist ONLY here —
+  // without this they are gone for good.
+  let baseline = null;
+  if (wipeOrders) baseline = importBaselineOrders(db, { force: true });
+  res.json({ reset: true, wipeOrders, days, baseline });
+});
+
+// Restore the baseline orders without touching anything else.
+app.post('/api/admin/orders/restore-baseline', auth, adminOnly, (req, res) => {
+  try {
+    res.json(importBaselineOrders(db, { force: req.body?.force === true }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Re-run the parser over archived emails — no Gmail/IMAP round trip.
