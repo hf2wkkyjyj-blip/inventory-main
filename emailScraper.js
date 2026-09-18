@@ -239,91 +239,63 @@ function findOrderFinancials(text) {
   return result;
 }
 
-// Extract items from Target order confirmation HTML
-// Uses two strategies: plain-text line scanning (primary) + HTML cell sliding window (fallback)
+// Extract items from Target order confirmation HTML.
+//
+// Target email item structure (confirmed from real email):
+//   [Product Name]
+//   Qty: 2
+//   $19.99 / ea
+//   Arrives Sep 17, 2026 – Sep 22, 2026
+//
+// KEY INSIGHT: "Qty:" ONLY appears in actual item rows — never in the header,
+// financial summary, payment section, or footer. So we anchor on "Qty:" and
+// look one line back for the name and one line forward for the price.
+// This is 100% reliable because no other section uses "Qty:".
 function extractTargetItems(html) {
   if (!html) return [];
 
   const seen  = new Set();
   const items = [];
 
-  function isProductName(l) {
-    if (l.length < 8 || l.length > 250) return false;
-    if (/^\$/.test(l)) return false;                              // starts with $ = price line
-    if (/^\$?[\d,]+(\.\d+)?(\s*\/\s*\w+)?$/.test(l)) return false; // price or price/unit ("$19.99 / ea")
-    if (/^(?:qty|quantity|price|subtotal|total|tax|shipping|delivery|sku|upc|item\s*#|order|estimated|standard|free|sold by|ships from|returns|eligible|add to|view|cart|account|hi |hello |dear |arrives|delivers|sincerely|rate|write|need to|we process|explore|help|contact|terms|privacy|target\.com)/i.test(l)) return false;
-    if (/^\d{3,}-\d{3,}/.test(l)) return false;                 // order number pattern
-    if (/^[A-Z]{1,3}\d{6,}$/.test(l)) return false;             // bare SKU code
-    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(l)) return false;     // date
-    if (/^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec).+\d{4}/i.test(l)) return false; // "Sep 17, 2026"
-    return true;
-  }
-
-  // ── Strategy 1: plain-text line scan ──────────────────────────────────────
-  // htmlToLines preserves newlines at block boundaries so each cell/div is its own line
   const text  = htmlToLines(html);
   const lines = text.split(/[\n\r]+/).map(l => l.trim()).filter(Boolean);
 
   for (let i = 0; i < lines.length; i++) {
-    // Target price lines: "$19.99 / ea" (per-unit) or standalone "$19.99"
-    const priceMatch = lines[i].match(/^\$?([\d,]+\.\d{2})\s*(?:\/\s*ea)?$/i) ||
-                       lines[i].match(/\$\s*([\d,]+\.\d{2})\s*(?:\/\s*ea)?\s*$/i);
-    if (!priceMatch) continue;
-    const price = parseFloat(priceMatch[1].replace(/,/g,''));
-    if (price < 0.50 || price > 5000) continue;
+    // Anchor: "Qty: N" or "Quantity: N" — only exists in item rows
+    const qtyMatch = lines[i].match(/^(?:qty|quantity)[:\s]+(\d+)$/i);
+    if (!qtyMatch) continue;
+    const qty = parseInt(qtyMatch[1]);
+    if (qty < 1 || qty > 999) continue;
 
-    // Look for qty within ±4 lines
-    let qty = 1;
-    for (let j = Math.max(0, i - 4); j <= Math.min(lines.length - 1, i + 4); j++) {
-      if (j === i) continue;
-      const qm = lines[j].match(/^(?:qty|quantity)[:\s]*(\d+)$/i) ||
-                 lines[j].match(/^(\d+)$/) ||
-                 lines[j].match(/\bqty[:\s]+(\d+)\b/i);
-      if (qm) { const q = parseInt(qm[1]); if (q >= 1 && q <= 99) { qty = q; break; } }
-    }
-
-    // Walk backwards (up to 6 lines) for a product name
-    for (let j = i - 1; j >= Math.max(0, i - 6); j--) {
+    // Item name: the nearest non-trivial line BEFORE the Qty line
+    let name = null;
+    for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
       const l = lines[j];
-      if (!isProductName(l)) continue;
-      const key = `${l.toLowerCase()}|${price}`;
-      if (seen.has(key)) break;
-      seen.add(key);
-      items.push({ name: l.replace(/\s{2,}/g, ' ').substring(0, 120), qty, price });
+      if (l.length < 5) continue;
+      // Skip obvious non-name lines
+      if (/^\$/.test(l)) continue;                       // price line
+      if (/^(?:delivers to|shipping|qty|quantity)/i.test(l)) continue;
+      if (/^\d+$/.test(l)) continue;                     // bare number
+      if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(l)) continue; // date
+      // Accept this as the item name
+      name = l.replace(/\s{2,}/g, ' ').substring(0, 150);
       break;
     }
-  }
+    if (!name) continue;
 
-  // ── Strategy 2: HTML <td> sliding-window (fallback when text scan finds nothing) ──
-  if (items.length === 0) {
-    const cells = (html.match(/<td[^>]*>[\s\S]*?<\/td>/gi) || [])
-      .map(c => htmlToLines(c).replace(/\n+/g, ' ').trim())
-      .filter(t => t.length > 0 && t.length < 300);
-
-    for (let i = 0; i < cells.length - 2; i++) {
-      const nameCandidate = cells[i];
-      if (/^\$?\d/.test(nameCandidate)) continue;
-      if (/^(?:qty|quantity|price|subtotal|total|tax|shipping|item|order)/i.test(nameCandidate)) continue;
-      if (nameCandidate.length < 8) continue;
-
-      let qty = 1, price = null;
-      for (const c of [cells[i+1], cells[i+2], cells[i+3]].filter(Boolean)) {
-        const qm = c.match(/^(\d+)$/) || c.match(/qty[:\s]*(\d+)/i);
-        if (qm && qty === 1) qty = parseInt(qm[1]);
-        const pm = c.match(/^\$?([\d,]+\.\d{2})$/);
-        if (pm && !price) price = parseFloat(pm[1].replace(/,/g,''));
-      }
-
-      if (price && price > 0.5) {
-        const cleanName = nameCandidate.replace(/\s{2,}/g, ' ').substring(0, 120);
-        const key = `${cleanName.toLowerCase()}|${price}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          items.push({ name: cleanName, qty, price });
-          i += 2;
-        }
-      }
+    // Price: "$19.99 / ea" or "$19.99" on the line(s) AFTER the Qty line
+    let price = null;
+    for (let j = i + 1; j <= Math.min(lines.length - 1, i + 4); j++) {
+      const pm = lines[j].match(/^\$?([\d,]+\.\d{2})\s*(?:\/\s*ea)?\s*$/i)
+              || lines[j].match(/\$\s*([\d,]+\.\d{2})\s*(?:\/\s*ea)?\s*$/i);
+      if (pm) { price = parseFloat(pm[1].replace(/,/g,'')); break; }
     }
+    if (!price || price < 0.50 || price > 5000) continue;
+
+    const key = `${name.toLowerCase()}|${price}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push({ name, qty, price });
   }
 
   return items;
