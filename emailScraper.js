@@ -11,6 +11,10 @@ const { simpleParser } = require('mailparser');
 // retailer extractors further down are now only a last-resort fallback.
 const { parseOrderEmail } = require('./parser');
 
+// Per-retailer sender addresses + order-number patterns, and the learned-sender
+// store that grows as new retailers are encountered. See retailers.js.
+const Retailers = require('./retailers');
+
 // ── Retailer detection ────────────────────────────────────────────────────────
 
 const RETAILERS = [
@@ -436,25 +440,26 @@ function retailerFromDomain(fromEmail) {
 
 const STATUS_RANK = { Confirmed:1, Unship:1, Shipped:2, OFD:3, Delivered:4, Cancelled:5, Refunded:5 };
 
-async function processEmail(parsed, db) {
+// Does this subject look like a transactional order email? Checked against the
+// HEADER only, so marketing mail never has its body downloaded or parsed.
+function isOrderSubject(subject) {
+  const s = (subject || '').toLowerCase();
+  return s.includes('order')    || s.includes('ship')      ||
+         s.includes('deliver')  || s.includes('track')     ||
+         s.includes('confirm')  || s.includes('placed')    ||
+         s.includes('dispatch') || s.includes('package')   ||
+         s.includes('receipt')  || s.includes('purchase')  ||
+         s.includes('cancel')   || s.includes('refund')    ||
+         s.includes('thank')    || s.includes('invoice')   ||
+         s.includes('payment')  || s.includes('pickup')    ||
+         s.includes('ready for') || s.includes('on its way');
+}
+
+async function processEmail(parsed, db, opts = {}) {
   const fromEmail  = parsed.from?.value?.[0]?.address || '';
   const subject    = parsed.subject || '';
 
-  // ── Quick subject filter — skip marketing/promo emails before any HTML parsing ──
-  // Only process emails whose subject suggests an order transaction.
-  // This skips "% off", "new arrivals", "earn points", etc. from retailer domains.
-  const subLower = subject.toLowerCase();
-  const isOrderSubject =
-    subLower.includes('order')    || subLower.includes('ship')      ||
-    subLower.includes('deliver')  || subLower.includes('track')     ||
-    subLower.includes('confirm')  || subLower.includes('placed')    ||
-    subLower.includes('dispatch') || subLower.includes('package')   ||
-    subLower.includes('receipt')  || subLower.includes('purchase')  ||
-    subLower.includes('cancel')   || subLower.includes('refund')    ||
-    subLower.includes('thank')    || subLower.includes('invoice')   ||
-    subLower.includes('payment')  || subLower.includes('pickup')    ||
-    subLower.includes('ready for') || subLower.includes('on its way');
-  if (!isOrderSubject) return false;  // marketing email — skip without further work
+  if (!isOrderSubject(subject)) return false;  // marketing email — skip
 
   const bodyText   = parsed.text    || '';
   const bodyHtml   = parsed.html    || '';
@@ -480,7 +485,12 @@ async function processEmail(parsed, db) {
     console.log('   ⚠️  parser error:', e.message);
   }
 
-  const retailerInfo = getRetailerInfo(fromEmail, plainText + ' ' + bodyHtml);
+  // Registry first (knows learned senders and per-retailer order formats),
+  // then the original domain table as a fallback.
+  const profile = Retailers.profileFor(fromEmail, plainText + ' ' + bodyHtml, db);
+  const retailerInfo = profile
+    ? { retailer: profile.name, category: profile.category }
+    : getRetailerInfo(fromEmail, plainText + ' ' + bodyHtml);
   const isStructured = !!(P && (P.source === 'jsonld' || P.source === 'microdata'));
 
   // Accept the email if we recognize the sender OR the parser found real order data.
@@ -498,8 +508,13 @@ async function processEmail(parsed, db) {
   // Identifiers: trust structured data first, then the tuned retailer regexes.
   const tracking =
     (isStructured ? P.trackingNumber : null) || findTracking(fullText) || P?.trackingNumber || null;
+  // Order of trust: structured data → this retailer's own known format →
+  // the generic heuristics → whatever the parser scraped from the text.
   const orderNumber =
-    (isStructured ? P.orderNumber : null) || findOrderNumber(fullText, fromEmail) || P?.orderNumber || null;
+    (isStructured ? P.orderNumber : null) ||
+    Retailers.orderNumberFor(profile, fullText) ||
+    findOrderNumber(fullText, fromEmail) ||
+    P?.orderNumber || null;
 
   // hasTracking stops a shipping notice's footer "Cancel order" link from being
   // read as an actual cancellation.
@@ -591,8 +606,25 @@ async function processEmail(parsed, db) {
       existing.status === 'Cancelled' && !!tracking &&
       (resolvedStatus === 'Shipped' || resolvedStatus === 'Delivered' || resolvedStatus === 'OFD');
 
-    if (dbStatus && (newRank > curRank || correctingBadCancel)) {
+    // Status rebuild: the ranking above deliberately stops status going backwards,
+    // which is right in normal operation but means a status written by buggy code
+    // can never be undone. During a rebuild the FIRST email to touch each order
+    // sets its status outright; later emails in the same run then upgrade it by
+    // rank as usual. Because archived mail replays oldest-first, this reconstructs
+    // the real timeline rather than trusting whatever is currently stored.
+    let firstTouch = false;
+    if (opts.rebuildStatus && orderNumber && !opts.rebuildStatus.has(orderNumber)) {
+      opts.rebuildStatus.add(orderNumber);
+      firstTouch = true;
+    }
+
+    if (dbStatus && (newRank > curRank || correctingBadCancel || firstTouch)) {
       updates.push('status=?'); vals.push(dbStatus);
+      // Stamp when the status actually changed, using the email's own date so a
+      // rescan reconstructs the real timeline instead of collapsing everything
+      // onto the day the rescan ran.
+      updates.push('status_changed_at=?');
+      vals.push(parsed.date ? parsed.date.toISOString() : new Date().toISOString());
       if (correctingBadCancel) console.log(`   🔧 Corrected bad Cancelled → ${dbStatus} (has tracking ${tracking})`);
     }
     // Fix wrong category: if existing order is "Other" but content reveals a real category, upgrade it
@@ -642,14 +674,18 @@ async function processEmail(parsed, db) {
     const orderDate = emailDate.split('T')[0];
     db.prepare(`INSERT OR IGNORE INTO bot_orders
       (category, retailer, order_number, tracking, status, tracking_status, expected_date,
-       order_date, received_at, items, order_total, tax_amount, ship_cost, created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+       order_date, received_at, items, order_total, tax_amount, ship_cost, status_changed_at, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
       // NOTE: ?? not || for the money fields — a legitimate $0.00 shipping or tax
       // is falsy, and || would silently store it as null.
       .run([category, retailer, orderNumber, tracking||null, dbStatus, trackingStatus||null,
             expectedDate||null, orderDate, emailDate,
-            itemsJson||null, orderTotal ?? null, taxAmount ?? null, shipCost ?? null]);
+            itemsJson||null, orderTotal ?? null, taxAmount ?? null, shipCost ?? null, emailDate]);
     console.log(`   ➕ New: ${orderNumber} (${retailer}) — ${resolvedStatus}${itemStrings.length?' | '+itemStrings.length+' items':''}${expectedDate?' exp '+expectedDate:''}`);
+    // This sender produced a real order, so remember it. Future runs can then
+    // target it directly by FROM address instead of relying on the broad
+    // once-a-day subject sweep to rediscover it.
+    Retailers.learnSender(db, fromEmail, retailer);
     return true;
   }
   return false;
@@ -722,13 +758,33 @@ function fetchNewAndProcess(imap, db) {
     // INBOX misses anything archived. Set scraper_mailbox to '[Gmail]/All Mail'
     // to search the full account instead — slower, but nothing is hidden.
     const mailbox = getSetting(db, 'scraper_mailbox', 'INBOX');
-    imap.openBox(mailbox, true, (err) => {
+    imap.openBox(mailbox, true, (err, box) => {
       if (err) return reject(err);
 
       // Load seen Message-IDs from DB
       const seenRaw = getSetting(db, 'email_scraper_seen_ids', '[]');
       let seenIds;
       try { seenIds = new Set(JSON.parse(seenRaw)); } catch(_) { seenIds = new Set(); }
+
+      // ── Incremental UID cursor ───────────────────────────────────────────
+      // IMAP UIDs increase monotonically within a mailbox, so once we know the
+      // highest UID handled we can ask for "everything after that" instead of
+      // re-searching a date window and re-reading headers for mail we've already
+      // examined. This is what makes routine runs near-instant.
+      //
+      // UIDs are only meaningful for a given UIDVALIDITY; if the server changes
+      // it, every stored UID is meaningless and the cursor must reset.
+      const uidValidity   = box && box.uidvalidity ? String(box.uidvalidity) : null;
+      const savedValidity = getSetting(db, 'email_scraper_uidvalidity', null);
+      let lastUid = parseInt(getSetting(db, 'email_scraper_last_uid', '0'), 10) || 0;
+
+      if (uidValidity && savedValidity && savedValidity !== uidValidity) {
+        console.log('   ⚠️  UIDVALIDITY changed — resetting UID cursor, falling back to date search');
+        lastUid = 0;
+      }
+      if (uidValidity && uidValidity !== savedValidity) {
+        setSetting(db, 'email_scraper_uidvalidity', uidValidity);
+      }
 
       // Search since last run date (default: today minus 1 day on first normal run)
       const sinceStr  = getSetting(db, 'email_scraper_since', null);
@@ -743,64 +799,134 @@ function fetchNewAndProcess(imap, db) {
       let extraDomains = [];
       try { extraDomains = JSON.parse(getSetting(db, 'scraper_extra_domains', '[]')); } catch (_) {}
 
-      const domains      = [...new Set([...RETAILER_DOMAINS, ...extraDomains])];
-      const fromFilter   = buildOr(domains.map(d => ['FROM', d]));
-      const subjectFilter= buildOr(SUBJECT_KEYWORDS.map(k => ['SUBJECT', k]));
-      const criteria     = [['SINCE', imapDate], buildOr([fromFilter, subjectFilter])];
+      // Known senders — built-in profiles plus everything learned at runtime.
+      const domains    = Retailers.knownSenders(db, extraDomains);
+      const fromFilter = buildOr(domains.map(d => ['FROM', d]));
 
-      console.log(`   Searching since ${imapDate} — ${domains.length} known domains + ${SUBJECT_KEYWORDS.length} subject keywords…`);
+      // Discovery sweep: also match order-ish SUBJECTS so retailers we don't know
+      // yet can be found and learned. This is broad and drags in marketing, so it
+      // runs at most once a day rather than on every 2-hourly run.
+      const lastDiscovery = parseInt(getSetting(db, 'scraper_last_discovery', '0'), 10) || 0;
+      const discoveryDue  = (Date.now() - lastDiscovery) > 24 * 60 * 60 * 1000;
+      const discovering   = discoveryDue || lastUid === 0;   // always on a full rescan
 
-      imap.search(criteria, (err, uids) => {
+      const matchFilter = discovering
+        ? buildOr([fromFilter, buildOr(SUBJECT_KEYWORDS.map(k => ['SUBJECT', k]))])
+        : fromFilter;
+
+      if (discovering) setSetting(db, 'scraper_last_discovery', String(Date.now()));
+
+      // Incremental when we have a cursor, date-based on first run / after a reset.
+      const criteria = lastUid > 0
+        ? [['UID', `${lastUid + 1}:*`], matchFilter]
+        : [['SINCE', imapDate], matchFilter];
+
+      console.log(`   ${lastUid > 0 ? `UID > ${lastUid}` : `since ${imapDate}`} · ${domains.length} known senders${discovering ? ` + discovery sweep (${SUBJECT_KEYWORDS.length} subject keywords)` : ''}`);
+
+      imap.search(criteria, (err, allUids) => {
         if (err) return reject(err);
+
+        // "N:*" always returns the highest message even when none exceed N,
+        // so drop anything at or below the cursor.
+        const uids = lastUid > 0 ? (allUids || []).filter(u => u > lastUid) : (allUids || []);
+
         if (!uids || !uids.length) {
-          console.log('   No emails in range.');
-          // Advance the since date so next run doesn't re-scan old range
+          console.log('   No new emails.');
           setSetting(db, 'email_scraper_since', new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString());
           return resolve(0);
         }
 
-        console.log(`   Found ${uids.length} email(s) in range, checking for new ones…`);
+        console.log(`   Found ${uids.length} email(s) in range, reading headers…`);
 
-        const f    = imap.fetch(uids, { bodies: '' });
-        const jobs = [];
-        const newIds = [];
+        // ── PASS 1: headers only ─────────────────────────────────────────────
+        // A header is ~0.5 KB; a retailer HTML email is 50–200 KB. Previously
+        // every matched email had its FULL body downloaded before we checked
+        // whether we'd already handled it — so each run re-downloaded thousands
+        // of already-processed and marketing emails. Once the search widened,
+        // runs stopped finishing, and genuinely new shipping/delivery emails
+        // were never reached. Filter on headers first, fetch bodies for the rest.
+        const headerFetch = imap.fetch(uids, {
+          bodies: 'HEADER.FIELDS (MESSAGE-ID SUBJECT FROM DATE)',
+        });
 
-        f.on('message', (msg) => {
-          let raw = '';
-          msg.on('body', stream => stream.on('data', c => raw += c.toString()));
+        const wanted      = [];   // uids needing a full fetch
+        const notRelevant = [];   // msgIds examined and dismissed on subject alone
+
+        headerFetch.on('message', (msg) => {
+          let buf = '', uid = null;
+          msg.on('attributes', a => { uid = a.uid; });
+          msg.on('body', stream => stream.on('data', c => buf += c.toString('utf8')));
           msg.once('end', () => {
-            jobs.push(
-              simpleParser(raw).then(async parsed => {
-                const msgId = parsed.messageId || null;
-                // Skip already-processed emails
-                if (msgId && seenIds.has(msgId)) return false;
-                const result = await processEmail(parsed, db);
-                // Only mark as seen AFTER successful processing (so failed emails get retried next run)
-                if (msgId && result !== false) newIds.push(msgId);
-                return result;
-              }).catch(e => { console.log('   ⚠️  parse error:', e.message); return false; })
-            );
+            let hdr = {};
+            try { hdr = Imap.parseHeader(buf); } catch (_) {}
+            const msgId   = (hdr['message-id'] || [])[0] || null;
+            const subject = (hdr.subject       || [])[0] || '';
+
+            if (msgId && seenIds.has(msgId)) return;          // already handled
+            if (!isOrderSubject(subject)) {
+              // Remember it so we never look at this marketing email again.
+              if (msgId) notRelevant.push(msgId);
+              return;
+            }
+            if (uid !== null) wanted.push(uid);
           });
         });
 
-        f.once('error', reject);
-        f.once('end', () =>
-          Promise.all(jobs).then(results => {
-            // Persist updated seen-IDs (keep last 3000 to avoid unbounded growth)
-            newIds.forEach(id => seenIds.add(id));
+        headerFetch.once('error', reject);
+        headerFetch.once('end', () => {
+          const finish = (updated) => {
+            notRelevant.forEach(id => seenIds.add(id));
             const arr = [...seenIds];
-            setSetting(db, 'email_scraper_seen_ids', JSON.stringify(arr.slice(-3000)));
-            // Advance since date (keep 1-day buffer so timezone edge cases don't miss anything)
+            // Retain far more than before: with a wide search a single run can
+            // examine tens of thousands of emails, and truncating the list means
+            // re-examining them forever.
+            setSetting(db, 'email_scraper_seen_ids', JSON.stringify(arr.slice(-25000)));
             setSetting(db, 'email_scraper_since', new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString());
-            const updated = results.filter(Boolean).length;
-            // NB: this counts EMAILS that produced a write, not distinct orders.
-            // One order normally sends 3 emails (confirmed → shipped → delivered),
-            // so this number is expected to be several times the order count.
+            // Advance the UID cursor past everything examined this run, so the
+            // next run asks the server only for genuinely new mail.
+            const maxUid = uids.reduce((m, u) => (u > m ? u : m), lastUid);
+            if (maxUid > lastUid) setSetting(db, 'email_scraper_last_uid', String(maxUid));
             const distinct = db.prepare('SELECT COUNT(*) AS n FROM bot_orders').get()?.n ?? '?';
-            console.log(`   Processed ${newIds.length} new email(s); ${updated} produced a write. ${distinct} distinct order(s) now in DB.`);
+            console.log(`   ${uids.length} matched → ${wanted.length} order-like, ${notRelevant.length} ignored; ${updated} produced a write. ${distinct} order(s) in DB.`);
             resolve(updated);
-          })
-        );
+          };
+
+          if (!wanted.length) { console.log('   No new order emails.'); return finish(0); }
+
+          console.log(`   Fetching ${wanted.length} full email(s)…`);
+
+          // ── PASS 2: full bodies, only for the survivors ────────────────────
+          const f      = imap.fetch(wanted, { bodies: '' });
+          const jobs   = [];
+          const newIds = [];
+
+          f.on('message', (msg) => {
+            let raw = '';
+            msg.on('body', stream => stream.on('data', c => raw += c.toString()));
+            msg.once('end', () => {
+              jobs.push(
+                simpleParser(raw).then(async parsed => {
+                  const msgId = parsed.messageId || null;
+                  if (msgId && seenIds.has(msgId)) return false;
+                  const result = await processEmail(parsed, db);
+                  // Mark seen whether or not it produced a write. An email we
+                  // examined and found irrelevant must not be re-examined every
+                  // run; only a thrown error leaves it unmarked for a retry.
+                  if (msgId) newIds.push(msgId);
+                  return result;
+                }).catch(e => { console.log('   ⚠️  parse error:', e.message); return false; })
+              );
+            });
+          });
+
+          f.once('error', reject);
+          f.once('end', () =>
+            Promise.all(jobs).then(results => {
+              newIds.forEach(id => seenIds.add(id));
+              finish(results.filter(Boolean).length);
+            }).catch(reject)
+          );
+        });
       });
     });
   });
@@ -968,10 +1094,18 @@ function saveRawEmail(db, parsed, html, text) {
 }
 
 // Re-run the parser over every archived email. No network, no IMAP.
-async function reparseStoredEmails(db) {
+//
+// rebuildStatus:true also re-derives every status from scratch, which is the only
+// way to clear statuses written by earlier buggy detection (e.g. shipping emails
+// misread as Cancelled because their footer contained the word "cancel").
+async function reparseStoredEmails(db, { rebuildStatus = false } = {}) {
   ensureRawEmailTable(db);
+  // Oldest first so status progresses Confirmed → Shipped → Delivered naturally.
   const rows = db.prepare('SELECT * FROM raw_emails ORDER BY email_date ASC').all();
-  console.log(`🔁 Reparsing ${rows.length} archived email(s) — no IMAP needed`);
+  console.log(`🔁 Reparsing ${rows.length} archived email(s)${rebuildStatus ? ' with status rebuild' : ''} — no IMAP needed`);
+
+  const before = statusCounts(db);
+  const opts   = rebuildStatus ? { rebuildStatus: new Set() } : {};
 
   let updated = 0;
   for (const r of rows) {
@@ -984,13 +1118,30 @@ async function reparseStoredEmails(db) {
         html:      r.html || '',
         text:      r.text || '',
       };
-      if (await processEmail(fake, db)) updated++;
+      if (await processEmail(fake, db, opts)) updated++;
     } catch (e) {
       console.log(`   ⚠️  reparse failed for ${r.message_id}: ${e.message}`);
     }
   }
-  console.log(`🔁 Reparse complete — ${updated} order(s) updated`);
-  return { total: rows.length, updated };
+
+  const after = statusCounts(db);
+  console.log(`🔁 Reparse complete — ${updated} write(s) across ${opts.rebuildStatus ? opts.rebuildStatus.size : '?'} order(s)`);
+  for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const b = before[k] || 0, a = after[k] || 0;
+    if (b !== a) console.log(`     ${k}: ${b} → ${a}`);
+  }
+
+  return { total: rows.length, updated, before, after,
+           ordersTouched: opts.rebuildStatus ? opts.rebuildStatus.size : null };
+}
+
+function statusCounts(db) {
+  const out = {};
+  try {
+    db.prepare('SELECT status, COUNT(*) AS n FROM bot_orders GROUP BY status')
+      .all().forEach(r => { out[r.status || 'null'] = r.n; });
+  } catch (_) {}
+  return out;
 }
 
 // ── Reset scraper state ──────────────────────────────────────────────────────
@@ -1005,6 +1156,9 @@ function resetEmailScraper(db, { wipeOrders = false, days = 180 } = {}) {
   }
   setSetting(db, 'email_scraper_seen_ids', '[]');
   setSetting(db, 'email_scraper_since', new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString());
+  // Drop the UID cursor too, otherwise the "rescan" would still only look at
+  // mail newer than the last run and re-scan nothing at all.
+  setSetting(db, 'email_scraper_last_uid', '0');
   console.log(`📧 Email scraper reset — next run will re-scan last ${days} days`);
 }
 

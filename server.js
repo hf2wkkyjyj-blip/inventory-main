@@ -130,6 +130,11 @@ try { db.exec("ALTER TABLE bot_orders ADD COLUMN expected_date TEXT"); } catch(e
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN tax_amount REAL DEFAULT 0"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN ship_cost REAL DEFAULT 0"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN finder_fee REAL DEFAULT 0"); } catch(e) {}
+// When the order last changed status. Needed to answer "what was delivered
+// today?" — order_date is when it was placed, which is a different question.
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN status_changed_at DATETIME"); } catch(e) {}
+// Backfill so existing rows aren't invisible to date filters.
+try { db.exec("UPDATE bot_orders SET status_changed_at=COALESCE(delivered_date, received_at, order_date) WHERE status_changed_at IS NULL"); } catch(e) {}
 try { db.exec("CREATE TABLE IF NOT EXISTS bot_sku_prices (sku TEXT PRIMARY KEY, buyer_fee REAL DEFAULT 0, sale_price REAL DEFAULT 0)"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='ordered'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); } catch(e) {}
@@ -1255,7 +1260,7 @@ app.post('/api/admin/scrape-emails/reparse', auth, adminOnly, async (req, res) =
       db.prepare('DELETE FROM bot_orders').run();
       db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('scraper_blocked_orders','[]')").run();
     }
-    const result = await reparseStoredEmails(db);
+    const result = await reparseStoredEmails(db, { rebuildStatus: req.body?.rebuildStatus === true });
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });

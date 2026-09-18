@@ -45,26 +45,27 @@ const norm = s => String(s || '').replace(/\s+/g, ' ').trim();
 // split apart because an element (usually <br/>) sits between them, so gluing
 // them together invents words. "Estimated taxes<br/>Based on 55445" must not
 // become "Estimated taxesBased on 55445" — that breaks every \bword\b match.
+// Reads the underlying parser nodes directly rather than going through a cheerio
+// wrapper — this is called once per element on every email, so avoiding the
+// wrapper allocation is a measurable win on large messages.
 function ownText($, el) {
-  const parts = [];
-  $(el).contents().each((_, n) => {
-    if (n.type === 'text' && n.data && n.data.trim()) parts.push(n.data.trim());
-  });
-  return norm(parts.join(' '));
+  const kids = (el && el.children) || [];
+  let parts = null;
+  for (let i = 0; i < kids.length; i++) {
+    const n = kids[i];
+    if (n.type === 'text' && n.data) {
+      const t = n.data.trim();
+      if (t) (parts || (parts = [])).push(t);
+    }
+  }
+  return parts ? norm(parts.join(' ')) : '';
 }
 
-// Pre-order document position for every element, so we can tell what comes
-// before/after a promo heading.
-function buildOrdinals($) {
-  const map = new Map();
-  let i = 0;
-  const walk = el => {
-    map.set(el, i++);
-    const kids = $(el).children().get();
-    for (const k of kids) walk(k);
-  };
-  $.root().children().each((_, el) => walk(el));
-  return map;
+function childElements(el) {
+  const kids = (el && el.children) || [];
+  const out = [];
+  for (let i = 0; i < kids.length; i++) if (kids[i].type === 'tag') out.push(kids[i]);
+  return out;
 }
 
 function isNameCandidate(s) {
@@ -216,17 +217,16 @@ function valueForLabel($, el, t) {
   return null;
 }
 
-function extractFinancials($) {
+// Takes the label nodes already collected during the single tree walk, so this
+// no longer re-traverses the document.
+function extractFinancials($, labelNodes) {
   const out = { subtotal: null, tax: null, shipping: null, discount: null, total: null };
-  $('*').each((_, el) => {
-    const t = ownText($, el);
-    if (!t) return;
-    const label = classifyLabel(t);
-    if (!label || out[label] !== null) return;
-    const val = valueForLabel($, el, t);
-    if (val === null) return;
+  for (const { el, text, label } of labelNodes) {
+    if (out[label] !== null) continue;
+    const val = valueForLabel($, el, text);
+    if (val === null) continue;
     out[label] = label === 'discount' ? Math.abs(val) : val;
-  });
+  }
   return out;
 }
 
@@ -246,29 +246,41 @@ function extractDom(html) {
     if (/display:none|font-size:0|max-height:0|mso-hide:all|opacity:0/.test(s)) $(el).remove();
   });
 
-  const ordinals = buildOrdinals($);
-
-  // Where does upsell content begin?
-  let promoCutoff = Infinity;
-  $('*').each((_, el) => {
-    const t = ownText($, el);
-    if (t && PROMO_SECTION.test(t)) {
-      const o = ordinals.get(el);
-      if (o !== undefined && o < promoCutoff) promoCutoff = o;
-    }
-  });
-
-  // Collect every element whose own text carries a price.
+  // ── Single tree walk ──────────────────────────────────────────────────────
+  // Previously this was four separate full traversals (ordinals, promo markers,
+  // price nodes, financial labels), each re-deriving the own-text of every
+  // element. One pass collects all of it.
+  const ordinals   = new Map();
   const moneyNodes = [];
-  $('*').each((_, el) => {
+  const labelNodes = [];
+  let promoCutoff  = Infinity;
+  let ord = 0;
+
+  const walk = (el) => {
+    const myOrd = ord++;
+    ordinals.set(el, myOrd);
+
     const t = ownText($, el);
-    if (!t) return;
-    const m = t.match(MONEY_STRICT);
-    if (!m) return;
-    const price = parseMoney(m[0]);
-    if (price === null || price <= 0 || price > 100000) return;
-    moneyNodes.push({ el, text: t, price, ord: ordinals.get(el) ?? 0 });
-  });
+    if (t) {
+      // Document order means the first promo marker found is the earliest one.
+      if (promoCutoff === Infinity && PROMO_SECTION.test(t)) promoCutoff = myOrd;
+
+      const m = t.match(MONEY_STRICT);
+      if (m) {
+        const price = parseMoney(m[0]);
+        if (price !== null && price > 0 && price <= 100000) {
+          moneyNodes.push({ el, text: t, price, ord: myOrd });
+        }
+      }
+
+      const label = classifyLabel(t);
+      if (label) labelNodes.push({ el, text: t, label });
+    }
+
+    const kids = childElements(el);
+    for (let i = 0; i < kids.length; i++) walk(kids[i]);
+  };
+  $.root().children().each((_, el) => { if (el.type === 'tag') walk(el); });
 
   const items = [];
   const seen  = new Set();
@@ -299,7 +311,7 @@ function extractDom(html) {
     });
   }
 
-  const fin = extractFinancials($);
+  const fin = extractFinancials($, labelNodes);
 
   const result = emptyOrder();
   result.items    = items;

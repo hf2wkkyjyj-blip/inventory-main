@@ -423,6 +423,9 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   .bot-stat.s-pink{border-color:#8a3468;} .bot-stat.s-pink .lbl{color:#f472b6;} .bot-stat.s-pink .val{color:#f472b6;}
   .bot-stat.clickable{cursor:pointer;} .bot-stat.clickable:hover{opacity:.85;}
   .bot-stat.active-filter{outline:2px solid currentColor;outline-offset:-2px;}
+  .drange{font-size:11px;padding:4px 11px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;}
+  .drange:hover{color:var(--text);}
+  .drange.active{background:#1e3a5f;border-color:#2f6fb5;color:#8fbcf5;font-weight:700;}
   .bpill{display:inline-block;padding:3px 9px;border-radius:6px;font-size:11px;font-weight:700;white-space:nowrap;}
   .bpill-Confirmed{background:#0f2a20;color:#34d399;}
   .bpill-Shipped{background:#211a35;color:#a78bfa;}
@@ -455,6 +458,18 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="bot-stat s-green"><div class="lbl">SPENT</div><div class="val" style="font-size:18px;" id="bs-spent">$0</div></div>
   </div>
 
+  <!-- Date range. Applies to the date an order entered its CURRENT status, so
+       with DELIVERED selected "Today" means delivered today, not ordered today. -->
+  <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+    <span style="font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--muted);margin-right:2px;">WHEN</span>
+    <button class="drange active" data-range="all"   onclick="botSetRange('all',this)">All time</button>
+    <button class="drange"        data-range="today" onclick="botSetRange('today',this)">Today</button>
+    <button class="drange"        data-range="yday"  onclick="botSetRange('yday',this)">Yesterday</button>
+    <button class="drange"        data-range="7d"    onclick="botSetRange('7d',this)">Last 7 days</button>
+    <button class="drange"        data-range="30d"   onclick="botSetRange('30d',this)">Last 30 days</button>
+    <span id="bot-range-note" style="font-size:11px;color:var(--muted);margin-left:6px;"></span>
+  </div>
+
   <!-- Category Tabs + Controls -->
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
     <div id="bot-cat-tabs"></div>
@@ -473,7 +488,8 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <input type="text" id="bot-search" oninput="renderBotOrders()" placeholder="Search order #, item, buyer…" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:200px;">
       <button class="btn btn-ghost btn-sm" id="bot-scan-btn" onclick="botScanEmails()"><i class="fa fa-envelope"></i> Scan Emails</button>
       <button class="btn btn-ghost btn-sm" id="bot-rescan-btn" onclick="botFullRescan(false)" title="Clear scanner history and re-scan last 180 days of Gmail" style="opacity:.7;"><i class="fa fa-redo"></i> Full Rescan</button>
-      <button class="btn btn-ghost btn-sm" id="bot-reparse-btn" onclick="botReparse()" title="Re-run the parser over saved emails — no Gmail fetch, takes seconds" style="opacity:.7;"><i class="fa fa-bolt"></i> Reparse</button>
+      <button class="btn btn-ghost btn-sm" id="bot-reparse-btn" onclick="botReparse(false)" title="Re-run the parser over saved emails — no Gmail fetch, takes seconds" style="opacity:.7;"><i class="fa fa-bolt"></i> Reparse</button>
+      <button class="btn btn-ghost btn-sm" id="bot-repair-btn" onclick="botReparse(true)" title="Re-derive every status from saved emails — fixes orders wrongly marked Cancelled" style="opacity:.7;color:#fbbf24;"><i class="fa fa-wrench"></i> Repair Statuses</button>
       <button class="btn btn-ghost btn-sm" id="bot-restore-btn" onclick="botRestoreBaseline()" title="Re-add baseline orders (Mattel, Sam's Club, Costco, Bear Walker, older history). Safe: skips anything already present." style="opacity:.7;color:#2ecc71;"><i class="fa fa-undo"></i> Restore Baseline</button>
       <button class="btn btn-ghost btn-sm" id="bot-wipe-btn" onclick="botFullRescan(true)" title="Delete ALL orders and rebuild from emails (last 180 days)" style="opacity:.7;color:#e74c3c;"><i class="fa fa-trash"></i> Wipe & Rescan</button>
       <div style="display:flex;gap:4px;align-items:center;">
@@ -1882,7 +1898,9 @@ async function botRefresh() {
 }
 
 function buildBotStats() {
-  const o = _botOrders;
+  // Card counts honour the date range, so clicking DELIVERED with "Today"
+  // selected shows how many were delivered today rather than the all-time total.
+  const o = _botOrders.filter(r => botInRange(r, _botRange));
   const counts = {};
   BOT_STATUSES.forEach(s => counts[s] = 0);
   let spent = 0;
@@ -1890,6 +1908,12 @@ function buildBotStats() {
     if (counts[r.status] !== undefined) counts[r.status]++;
     if (r.status !== 'Cancelled' && r.status !== 'Refunded') spent += (r.order_total||0) - (r.refunded_amount||0);
   });
+
+  const note = document.getElementById('bot-range-note');
+  if (note) {
+    const lbl = botRangeLabel();
+    note.textContent = lbl ? `showing ${o.length} of ${_botOrders.length} orders ${lbl}` : '';
+  }
   document.getElementById('bs-total').textContent = o.length;
   document.getElementById('bs-confirmed').textContent = counts['Confirmed'];
   document.getElementById('bs-shipped').textContent = counts['Shipped'];
@@ -2010,6 +2034,47 @@ function botFilterStatus(s) {
   renderBotOrders();
 }
 
+// ── Date range ──────────────────────────────────────────────────────────────
+let _botRange = 'all';
+
+function botSetRange(r, btn) {
+  _botRange = r;
+  document.querySelectorAll('.drange').forEach(b => b.classList.toggle('active', b === btn));
+  _botPage = 0;
+  buildBotStats();
+  renderBotOrders();
+  const cat = document.getElementById('bot-cat-tabs').dataset.active;
+  if (cat && cat !== 'All') loadBotItemView(cat);
+}
+
+// The date an order entered its CURRENT status. Using order_date here would
+// answer "ordered today", which is a different question from "delivered today".
+function botStatusDate(o) {
+  if (o.status === 'Delivered' && o.delivered_date) return o.delivered_date;
+  return o.status_changed_at || o.received_at || o.order_date || null;
+}
+
+function botInRange(o, range) {
+  if (!range || range === 'all') return true;
+  const raw = botStatusDate(o);
+  if (!raw) return false;
+  const d = new Date(raw);
+  if (isNaN(d)) return false;
+
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  const dayMs = 86400000;
+
+  if (range === 'today') return d >= startOfToday;
+  if (range === 'yday')  return d >= new Date(startOfToday - dayMs) && d < startOfToday;
+  if (range === '7d')    return d >= new Date(startOfToday - 6 * dayMs);
+  if (range === '30d')   return d >= new Date(startOfToday - 29 * dayMs);
+  return true;
+}
+
+function botRangeLabel() {
+  return { all:'', today:'today', yday:'yesterday', '7d':'in the last 7 days', '30d':'in the last 30 days' }[_botRange] || '';
+}
+
 function botSort(key) {
   if (_botSortKey === key) _botSortDir *= -1;
   else { _botSortKey = key; _botSortDir = -1; }
@@ -2029,6 +2094,7 @@ function renderBotOrders() {
     if (cat !== 'All' && (o.category||'Other') !== cat) return false;
     if (retailer && o.retailer !== retailer) return false;
     if (status && o.status !== status) return false;
+    if (!botInRange(o, _botRange)) return false;
     if (addrFilter && normalizeAddr(o.shipping_address) !== addrFilter) return false;
     if (search) {
       const hay = [(o.order_number||''),(o.items||''),(o.shipping_name||''),(o.retailer||''),(o.shipping_address||'')].join(' ').toLowerCase();
@@ -2200,18 +2266,37 @@ async function botRestoreBaseline() {
 
 // Re-run the parser over emails already saved in the DB. No Gmail fetch, so this
 // finishes in seconds — use it after a parser change instead of a Full Rescan.
-async function botReparse() {
-  const btn = document.getElementById('bot-reparse-btn');
+async function botReparse(rebuildStatus = false) {
+  const btn = document.getElementById(rebuildStatus ? 'bot-repair-btn' : 'bot-reparse-btn');
+  if (rebuildStatus && !confirm(
+      'Rebuild every order status from the saved emails?\n\n' +
+      'This re-derives status from scratch, which is how orders wrongly marked ' +
+      'Cancelled get corrected. Items, costs and tracking are untouched.\n\n' +
+      'Only orders that have saved emails are affected.')) return;
+
   btn.disabled = true;
-  btn.innerHTML = '<i class="fa fa-bolt fa-spin"></i> Reparsing…';
+  btn.innerHTML = `<i class="fa fa-${rebuildStatus ? 'wrench' : 'bolt'} fa-spin"></i> ${rebuildStatus ? 'Repairing…' : 'Reparsing…'}`;
   try {
-    const r = await api('POST', '/admin/scrape-emails/reparse', {});
+    const r = await api('POST', '/admin/scrape-emails/reparse', { rebuildStatus });
     btn.innerHTML = `<i class="fa fa-check"></i> ${r.updated}/${r.total}`;
+    if (rebuildStatus && r.before && r.after) {
+      const changed = [...new Set([...Object.keys(r.before), ...Object.keys(r.after)])]
+        .filter(k => (r.before[k] || 0) !== (r.after[k] || 0))
+        .map(k => `${k}: ${r.before[k] || 0} → ${r.after[k] || 0}`);
+      alert(changed.length
+        ? `Rebuilt ${r.ordersTouched} order(s).\n\n${changed.join('\n')}`
+        : `Rebuilt ${r.ordersTouched} order(s). No status changes needed.`);
+    }
   } catch (e) {
     btn.innerHTML = '<i class="fa fa-exclamation-triangle"></i> Failed';
   }
   await loadBotOrders();
-  setTimeout(() => { btn.disabled = false; btn.innerHTML = '<i class="fa fa-bolt"></i> Reparse'; }, 2500);
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.innerHTML = rebuildStatus
+      ? '<i class="fa fa-wrench"></i> Repair Statuses'
+      : '<i class="fa fa-bolt"></i> Reparse';
+  }, 2500);
 }
 
 async function botFullRescan(wipe = false) {
