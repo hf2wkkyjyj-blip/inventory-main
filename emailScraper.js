@@ -502,8 +502,8 @@ async function processEmail(parsed, db) {
   const taxAmount  = financials.tax      ?? null;
   const shipCost   = financials.shipping ?? null;
 
-  if (extractedItems.length)
-    console.log(`   🛒 ${extractedItems.length} item(s) extracted, total=${orderTotal||'?'} tax=${taxAmount||'?'} ship=${shipCost||'?'}`);
+  if (itemStrings.length)
+    console.log(`   💰 total=${orderTotal ?? '?'} tax=${taxAmount ?? '?'} ship=${shipCost ?? '?'}`);
 
   // ── Find existing record ─────────────────────────────────────────────────────
   let existing = null;
@@ -567,9 +567,11 @@ async function processEmail(parsed, db) {
       (category, retailer, order_number, tracking, status, tracking_status, expected_date,
        order_date, received_at, items, order_total, tax_amount, ship_cost, created_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+      // NOTE: ?? not || for the money fields — a legitimate $0.00 shipping or tax
+      // is falsy, and || would silently store it as null.
       .run([category, retailer, orderNumber, tracking||null, dbStatus, trackingStatus||null,
             expectedDate||null, orderDate, emailDate,
-            itemsJson||null, orderTotal||null, taxAmount||null, shipCost||null]);
+            itemsJson||null, orderTotal ?? null, taxAmount ?? null, shipCost ?? null]);
     console.log(`   ➕ New: ${orderNumber} (${retailer}) — ${resolvedStatus}${itemStrings.length?' | '+itemStrings.length+' items':''}${expectedDate?' exp '+expectedDate:''}`);
     return true;
   }
