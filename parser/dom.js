@@ -72,6 +72,10 @@ function isNameCandidate(s) {
   if (!s) return false;
   const t = s.trim();
   if (t.length < 4 || t.length > 200) return false;
+  // A name ending in an ellipsis is UI truncation from a recommendation tile
+  // ("Pokemon Card Game MEGA High…"), never an actual product title. Target's
+  // delivery emails are full of these carousels.
+  if (/(\.\.\.|…)$/.test(t)) return false;
   if (MONEY_STRICT.test(t))            return false;
   if (/^-?[\d,.\s]+$/.test(t))         return false;   // pure number
   if (!/[a-z]/i.test(t))               return false;   // must have letters
@@ -149,15 +153,26 @@ function findItemBlock($, moneyEl, ordinals) {
     return { block: $(moneyEl), name: cleanName(stripped) };
   }
 
-  // Case B: climb the tree
+  // Case B: climb the tree, but not past the boundary of this line item.
+  //
+  // Without these stops a price whose own row has no usable product name keeps
+  // climbing until it reaches <body> and adopts any stray sentence as the name —
+  // that is how "Your package was delivered." became a purchased product.
   let cur = $(moneyEl);
   for (let depth = 0; depth < 7; depth++) {
     const parent = cur.parent();
     if (!parent.length) break;
     cur = parent;
-    if (norm(cur.text()).length > 700) break;   // escaped the item block
+
+    const txt = norm(cur.text());
+    if (txt.length > 700) break;                              // way past the item
+    if ((txt.match(MONEY_ALL_G) || []).length > 1) break;      // holds several prices → not one row
+
     const name = pickName($, cur, moneyEl, ordinals);
     if (name) return { block: cur, name };
+
+    // Examined an entire <tr> and found no product name: there is no item here.
+    if (cur.is('tr')) break;
   }
   return null;
 }

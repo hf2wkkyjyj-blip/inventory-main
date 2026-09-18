@@ -124,6 +124,54 @@ function email(id, date, subject, body, orderNo, tracking) {
     eq('real cancellation preserved', db._orders[0].status, 'Cancelled');
   }
 
+  // ── Regression: real failure seen in production logs ────────────────────
+  // Order #902003676888420 was correctly stored as ONE item from its
+  // confirmation, then a Target "Items have arrived" email — which carries a
+  // recommendation carousel of truncated product tiles — overwrote it with four
+  // products that were never purchased.
+  console.log('\n── Delivery-email carousel must not overwrite confirmed items ──');
+  {
+    const orders = [{ id: 1, order_number: '902003676888420', status: 'Confirmed', category: 'Pokemon',
+                      retailer: 'Target', tracking: null, items: null, order_total: null, tax_amount: null, ship_cost: null }];
+
+    const confirmation = {
+      message_id: '<conf>', subject: 'Thanks for your order', from_email: 'orders@oe.target.com',
+      email_date: '2026-09-14T10:00:00Z',
+      html: `<html><body><p>Order #902003676888420</p>
+        <table><tr><td>Pok&eacute;mon 30th Anniversary Poster Collection</td><td>Qty: 2</td><td>$19.99 / ea</td></tr></table>
+        <table><tr><td>Subtotal</td><td>$39.98</td></tr><tr><td>Total</td><td>$43.39</td></tr></table>
+        </body></html>`,
+      text: 'Order #902003676888420 has been placed.',
+    };
+
+    // The carousel tiles use UI-truncated names, exactly as in the logs.
+    const arrival = {
+      message_id: '<arrived>', subject: 'Items have arrived from order #902003676888420!',
+      from_email: 'orders@oe.target.com', email_date: '2026-09-18T15:00:00Z',
+      html: `<html><body><p>Order #902003676888420</p><p>Tracking: 1ZWY06570304159616</p>
+        <p>Your package was delivered.</p>
+        <table>
+          <tr><td>Pokemon Pokémon TCG 30th Ann...</td><td>Qty: 1</td><td>$39.99</td></tr>
+          <tr><td>Pokemon Card Game MEGA High...</td><td>Qty: 1</td><td>$24.99</td></tr>
+          <tr><td>Pokemon TCG: Collectors Bund...</td><td>Qty: 1</td><td>$229.00</td></tr>
+        </table></body></html>`,
+      text: 'Items have arrived. Your package was delivered. Tracking 1ZWY06570304159616',
+    };
+
+    const db = makeDb(orders, [confirmation, arrival]);
+    await reparseStoredEmails(db);
+
+    const row   = db._orders[0];
+    const items = JSON.parse(row.items || '[]');
+
+    eq('keeps the 1 confirmed item', items.length, 1);
+    eq('item is the real product', /Poster Collection/.test(items[0] || '') ? true : items[0], true);
+    eq('no truncated carousel names', items.some(i => /\.\.\.|…/.test(i)), false);
+    eq('real total preserved', row.order_total, 43.39);
+    eq('status advanced to Delivered', row.status, 'Delivered');
+    eq('tracking captured from arrival email', row.tracking, '1ZWY06570304159616');
+  }
+
   console.log(`\n${'─'.repeat(60)}`);
   console.log(`${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);

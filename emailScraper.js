@@ -632,11 +632,16 @@ async function processEmail(parsed, db, opts = {}) {
     if (redetectedCategory !== 'Other' && existing.category === 'Other') {
       updates.push('category=?'); vals.push(redetectedCategory);
     }
-    // Items/financials: if we extracted fresh items from a confirmation email, ALWAYS overwrite
-    // (fixes stale/wrong items from old scraper on rescan). Only use "fill-if-missing" logic
-    // when we have no new items to offer (e.g. a shipping notification email).
-    if (itemsJson) {
-      // Fresh extraction — overwrite regardless of what was stored before
+    // Only an order CONFIRMATION states what was actually purchased. Shipping and
+    // delivery notices list whatever happens to be in that box — and Target's
+    // "Items have arrived" emails carry a recommendation carousel that looks just
+    // like an item table. Letting those overwrite turned a correct 1-item order
+    // into four products the customer never bought. So confirmations are
+    // authoritative; later emails may only fill an empty item list.
+    const itemsAreAuthoritative = resolvedStatus === 'Confirmed';
+    const mayWriteItems = itemsJson && (itemsAreAuthoritative || !existing.items || existing.items === '[]');
+
+    if (mayWriteItems) {
       updates.push('items=?'); vals.push(itemsJson);
       // ...but only replace the stored total with one this email actually stated.
       // A derived total (items summed on a shipping notice, which carries no tax
