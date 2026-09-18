@@ -208,21 +208,31 @@ function parseDollar(s) {
   return m ? parseFloat(m[1].replace(/,/g,'')) : null;
 }
 
-// Extract order financial summary (subtotal, tax, shipping, total) from plain text
+// Extract order financial summary (subtotal, tax, shipping, total) from plain text.
+// NOTE: text here is always a single collapsed line (stripHtml output) — no newlines.
 function findOrderFinancials(text) {
   if (!text) return {};
   const result = {};
-  // subtotal / item total
-  const subM = text.match(/(?:subtotal|item(?:s)?\s+total|merchandise\s+total)[:\s]+\$?([\d,]+\.\d{2})/i);
+  // subtotal — "Subtotal (2 items) $39.98" or "Order Subtotal $159.95" or "Subtotal: $39.98"
+  // [\s:]* handles ": ", " " separators; (?:\([^)]*\))? handles "(2 items)"-style annotations
+  const subM = text.match(/(?:subtotal|item(?:s)?\s+total|merchandise\s+total)[\s:]*(?:\([^)]*\))?\s*\$?([\d,]+\.\d{2})/i);
   if (subM) result.subtotal = parseFloat(subM[1].replace(/,/g,''));
-  // tax
-  const taxM = text.match(/(?:estimated\s+)?tax(?:es)?[:\s]+\$?([\d,]+\.\d{2})/i);
+  // tax — "Estimated taxes $3.41", "Sales Tax $13.61", "Tax: $X"
+  // [\s:]+ requires immediate colon/space separator (prevents spanning to other amounts)
+  const taxM = text.match(/(?:estimated\s+)?(?:sales\s+)?tax(?:es)?[\s:]+\$?([\d,]+\.\d{2})/i);
   if (taxM) result.tax = parseFloat(taxM[1].replace(/,/g,''));
-  // shipping
-  const shipM = text.match(/(?:shipping|delivery|standard\s+shipping)[:\s]+(?:free|\$?([\d,]+\.\d{2}))/i);
-  if (shipM) result.shipping = shipM[1] ? parseFloat(shipM[1].replace(/,/g,'')) : 0;
-  // order total
-  const totM = text.match(/(?:order\s+total|grand\s+total|total\s+charged|total)[:\s]+\$?([\d,]+\.\d{2})/i);
+  // shipping / delivery:
+  //   "Delivery Free" / "Shipping: Free" → shipping = 0
+  //   "Shipping: $0.00" / "Retail Delivery Fee $0.50" → capture amount
+  // [\s:]+ as separator prevents shipCostM from spanning across "Delivery Free ... $3.41"
+  const shipFreeM = text.match(/(?:^|\s)(?:shipping|delivery)[\s:]+free/im);
+  const shipCostM = text.match(/(?:retail\s+delivery(?:\s+fee)?|delivery(?:\s+fee)?|shipping)[\s:]+\$?([\d,]+\.\d{2})/i);
+  if (shipFreeM && !shipCostM) result.shipping = 0;
+  else if (shipCostM) result.shipping = parseFloat(shipCostM[1].replace(/,/g,''));
+  // order total — "Order Total $43.39", "Grand Total $X", standalone "Total $43.39"
+  // (?<!\w)total negative lookbehind prevents matching "Sub**total**"
+  const totM = text.match(/(?:order\s+total|grand\s+total|total\s+charged)[\s:]*\$?([\d,]+\.\d{2})/i)
+            || text.match(/(?<!\w)total[\s:]+\$?([\d,]+\.\d{2})/i);
   if (totM) result.total = parseFloat(totM[1].replace(/,/g,''));
   return result;
 }
@@ -237,10 +247,13 @@ function extractTargetItems(html) {
 
   function isProductName(l) {
     if (l.length < 8 || l.length > 250) return false;
-    if (/^\$?[\d,]+(\.\d+)?$/.test(l)) return false;           // pure number / price
-    if (/^(?:qty|quantity|price|subtotal|total|tax|shipping|item|order|estimated|standard|free|sold by|ships from|returns|eligible|add to|view|cart|account|hi |hello |dear )/i.test(l)) return false;
+    if (/^\$/.test(l)) return false;                              // starts with $ = price line
+    if (/^\$?[\d,]+(\.\d+)?(\s*\/\s*\w+)?$/.test(l)) return false; // price or price/unit ("$19.99 / ea")
+    if (/^(?:qty|quantity|price|subtotal|total|tax|shipping|delivery|sku|upc|item\s*#|order|estimated|standard|free|sold by|ships from|returns|eligible|add to|view|cart|account|hi |hello |dear |arrives|delivers|sincerely|rate|write|need to|we process|explore|help|contact|terms|privacy|target\.com)/i.test(l)) return false;
     if (/^\d{3,}-\d{3,}/.test(l)) return false;                 // order number pattern
     if (/^[A-Z]{1,3}\d{6,}$/.test(l)) return false;             // bare SKU code
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(l)) return false;     // date
+    if (/^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec).+\d{4}/i.test(l)) return false; // "Sep 17, 2026"
     return true;
   }
 
@@ -250,9 +263,9 @@ function extractTargetItems(html) {
   const lines = text.split(/[\n\r]+/).map(l => l.trim()).filter(Boolean);
 
   for (let i = 0; i < lines.length; i++) {
-    // Find a line that IS or ENDS WITH a standalone dollar price
-    const priceMatch = lines[i].match(/^\$?([\d,]+\.\d{2})$/) ||
-                       lines[i].match(/\$\s*([\d,]+\.\d{2})\s*$/);
+    // Target price lines: "$19.99 / ea" (per-unit) or standalone "$19.99"
+    const priceMatch = lines[i].match(/^\$?([\d,]+\.\d{2})\s*(?:\/\s*ea)?$/i) ||
+                       lines[i].match(/\$\s*([\d,]+\.\d{2})\s*(?:\/\s*ea)?\s*$/i);
     if (!priceMatch) continue;
     const price = parseFloat(priceMatch[1].replace(/,/g,''));
     if (price < 0.50 || price > 5000) continue;
@@ -315,37 +328,57 @@ function extractTargetItems(html) {
 }
 
 // Extract items from Pokemon Center / generic order HTML
-// PKC format: item table with product name, qty, price columns
+// PKC confirmation emails use a label:value block format:
+//   Product Name (bold)
+//   SKU #: 10-10447-111
+//   Qty: 2
+//   Price: $59.99
+// We reuse the same htmlToLines + backward-scan approach as extractTargetItems.
 function extractPKCItems(html) {
   if (!html) return [];
+
+  const seen  = new Set();
   const items = [];
 
-  // PKC emails have a clean table: Name | Qty | Price
-  // Look for table rows with product data
-  const rowRe = /<tr[\s\S]*?<\/tr>/gi;
-  const rows  = html.match(rowRe) || [];
+  function isProductName(l) {
+    if (l.length < 8 || l.length > 250) return false;
+    if (/^\$?[\d,]+(\.\d+)?$/.test(l)) return false;
+    if (/^(?:qty|quantity|price|subtotal|total|tax|shipping|sku|upc|item\s*#|order|estimated|retail delivery|sales tax|free|sold by|ships from|returns|eligible|rate|write|contact|help|terms|privacy)/i.test(l)) return false;
+    if (/^\d{2,}-\d{2,}/.test(l)) return false;   // order number / SKU code like 10-10447-111
+    if (/^[A-Z]{1,3}\d{6,}$/.test(l)) return false;
+    return true;
+  }
 
-  for (const row of rows) {
-    const cells = (row.match(/<td[\s\S]*?<\/td>/gi) || []).map(c => stripHtml(c).trim());
-    if (cells.length < 2) continue;
+  const text  = htmlToLines(html);
+  const lines = text.split(/[\n\r]+/).map(l => l.trim()).filter(Boolean);
 
-    // Look for a cell that has a product name (long text, not just a number/price)
-    let nameIdx = -1, qtyIdx = -1, priceIdx = -1;
-    for (let i = 0; i < cells.length; i++) {
-      const c = cells[i];
-      if (/^\$[\d,.]+$/.test(c) || /^[\d,.]+$/.test(c) && parseFloat(c) < 10000) {
-        if (/^\$/.test(c)) priceIdx = i;
-        else if (parseInt(c) > 0 && parseInt(c) < 1000 && c.length <= 4) qtyIdx = i;
-      } else if (c.length > 10 && !/^(?:subtotal|total|tax|ship|order|qty|quantity|price|amount)/i.test(c)) {
-        nameIdx = i;
-      }
+  for (let i = 0; i < lines.length; i++) {
+    // PKC item prices are ALWAYS labeled "Price: $XX.XX" — never a bare dollar amount.
+    // This strictly excludes the totals section (Order Subtotal, Sales Tax, etc.)
+    const priceMatch = lines[i].match(/^price[:\s]+\$?([\d,]+\.\d{2})\s*$/i);
+    if (!priceMatch) continue;
+    const price = parseFloat(priceMatch[1].replace(/,/g,''));
+    if (price < 0.50 || price > 5000) continue;
+
+    // Look for qty label nearby (within ±4 lines)
+    let qty = 1;
+    for (let j = Math.max(0, i - 4); j <= Math.min(lines.length - 1, i + 4); j++) {
+      if (j === i) continue;
+      const qm = lines[j].match(/^(?:qty|quantity)[:\s]*(\d+)$/i) ||
+                 lines[j].match(/^(\d+)$/) ||
+                 lines[j].match(/\bqty[:\s]+(\d+)\b/i);
+      if (qm) { const q = parseInt(qm[1]); if (q >= 1 && q <= 99) { qty = q; break; } }
     }
 
-    if (nameIdx >= 0 && priceIdx >= 0) {
-      const name  = cells[nameIdx].replace(/\s{2,}/g,' ').substring(0, 120);
-      const price = parseDollar(cells[priceIdx]);
-      const qty   = qtyIdx >= 0 ? (parseInt(cells[qtyIdx]) || 1) : 1;
-      if (price && price > 0.5) items.push({ name, qty, price });
+    // Walk backwards for product name (skips SKU/Qty/Price label lines)
+    for (let j = i - 1; j >= Math.max(0, i - 6); j--) {
+      const l = lines[j];
+      if (!isProductName(l)) continue;
+      const key = `${l.toLowerCase()}|${price}`;
+      if (seen.has(key)) break;
+      seen.add(key);
+      items.push({ name: l.replace(/\s{2,}/g, ' ').substring(0, 120), qty, price });
+      break;
     }
   }
 
