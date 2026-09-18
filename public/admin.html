@@ -2054,11 +2054,22 @@ function botStatusDate(o) {
   return o.status_changed_at || o.received_at || o.order_date || null;
 }
 
+// "2026-09-18" must be read as local midnight, not UTC midnight. new Date() on a
+// bare date string returns UTC, which in US timezones lands on the PREVIOUS
+// evening — so an order delivered today was excluded from the "Today" filter.
+function botParseDate(raw) {
+  if (typeof raw === 'string') {
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  }
+  return new Date(raw);
+}
+
 function botInRange(o, range) {
   if (!range || range === 'all') return true;
   const raw = botStatusDate(o);
   if (!raw) return false;
-  const d = new Date(raw);
+  const d = botParseDate(raw);
   if (isNaN(d)) return false;
 
   const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
