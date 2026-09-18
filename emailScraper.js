@@ -107,10 +107,10 @@ function findOrderNumber(text, fromEmail) {
     if (m) return m[1];
   }
 
-  // Target bare 15-digit or hyphenated format — try this FIRST for target.com AND
-  // for narvar.com emails that contain Target order numbers in the body
+  // Target order numbers: 15 OR 16 consecutive digits (Target uses both lengths)
+  // Also handles narvar.com shipping notifications which embed the Target order number
   if (f.includes('target.com') || f.includes('narvar')) {
-    const t = text.match(/\b(\d{3}-\d{7}-\d{7}|\d{15})\b/);
+    const t = text.match(/\b(\d{3}-\d{7}-\d{7}|\d{15,16})\b/);
     if (t) return t[1].trim();
     // Also try Pokemon Center P-format in case it's a PKC order via Narvar
     const p = text.match(/\b(P\d{9,12})\b/);
@@ -124,8 +124,8 @@ function findOrderNumber(text, fromEmail) {
     if (/\d{3,}/.test(m[1])) return m[1].trim();
   }
 
-  // Fallback: bare 15-digit or Amazon-style hyphenated number anywhere in text
-  const t = text.match(/\b(\d{3}-\d{7}-\d{7}|\d{15})\b/);
+  // Fallback: bare 15/16-digit number (Target) or Amazon-style hyphenated number
+  const t = text.match(/\b(\d{3}-\d{7}-\d{7}|\d{15,16})\b/);
   if (t) return t[1].trim();
 
   return null;
@@ -177,6 +177,8 @@ function determineStatus(subject, bodyText) {
       s.includes('thanks for shopping')    || s.includes('thanks for your order')    ||
       s.includes('is confirmed')           || s.includes('we got your order')        ||
       s.includes("we've got your order")   || s.includes('your order is placed')     ||
+      s.includes('has been placed')        || s.includes('order confirmation')       ||
+      s.includes('placed your order')      || s.includes('we have your order')       ||
       s.includes('order is being prepared')|| s.includes('order #')                  ||
       s.includes('your recent order'))
     return 'Confirmed';
@@ -400,6 +402,23 @@ const STATUS_RANK = { Confirmed:1, Unship:1, Shipped:2, OFD:3, Delivered:4, Canc
 async function processEmail(parsed, db) {
   const fromEmail  = parsed.from?.value?.[0]?.address || '';
   const subject    = parsed.subject || '';
+
+  // ── Quick subject filter — skip marketing/promo emails before any HTML parsing ──
+  // Only process emails whose subject suggests an order transaction.
+  // This skips "% off", "new arrivals", "earn points", etc. from retailer domains.
+  const subLower = subject.toLowerCase();
+  const isOrderSubject =
+    subLower.includes('order')    || subLower.includes('ship')      ||
+    subLower.includes('deliver')  || subLower.includes('track')     ||
+    subLower.includes('confirm')  || subLower.includes('placed')    ||
+    subLower.includes('dispatch') || subLower.includes('package')   ||
+    subLower.includes('receipt')  || subLower.includes('purchase')  ||
+    subLower.includes('cancel')   || subLower.includes('refund')    ||
+    subLower.includes('thank')    || subLower.includes('invoice')   ||
+    subLower.includes('payment')  || subLower.includes('pickup')    ||
+    subLower.includes('ready for') || subLower.includes('on its way');
+  if (!isOrderSubject) return false;  // marketing email — skip without further work
+
   const bodyText   = parsed.text    || '';
   const bodyHtml   = parsed.html    || '';
   // Use HTML-stripped text as fallback — Target and many retailers send HTML-only emails
@@ -430,13 +449,23 @@ async function processEmail(parsed, db) {
     if (actualRetailer === 'Target')         extractedItems = extractTargetItems(bodyHtml);
     else if (actualRetailer === 'Pokemon Center') extractedItems = extractPKCItems(bodyHtml);
     else                                     extractedItems = extractPKCItems(bodyHtml); // generic fallback
-    financials = findOrderFinancials(plainText);
+    // Run financial extraction on BOTH sources: strippedHtml (always consistent HTML table format)
+    // and bodyText (plain-text alternative, if present).  Some emails have a bodyText that formats
+    // the summary table differently (dot-padding, missing $, etc.) so neither source alone is reliable.
+    const finHtml = findOrderFinancials(strippedHtml);
+    const finText = bodyText ? findOrderFinancials(bodyText) : {};
+    financials = {
+      subtotal: finHtml.subtotal ?? finText.subtotal,
+      tax:      finHtml.tax      ?? finText.tax,
+      shipping: finHtml.shipping ?? finText.shipping,
+      total:    finHtml.total    ?? finText.total,
+    };
   }
   const itemStrings  = formatItems(extractedItems);
   const itemsJson    = itemStrings.length ? JSON.stringify(itemStrings) : null;
-  const orderTotal   = financials.total    || financials.subtotal || null;
-  const taxAmount    = financials.tax      || null;
-  const shipCost     = financials.shipping !== undefined ? financials.shipping : null;
+  const orderTotal   = financials.total    ?? financials.subtotal ?? null;
+  const taxAmount    = financials.tax      ?? null;
+  const shipCost     = financials.shipping ?? null;
 
   if (extractedItems.length)
     console.log(`   🛒 ${extractedItems.length} item(s) extracted, total=${orderTotal||'?'} tax=${taxAmount||'?'} ship=${shipCost||'?'}`);
@@ -459,11 +488,21 @@ async function processEmail(parsed, db) {
       updates.push('expected_date=?');   vals.push(null);
     }
     if (dbStatus && newRank > curRank)                     { updates.push('status=?');           vals.push(dbStatus); }
-    // Fill in items/financials if missing on existing order
-    if (itemsJson && !existing.items)                      { updates.push('items=?');            vals.push(itemsJson); }
-    if (orderTotal  && !existing.order_total)              { updates.push('order_total=?');      vals.push(orderTotal); }
-    if (taxAmount   && !existing.tax_amount)               { updates.push('tax_amount=?');       vals.push(taxAmount); }
-    if (shipCost !== null && !existing.ship_cost)          { updates.push('ship_cost=?');        vals.push(shipCost); }
+    // Items/financials: if we extracted fresh items from a confirmation email, ALWAYS overwrite
+    // (fixes stale/wrong items from old scraper on rescan). Only use "fill-if-missing" logic
+    // when we have no new items to offer (e.g. a shipping notification email).
+    if (itemsJson) {
+      // Fresh extraction — overwrite regardless of what was stored before
+      updates.push('items=?'); vals.push(itemsJson);
+      if (orderTotal !== null) { updates.push('order_total=?'); vals.push(orderTotal); }
+      if (taxAmount  !== null) { updates.push('tax_amount=?');  vals.push(taxAmount); }
+      if (shipCost   !== null) { updates.push('ship_cost=?');   vals.push(shipCost); }
+    } else {
+      // No items extracted — only fill in fields that are currently missing
+      if (orderTotal  && !existing.order_total)             { updates.push('order_total=?'); vals.push(orderTotal); }
+      if (taxAmount   && !existing.tax_amount)              { updates.push('tax_amount=?');  vals.push(taxAmount); }
+      if (shipCost !== null && existing.ship_cost === null)  { updates.push('ship_cost=?');   vals.push(shipCost); }
+    }
 
     if (updates.length) {
       db.prepare(`UPDATE bot_orders SET ${updates.join(',')} WHERE id=?`).run([...vals, existing.id]);
@@ -738,11 +777,11 @@ async function scrapeByOrderNumber(db, orderNumber) {
   });
 }
 
-// ── Reset scraper state — Full Rescan goes back 30 days to recover lost orders ─
+// ── Reset scraper state — Full Rescan goes back 90 days to recover lost orders ─
 function resetEmailScraper(db) {
   setSetting(db, 'email_scraper_seen_ids', '[]');
-  setSetting(db, 'email_scraper_since', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
-  console.log('📧 Email scraper state reset — next run will re-scan last 30 days');
+  setSetting(db, 'email_scraper_since', new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString());
+  console.log('📧 Email scraper state reset — next run will re-scan last 90 days');
 }
 
 module.exports = { runEmailScraper, scrapeByOrderNumber, resetEmailScraper };
