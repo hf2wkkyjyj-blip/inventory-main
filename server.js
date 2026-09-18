@@ -1172,7 +1172,7 @@ app.get('/admin/orders', (req, res) => {
 });
 
 // ─── EMAIL SCRAPER ───────────────────────────────────────────────────────────
-const { runEmailScraper, scrapeByOrderNumber, resetEmailScraper } = require('./emailScraper');
+const { runEmailScraper, scrapeByOrderNumber, resetEmailScraper, reparseStoredEmails } = require('./emailScraper');
 
 // Manual trigger — Scan Emails button in UI calls this
 let _scrapeProgress = { running: false, updated: 0 };
@@ -1192,6 +1192,21 @@ app.post('/api/admin/scrape-emails/reset', auth, adminOnly, (req, res) => {
   const days = parseInt(req.body?.days) || 180;
   resetEmailScraper(db, { wipeOrders, days });
   res.json({ reset: true, wipeOrders, days });
+});
+
+// Re-run the parser over archived emails — no Gmail/IMAP round trip.
+// Use this after a parser change: it re-extracts every order in seconds.
+app.post('/api/admin/scrape-emails/reparse', auth, adminOnly, async (req, res) => {
+  try {
+    if (req.body?.wipe === true) {
+      db.prepare('DELETE FROM bot_orders').run();
+      db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('scraper_blocked_orders','[]')").run();
+    }
+    const result = await reparseStoredEmails(db);
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Scan a specific order number — searches all Gmail history for it

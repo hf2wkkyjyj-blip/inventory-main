@@ -473,6 +473,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <input type="text" id="bot-search" oninput="renderBotOrders()" placeholder="Search order #, item, buyer…" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:200px;">
       <button class="btn btn-ghost btn-sm" id="bot-scan-btn" onclick="botScanEmails()"><i class="fa fa-envelope"></i> Scan Emails</button>
       <button class="btn btn-ghost btn-sm" id="bot-rescan-btn" onclick="botFullRescan(false)" title="Clear scanner history and re-scan last 180 days of Gmail" style="opacity:.7;"><i class="fa fa-redo"></i> Full Rescan</button>
+      <button class="btn btn-ghost btn-sm" id="bot-reparse-btn" onclick="botReparse()" title="Re-run the parser over saved emails — no Gmail fetch, takes seconds" style="opacity:.7;"><i class="fa fa-bolt"></i> Reparse</button>
       <button class="btn btn-ghost btn-sm" id="bot-wipe-btn" onclick="botFullRescan(true)" title="Delete ALL orders and rebuild from emails (last 180 days)" style="opacity:.7;color:#e74c3c;"><i class="fa fa-trash"></i> Wipe & Rescan</button>
       <div style="display:flex;gap:4px;align-items:center;">
         <input type="text" id="bot-order-scan-input" placeholder="Order # …" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:130px;" onkeydown="if(event.key==='Enter')botScanOrder()">
@@ -2174,6 +2175,22 @@ async function botScanEmails() {
   await loadBotOrders();
   btn.disabled = false;
   btn.innerHTML = '<i class="fa fa-envelope"></i> Scan Emails';
+}
+
+// Re-run the parser over emails already saved in the DB. No Gmail fetch, so this
+// finishes in seconds — use it after a parser change instead of a Full Rescan.
+async function botReparse() {
+  const btn = document.getElementById('bot-reparse-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa fa-bolt fa-spin"></i> Reparsing…';
+  try {
+    const r = await api('POST', '/admin/scrape-emails/reparse', {});
+    btn.innerHTML = `<i class="fa fa-check"></i> ${r.updated}/${r.total}`;
+  } catch (e) {
+    btn.innerHTML = '<i class="fa fa-exclamation-triangle"></i> Failed';
+  }
+  await loadBotOrders();
+  setTimeout(() => { btn.disabled = false; btn.innerHTML = '<i class="fa fa-bolt"></i> Reparse'; }, 2500);
 }
 
 async function botFullRescan(wipe = false) {

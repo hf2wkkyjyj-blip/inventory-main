@@ -1,0 +1,50 @@
+<!-- A retailer with NO custom extractor in the old scraper. It emits schema.org
+     JSON-LD, so the new parser handles it with zero retailer-specific code —
+     this is the whole point of the rewrite. -->
+<html>
+<head>
+<script type="application/ld+json">
+{
+  "@context": "http://schema.org",
+  "@type": "Order",
+  "merchant": { "@type": "Organization", "name": "Sam's Club" },
+  "orderNumber": "TC9915585140381162319628",
+  "orderStatus": "http://schema.org/OrderDelivered",
+  "orderDate": "2026-07-22",
+  "priceCurrency": "USD",
+  "acceptedOffer": [
+    {
+      "@type": "Offer",
+      "itemOffered": {
+        "@type": "Product",
+        "name": "LEGO Pokémon Eevee Building Set",
+        "sku": "990497327"
+      },
+      "price": "29.98",
+      "priceCurrency": "USD",
+      "eligibleQuantity": { "@type": "QuantitativeValue", "value": 96 }
+    }
+  ],
+  "totalPaymentDue": { "@type": "PriceSpecification", "price": "3068.03", "priceCurrency": "USD" },
+  "orderDelivery": {
+    "@type": "ParcelDelivery",
+    "trackingNumber": "1Z999AA10123456784",
+    "carrier": { "@type": "Organization", "name": "UPS" },
+    "expectedArrivalUntil": "2026-07-29",
+    "deliveryAddress": {
+      "@type": "PostalAddress",
+      "name": "Sang Nguyen",
+      "streetAddress": "7964 Brooklyn Blvd",
+      "addressLocality": "Brooklyn Park",
+      "addressRegion": "MN",
+      "postalCode": "55445"
+    }
+  }
+}
+</script>
+</head>
+<body>
+  <p>Your order has been delivered.</p>
+  <p>Order total $3,068.03</p>
+</body>
+</html>

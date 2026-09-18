@@ -6,6 +6,11 @@
 const Imap             = require('node-imap');
 const { simpleParser } = require('mailparser');
 
+// Layered structured-data parser (JSON-LD → microdata → DOM → optional AI).
+// See parser/index.js — this is the primary extraction path; the hand-written
+// retailer extractors further down are now only a last-resort fallback.
+const { parseOrderEmail } = require('./parser');
+
 // ── Retailer detection ────────────────────────────────────────────────────────
 
 const RETAILERS = [
@@ -368,6 +373,30 @@ function formatItems(itemObjs) {
   });
 }
 
+// Same display format, for items coming out of the structured parser (which
+// carries a SKU). Keeps the trailing " @ $X.XX" the admin UI parses for unit price.
+function formatParsedItems(items) {
+  return items.map(i => {
+    let s = i.qty > 1 ? `${i.qty}x ${i.name}` : i.name;
+    if (i.sku) s += ` (SKU ${i.sku})`;
+    if (i.unitPrice !== null && i.unitPrice !== undefined) s += ` @ $${i.unitPrice.toFixed(2)}`;
+    return s;
+  });
+}
+
+// Fall back to a readable retailer name derived from the sender's domain, for
+// senders that aren't in the RETAILERS table but did emit structured order data.
+function retailerFromDomain(fromEmail) {
+  const m = String(fromEmail || '').toLowerCase().match(/@([^>\s]+)/);
+  if (!m) return null;
+  const host = m[1].replace(/^(?:mail|email|e|news|info|no-?reply|order|orders|shop|send|mkt|marketing|t|em|ct)\./, '');
+  const base = host.split('.').slice(-2, -1)[0] || host.split('.')[0];
+  if (!base || base.length < 2) return null;
+  return base
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
 // ── DB update logic ───────────────────────────────────────────────────────────
 
 const STATUS_RANK = { Confirmed:1, Unship:1, Shipped:2, OFD:3, Delivered:4, Cancelled:5, Refunded:5 };
@@ -399,13 +428,43 @@ async function processEmail(parsed, db) {
   const plainText    = bodyText || strippedHtml;   // best plain text we have
   const fullText     = plainText + ' ' + bodyHtml; // raw HTML included for regex searches
 
-  const retailerInfo = getRetailerInfo(fromEmail, plainText + ' ' + bodyHtml);
-  if (!retailerInfo) return false;
+  // Keep a copy of every order-ish email so the parser can be re-run later without
+  // touching Gmail. This turns a Full Rescan from a multi-minute IMAP crawl into a
+  // few seconds of local reparsing — see reparseStoredEmails().
+  saveRawEmail(db, parsed, bodyHtml, plainText);
 
-  const tracking    = findTracking(fullText);
-  const orderNumber = findOrderNumber(fullText, fromEmail);
-  const rawStatus   = determineStatus(subject, plainText);
-  const expectedDate= findExpectedDate(plainText);
+  // ── PRIMARY: layered structured-data parser ─────────────────────────────────
+  // Reads schema.org JSON-LD / microdata first (which most major retailers embed
+  // for Gmail purchase tracking), then falls back to a DOM-structure-aware reader.
+  // This is what lets retailers with no hand-written extractor work automatically.
+  const allowLlm = process.env.ENABLE_LLM_PARSE === '1';
+  let P = null;
+  try {
+    P = await parseOrderEmail({ html: bodyHtml, text: plainText, subject, from: fromEmail, allowLlm });
+  } catch (e) {
+    console.log('   ⚠️  parser error:', e.message);
+  }
+
+  const retailerInfo = getRetailerInfo(fromEmail, plainText + ' ' + bodyHtml);
+  const isStructured = !!(P && (P.source === 'jsonld' || P.source === 'microdata'));
+
+  // Accept the email if we recognize the sender OR the parser found real order data.
+  // Previously an unknown sender was dropped outright, which is why Sam's Club,
+  // Costco and Mattel never appeared — they were never even looked at.
+  if (!retailerInfo && !isStructured && !(P && P.items.length)) return false;
+
+  const retailer     = retailerInfo?.retailer || P?.retailer || retailerFromDomain(fromEmail);
+  const baseCategory = retailerInfo?.category || 'Other';
+  if (!retailer) return false;
+
+  // Identifiers: trust structured data first, then the tuned retailer regexes.
+  const tracking =
+    (isStructured ? P.trackingNumber : null) || findTracking(fullText) || P?.trackingNumber || null;
+  const orderNumber =
+    (isStructured ? P.orderNumber : null) || findOrderNumber(fullText, fromEmail) || P?.orderNumber || null;
+
+  const rawStatus    = (isStructured ? P.status : null) || determineStatus(subject, plainText) || P?.status || null;
+  const expectedDate = P?.expectedDate || findExpectedDate(plainText);
 
   if (!orderNumber && !tracking) return false;
 
@@ -413,32 +472,35 @@ async function processEmail(parsed, db) {
   const dbStatus       = resolvedStatus === 'OFD' ? 'Shipped' : resolvedStatus;
   const trackingStatus = resolvedStatus === 'OFD' ? 'OFD' : (resolvedStatus === 'Delivered' ? 'Delivered' : null);
 
-  // ── Extract items + financials from confirmation emails only ─────────────────
-  let extractedItems  = [];
-  let financials      = {};
-  const isConfirmation = resolvedStatus === 'Confirmed';
-  if (isConfirmation && bodyHtml) {
-    const actualRetailer = retailerInfo.retailer;
-    if (actualRetailer === 'Target')         extractedItems = extractTargetItems(bodyHtml);
-    else if (actualRetailer === 'Pokemon Center') extractedItems = extractPKCItems(bodyHtml);
-    else                                     extractedItems = extractPKCItems(bodyHtml); // generic fallback
-    // Run financial extraction on BOTH sources: strippedHtml (always consistent HTML table format)
-    // and bodyText (plain-text alternative, if present).  Some emails have a bodyText that formats
-    // the summary table differently (dot-padding, missing $, etc.) so neither source alone is reliable.
+  // ── Items + financials ──────────────────────────────────────────────────────
+  let itemStrings = [];
+  let financials  = {};
+
+  if (P && P.items.length) {
+    itemStrings = formatParsedItems(P.items);
+    financials  = { subtotal: P.subtotal, tax: P.tax, shipping: P.shipping, total: P.total };
+    console.log(`   🛒 ${P.items.length} item(s) via ${P.source} (confidence ${P.confidence})`);
+  } else if (resolvedStatus === 'Confirmed' && bodyHtml) {
+    // Last resort: the original hand-written extractors.
+    const legacy = retailer === 'Target' ? extractTargetItems(bodyHtml) : extractPKCItems(bodyHtml);
+    itemStrings  = formatItems(legacy);
     const finHtml = findOrderFinancials(strippedHtml);
     const finText = bodyText ? findOrderFinancials(bodyText) : {};
     financials = {
-      subtotal: finHtml.subtotal ?? finText.subtotal,
-      tax:      finHtml.tax      ?? finText.tax,
-      shipping: finHtml.shipping ?? finText.shipping,
-      total:    finHtml.total    ?? finText.total,
+      subtotal: P?.subtotal ?? finHtml.subtotal ?? finText.subtotal,
+      tax:      P?.tax      ?? finHtml.tax      ?? finText.tax,
+      shipping: P?.shipping ?? finHtml.shipping ?? finText.shipping,
+      total:    P?.total    ?? finHtml.total    ?? finText.total,
     };
+    if (legacy.length) console.log(`   🛒 ${legacy.length} item(s) via legacy extractor`);
+  } else if (P) {
+    financials = { subtotal: P.subtotal, tax: P.tax, shipping: P.shipping, total: P.total };
   }
-  const itemStrings  = formatItems(extractedItems);
-  const itemsJson    = itemStrings.length ? JSON.stringify(itemStrings) : null;
-  const orderTotal   = financials.total    ?? financials.subtotal ?? null;
-  const taxAmount    = financials.tax      ?? null;
-  const shipCost     = financials.shipping ?? null;
+
+  const itemsJson  = itemStrings.length ? JSON.stringify(itemStrings) : null;
+  const orderTotal = financials.total    ?? financials.subtotal ?? null;
+  const taxAmount  = financials.tax      ?? null;
+  const shipCost   = financials.shipping ?? null;
 
   if (extractedItems.length)
     console.log(`   🛒 ${extractedItems.length} item(s) extracted, total=${orderTotal||'?'} tax=${taxAmount||'?'} ship=${shipCost||'?'}`);
@@ -462,7 +524,7 @@ async function processEmail(parsed, db) {
     }
     if (dbStatus && newRank > curRank)                     { updates.push('status=?');           vals.push(dbStatus); }
     // Fix wrong category: if existing order is "Other" but content reveals a real category, upgrade it
-    const redetectedCategory = detectCategoryFromContent(subject, plainText, retailerInfo.category);
+    const redetectedCategory = detectCategoryFromContent(subject, plainText, baseCategory);
     if (redetectedCategory !== 'Other' && existing.category === 'Other') {
       updates.push('category=?'); vals.push(redetectedCategory);
     }
@@ -498,8 +560,7 @@ async function processEmail(parsed, db) {
       }
     } catch(_) {}
     // Create new order
-    const { retailer } = retailerInfo;
-    const category  = detectCategoryFromContent(subject, plainText, retailerInfo.category);
+    const category  = detectCategoryFromContent(subject, plainText, baseCategory);
     const emailDate = parsed.date ? parsed.date.toISOString() : new Date().toISOString();
     const orderDate = emailDate.split('T')[0];
     db.prepare(`INSERT OR IGNORE INTO bot_orders
@@ -755,6 +816,66 @@ async function scrapeByOrderNumber(db, orderNumber) {
   });
 }
 
+// ── Raw email archive ────────────────────────────────────────────────────────
+// Storing the bodies means the parser can be improved and re-run over real mail
+// instantly, instead of re-crawling IMAP every time a regex changes.
+
+function ensureRawEmailTable(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS raw_emails (
+    message_id  TEXT PRIMARY KEY,
+    subject     TEXT,
+    from_email  TEXT,
+    email_date  TEXT,
+    html        TEXT,
+    text        TEXT,
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+}
+
+function saveRawEmail(db, parsed, html, text) {
+  try {
+    ensureRawEmailTable(db);
+    const msgId = parsed.messageId || `${parsed.date?.toISOString() || Date.now()}|${parsed.subject || ''}`;
+    db.prepare(`INSERT OR REPLACE INTO raw_emails
+      (message_id, subject, from_email, email_date, html, text)
+      VALUES (?,?,?,?,?,?)`)
+      .run([
+        msgId,
+        parsed.subject || null,
+        parsed.from?.value?.[0]?.address || null,
+        parsed.date ? parsed.date.toISOString() : null,
+        (html || '').slice(0, 400000),
+        (text || '').slice(0, 100000),
+      ]);
+  } catch (e) { /* archiving must never break scraping */ }
+}
+
+// Re-run the parser over every archived email. No network, no IMAP.
+async function reparseStoredEmails(db) {
+  ensureRawEmailTable(db);
+  const rows = db.prepare('SELECT * FROM raw_emails ORDER BY email_date ASC').all();
+  console.log(`🔁 Reparsing ${rows.length} archived email(s) — no IMAP needed`);
+
+  let updated = 0;
+  for (const r of rows) {
+    try {
+      const fake = {
+        messageId: r.message_id,
+        subject:   r.subject || '',
+        from:      { value: [{ address: r.from_email || '' }] },
+        date:      r.email_date ? new Date(r.email_date) : new Date(),
+        html:      r.html || '',
+        text:      r.text || '',
+      };
+      if (await processEmail(fake, db)) updated++;
+    } catch (e) {
+      console.log(`   ⚠️  reparse failed for ${r.message_id}: ${e.message}`);
+    }
+  }
+  console.log(`🔁 Reparse complete — ${updated} order(s) updated`);
+  return { total: rows.length, updated };
+}
+
 // ── Reset scraper state ──────────────────────────────────────────────────────
 // wipeOrders=true: delete all existing bot_orders first (start from zero)
 // days: how far back to scan (default 180 to cover ~6 months)
@@ -770,4 +891,7 @@ function resetEmailScraper(db, { wipeOrders = false, days = 180 } = {}) {
   console.log(`📧 Email scraper reset — next run will re-scan last ${days} days`);
 }
 
-module.exports = { runEmailScraper, scrapeByOrderNumber, resetEmailScraper };
+module.exports = {
+  runEmailScraper, scrapeByOrderNumber, resetEmailScraper,
+  reparseStoredEmails, ensureRawEmailTable,
+};
