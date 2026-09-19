@@ -567,7 +567,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
           <th onclick="botSort('category')">CATEGORY</th>
           <th onclick="botSort('retailer')">RETAILER</th>
           <th onclick="botSort('order_number')">ORDER #</th>
-          <th onclick="botSort('order_date')">DATE</th>
+          <th class="date-col" onclick="botSortDate()" title="Date the order was placed">ORDERED</th>
           <th onclick="botSort('status')">STATUS</th>
           <th>ITEMS</th>
           <th onclick="botSort('order_total')" style="text-align:right;">TOTAL</th>
@@ -1859,7 +1859,7 @@ async function deletePayment(payId, memberId) {
 }
 
 // ── BOT ORDER TRACKER ─────────────────────────────────────────────────────────
-let _botOrders = [], _botPage = 0, _botPageSize = 25, _botSortKey = 'order_date', _botSortDir = -1, _botStatusFilter = '';
+let _botOrders = [], _botPage = 0, _botPageSize = 25, _botSortKey = '__date', _botSortDir = -1, _botStatusFilter = '';
 const BOT_STATUSES = ['Confirmed','Shipped','Unship','Delivered','Cancelled','Refunded'];
 
 async function loadBotOrders() {
@@ -2047,6 +2047,37 @@ function botSetRange(r, btn) {
   if (cat && cat !== 'All') loadBotItemView(cat);
 }
 
+// ── What the DATE column should show ────────────────────────────────────────
+// An order placed 14 Aug and delivered today is an August row if you always show
+// order_date — which makes "today's deliveries" impossible to see. So when a
+// status is being filtered on, the column shows the date relevant to THAT status.
+const BOT_DATE_FIELD = {
+  Delivered: 'delivered_date',
+  Shipped:   'status_changed_at',
+  OFD:       'status_changed_at',
+  Cancelled: 'status_changed_at',
+  Refunded:  'status_changed_at',
+};
+
+function botDateFieldFor(status) {
+  return BOT_DATE_FIELD[status] || 'order_date';
+}
+
+function botDateHeader(status) {
+  return { Delivered: 'DELIVERED', Shipped: 'SHIPPED', OFD: 'OUT FOR DEL.',
+           Cancelled: 'CANCELLED', Refunded: 'REFUNDED' }[status] || 'ORDERED';
+}
+
+// Show the status-relevant date, falling back to the order date when we never
+// recorded one (older rows predate status_changed_at).
+function botDateCell(o, status) {
+  const field = botDateFieldFor(status);
+  const primary = (o[field] || '').slice(0, 10);
+  if (primary) return primary;
+  const fallback = (o.order_date || '').slice(0, 10);
+  return fallback ? `<span title="No ${botDateHeader(status).toLowerCase()} date recorded — showing order date">${fallback}*</span>` : '—';
+}
+
 // The date an order entered its CURRENT status. Using order_date here would
 // answer "ordered today", which is a different question from "delivered today".
 function botStatusDate(o) {
@@ -2086,6 +2117,10 @@ function botRangeLabel() {
   return { all:'', today:'today', yday:'yesterday', '7d':'in the last 7 days', '30d':'in the last 30 days' }[_botRange] || '';
 }
 
+// The date column sorts on a virtual key, because which field it represents
+// depends on the active status filter.
+function botSortDate() { botSort('__date'); }
+
 function botSort(key) {
   if (_botSortKey === key) _botSortDir *= -1;
   else { _botSortKey = key; _botSortDir = -1; }
@@ -2114,6 +2149,14 @@ function renderBotOrders() {
     return true;
   });
   rows.sort((a,b)=>{
+    // Sorting the date column follows whichever date is being DISPLAYED, so
+    // "Delivered" sorts by delivery date rather than by when the order was placed.
+    if (_botSortKey === '__date') {
+      const f = botDateFieldFor(status);
+      const av = (a[f] || a.order_date || '').slice(0,10);
+      const bv = (b[f] || b.order_date || '').slice(0,10);
+      return _botSortDir * String(av).localeCompare(String(bv));
+    }
     let av=a[_botSortKey]||'', bv=b[_botSortKey]||'';
     if (typeof av==='number') return _botSortDir*(av-bv);
     return _botSortDir*(String(av).localeCompare(String(bv)));
@@ -2125,6 +2168,14 @@ function renderBotOrders() {
   document.getElementById('bot-page-info').textContent = total ? `${_botPage*_botPageSize+1}–${Math.min((_botPage+1)*_botPageSize,total)} of ${total}` : '';
   document.getElementById('bot-prev').disabled = _botPage <= 0;
   document.getElementById('bot-next').disabled = _botPage >= maxPage;
+  // Relabel the DATE header to match whichever date the column is showing.
+  const dateTh = document.querySelector('#bot-orders-wrap th[onclick*="order_date"], #bot-orders-wrap th.date-col');
+  if (dateTh) {
+    dateTh.classList.add('date-col');
+    dateTh.textContent = botDateHeader(status);
+    dateTh.title = status ? `Date this order was ${botDateHeader(status).toLowerCase()}` : 'Date the order was placed';
+  }
+
   const tbody = document.getElementById('bot-orders-body');
   if (!page.length) {
     tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--muted);">No orders found. Add one manually or wait for the daily email scan.</td></tr>`;
@@ -2136,7 +2187,7 @@ function renderBotOrders() {
       <td>${esc(o.category||'Other')}</td>
       <td>${esc(o.retailer||'—')}</td>
       <td style="font-weight:600;">${esc(o.order_number||'—')}</td>
-      <td style="color:var(--muted);">${(o.order_date||'').slice(0,10)||'—'}</td>
+      <td style="color:var(--muted);">${botDateCell(o, status)}</td>
       <td>${botStatusCell(o)}</td>
       <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(items)}">${esc(items||'—')}</td>
       <td style="text-align:right;font-variant-numeric:tabular-nums;">
