@@ -54,9 +54,16 @@ function getRetailerInfo(fromEmail, bodyText) {
   return null;
 }
 
+// Strip diacritics so "Pokémon" matches a plain "pokemon" test. Retailers write
+// the accented form constantly — Target's item names all use "Pokémon" — and an
+// ASCII-only comparison silently files every one of them under "Other".
+function deaccent(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
 // Detect category from email content (for generic retailers like Target that sell everything)
 function detectCategoryFromContent(subject, text, defaultCategory) {
-  const s = ((subject || '') + ' ' + (text || '')).toLowerCase();
+  const s = deaccent((subject || '') + ' ' + (text || '')).toLowerCase();
   if (s.includes('pokemon') || s.includes('pikachu') || s.includes('charizard') ||
       s.includes('eevee') || s.includes('mewtwo') || s.includes('bulbasaur') ||
       s.includes('squirtle') || s.includes('charmander') || s.includes('tcg') ||
@@ -879,7 +886,7 @@ function fetchNewAndProcess(imap, db) {
 
         headerFetch.once('error', reject);
         headerFetch.once('end', () => {
-          const finish = (updated) => {
+          const finish = (updated, failedUids = []) => {
             notRelevant.forEach(id => seenIds.add(id));
             const arr = [...seenIds];
             // Retain far more than before: with a wide search a single run can
@@ -888,8 +895,15 @@ function fetchNewAndProcess(imap, db) {
             setSetting(db, 'email_scraper_seen_ids', JSON.stringify(arr.slice(-25000)));
             setSetting(db, 'email_scraper_since', new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString());
             // Advance the UID cursor past everything examined this run, so the
-            // next run asks the server only for genuinely new mail.
-            const maxUid = uids.reduce((m, u) => (u > m ? u : m), lastUid);
+            // next run asks the server only for genuinely new mail. If any email
+            // failed to parse, stop the cursor just below it so it gets retried
+            // rather than being skipped forever.
+            let maxUid = uids.reduce((m, u) => (u > m ? u : m), lastUid);
+            if (failedUids.length) {
+              const firstFailure = Math.min(...failedUids);
+              maxUid = Math.min(maxUid, firstFailure - 1);
+              console.log(`   ↩️  ${failedUids.length} email(s) failed to parse — cursor held at ${maxUid} for retry`);
+            }
             if (maxUid > lastUid) setSetting(db, 'email_scraper_last_uid', String(maxUid));
             const distinct = db.prepare('SELECT COUNT(*) AS n FROM bot_orders').get()?.n ?? '?';
             console.log(`   ${uids.length} matched → ${wanted.length} order-like, ${notRelevant.length} ignored; ${updated} produced a write. ${distinct} order(s) in DB.`);
@@ -901,12 +915,14 @@ function fetchNewAndProcess(imap, db) {
           console.log(`   Fetching ${wanted.length} full email(s)…`);
 
           // ── PASS 2: full bodies, only for the survivors ────────────────────
-          const f      = imap.fetch(wanted, { bodies: '' });
-          const jobs   = [];
-          const newIds = [];
+          const f          = imap.fetch(wanted, { bodies: '' });
+          const jobs       = [];
+          const newIds     = [];
+          const failedUids = [];
 
           f.on('message', (msg) => {
-            let raw = '';
+            let raw = '', uid = null;
+            msg.on('attributes', a => { uid = a.uid; });
             msg.on('body', stream => stream.on('data', c => raw += c.toString()));
             msg.once('end', () => {
               jobs.push(
@@ -919,7 +935,14 @@ function fetchNewAndProcess(imap, db) {
                   // run; only a thrown error leaves it unmarked for a retry.
                   if (msgId) newIds.push(msgId);
                   return result;
-                }).catch(e => { console.log('   ⚠️  parse error:', e.message); return false; })
+                }).catch(e => {
+                  console.log(`   ⚠️  parse error (uid ${uid}):`, e.message);
+                  // Record it so the UID cursor does not skip past an email we
+                  // never actually managed to read — otherwise a single transient
+                  // failure silently loses that order forever.
+                  if (uid !== null) failedUids.push(uid);
+                  return false;
+                })
               );
             });
           });
@@ -928,7 +951,7 @@ function fetchNewAndProcess(imap, db) {
           f.once('end', () =>
             Promise.all(jobs).then(results => {
               newIds.forEach(id => seenIds.add(id));
-              finish(results.filter(Boolean).length);
+              finish(results.filter(Boolean).length, failedUids);
             }).catch(reject)
           );
         });
