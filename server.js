@@ -320,6 +320,38 @@ function auth(req, res, next) {
   try { req.admin = jwt.verify(token, JWT_SECRET); next(); }
   catch(e) { res.status(401).json({ error: 'Invalid token' }); }
 }
+// ─── ITEM STRING PARSING ─────────────────────────────────────────────────────
+// Items are stored as display strings built by the scraper, e.g.
+//   "2x Pokemon TCG: Booster Bundle (SKU 10-10451-115) @ $35.14"
+// Listing, renaming and deleting all need the bare product name out of that, and
+// they MUST agree. They previously each had their own copy of the logic and the
+// copies disagreed — the list view stripped the "@ $65.24" price suffix but the
+// delete matcher did not, so deleting an item silently matched nothing and
+// reported success while removing zero rows.
+function decomposeItem(s) {
+  let rest = String(s || '').trim();
+  let qtyPrefix = '', suffix = '';
+  let m;
+
+  // Leading quantity: "2x "
+  if ((m = rest.match(/^(\d+\s*[xX×]\s+)([\s\S]+)$/))) { qtyPrefix = m[1]; rest = m[2]; }
+  // Trailing price: " @ $65.24"
+  if ((m = rest.match(/^([\s\S]*?)(\s*@\s*\$?[\d,]+\.?\d*\s*)$/))) { rest = m[1]; suffix = m[2] + suffix; }
+  // Trailing SKU: " (SKU 10-10451-115)"
+  if ((m = rest.match(/^([\s\S]*?)(\s*\(SKU\s[^)]*\)\s*)$/i)))     { rest = m[1]; suffix = m[2] + suffix; }
+  // Trailing quantity: " x2"
+  if ((m = rest.match(/^([\s\S]+?)(\s+[xX×]\s*\d+)$/)))            { rest = m[1]; suffix = m[2] + suffix; }
+
+  return { qtyPrefix, name: rest.trim(), suffix };
+}
+
+function parseItemName(s) { return decomposeItem(s).name; }
+
+// One stored element can hold several items joined by " | " or newlines.
+function splitItemParts(raw) {
+  return String(raw || '').split(/\s*\|\s*|\n+/).map(p => p.trim()).filter(Boolean);
+}
+
 function adminOnly(req, res, next) {
   // Support legacy tokens (admin:true) and new role-based tokens
   if (req.admin && (req.admin.admin === true || req.admin.role === 'admin')) return next();
@@ -953,15 +985,8 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
     const m = String(str||'').match(/@\s*\$?([\d,]+\.?\d*)/);
     return m ? parseFloat(m[1].replace(/,/g,'')) : null;
   }
-  function parseName(str) {
-    // Strip "@ $xx.xx" price suffix first
-    let s = String(str||'').replace(/@\s*\$?[\d,]+\.?\d*\s*$/, '').trim();
-    let m = s.match(/^(\d+)\s*[xX×]\s+(.+)/);
-    if (m) return m[2].trim();
-    m = s.match(/^(.+)\s+[xX×]\s*(\d+)$/);
-    if (m) return m[1].trim();
-    return s.trim();
-  }
+  // Shared with the rename and delete endpoints — see decomposeItem().
+  const parseName = parseItemName;
 
   // groups keyed by name only — same SKU always merges into one row.
   // Costs are accumulated and averaged (weighted by qty) at the end.
@@ -1085,12 +1110,13 @@ app.patch('/api/admin/bot-items/rename', auth, adminOnly, (req, res) => {
       // Each element may have multiple " | " parts
       const parts = String(raw||'').split(/\s*\|\s*/);
       const newParts = parts.map(p => {
-        const s = p.trim();
-        let m = s.match(/^((\d+)\s*[xX×]\s+)(.+)/);
-        if (m && m[3].trim().toLowerCase() === oldName.toLowerCase()) { changed = true; return m[1] + newName; }
-        m = s.match(/^(.+?)(\s+[xX×]\s*\d+)$/);
-        if (m && m[1].trim().toLowerCase() === oldName.toLowerCase()) { changed = true; return newName + m[2]; }
-        if (s.toLowerCase() === oldName.toLowerCase()) { changed = true; return newName; }
+        // Match on the bare name, then rebuild keeping the quantity prefix and
+        // any price/SKU suffix intact.
+        const d = decomposeItem(p);
+        if (d.name.toLowerCase() === String(oldName).trim().toLowerCase()) {
+          changed = true;
+          return d.qtyPrefix + newName + d.suffix;
+        }
         return p;
       });
       return newParts.join(' | ');
@@ -1116,17 +1142,12 @@ app.delete('/api/admin/bot-items/by-name', auth, adminOnly, (req, res) => {
   const { name } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   const orders = db.prepare('SELECT id, order_number, items FROM bot_orders').all();
+  const target = String(name).trim().toLowerCase();
   const toDelete = [];
   for (const o of orders) {
     let arr; try { arr = JSON.parse(o.items||'[]'); } catch(_) { arr = []; }
-    const expanded = [];
-    for (const raw of arr) String(raw||'').split(/\s*\|\s*|\n+/).map(p=>p.trim()).filter(Boolean).forEach(p=>expanded.push(p));
-    const names = expanded.map(s => {
-      let m = s.match(/^(\d+)\s*[xX×]\s+(.+)/); if (m) return m[2].trim();
-      m = s.match(/^(.+?)\s+[xX×]\s*\d+$/); if (m) return m[1].trim();
-      return s.trim();
-    });
-    if (names.some(n => n.toLowerCase() === name.toLowerCase())) toDelete.push(o);
+    const names = arr.flatMap(splitItemParts).map(parseItemName);
+    if (names.some(n => n.toLowerCase() === target)) toDelete.push(o);
   }
   // Add to blocklist
   try {
