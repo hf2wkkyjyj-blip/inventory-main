@@ -172,6 +172,35 @@ function email(id, date, subject, body, orderNo, tracking) {
     eq('tracking captured from arrival email', row.tracking, '1ZWY06570304159616');
   }
 
+  // ── delivered_date must come from the email, not the clock ────────────────
+  // Regression: delivered_date was stamped with new Date(), so every reparse
+  // rewrote every delivered order to the day the reparse ran — orders delivered
+  // weeks earlier all showed today's date.
+  console.log('\n── delivered_date comes from the email, not from today ──');
+  {
+    const orders = [{ id: 1, order_number: '912003454777043', status: 'Shipped', category: 'Pokemon',
+                      retailer: 'Target', tracking: '1ZWY0657YW00426318', items: null,
+                      order_total: null, delivered_date: null }];
+    const delivery = {
+      message_id: '<d1>', subject: 'Your order was delivered',
+      from_email: 'orders@oe.target.com',
+      email_date: '2026-08-28T18:30:00Z',            // weeks before "today"
+      html: '<html><body><p>Order #912003454777043</p><p>Tracking: 1ZWY0657YW00426318</p><p>Your package was delivered.</p></body></html>',
+      text: 'Order #912003454777043 was delivered. Tracking 1ZWY0657YW00426318',
+    };
+
+    const db = makeDb(orders, [delivery]);
+    await reparseStoredEmails(db);
+    eq('uses the email date', db._orders[0].delivered_date, '2026-08-28');
+
+    const today = new Date().toISOString().split('T')[0];
+    eq('is NOT today', db._orders[0].delivered_date === today, false);
+
+    // Reparsing again must not move it.
+    await reparseStoredEmails(db, { rebuildStatus: true });
+    eq('stable across repeated reparses', db._orders[0].delivered_date, '2026-08-28');
+  }
+
   console.log(`\n${'─'.repeat(60)}`);
   console.log(`${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);

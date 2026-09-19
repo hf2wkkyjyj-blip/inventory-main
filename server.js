@@ -1467,7 +1467,10 @@ async function autoUpdateTracking() {
 
       const { newStatus, trackingStatus, expectedDate } = await checkTracking(order.tracking, carrier);
       if (newStatus === 'Delivered') {
-        db.prepare(`UPDATE bot_orders SET status='Delivered', delivered_date=?, tracking_status='Delivered', expected_date=NULL WHERE id=?`).run([today, order.id]);
+        // COALESCE: the carrier tells us it's delivered but not when, so "today"
+        // is only a detection-time fallback. Never overwrite a real delivery date
+        // already derived from the retailer's own delivery email.
+        db.prepare(`UPDATE bot_orders SET status='Delivered', delivered_date=COALESCE(delivered_date,?), tracking_status='Delivered', expected_date=NULL WHERE id=?`).run([today, order.id]);
         console.log(`   ✅ Delivered: #${order.order_number} (${order.tracking})`);
         updated++;
       } else {

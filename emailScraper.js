@@ -602,7 +602,13 @@ async function processEmail(parsed, db, opts = {}) {
     if (expectedDate)                                      { updates.push('expected_date=?');    vals.push(expectedDate); }
     if (trackingStatus)                                    { updates.push('tracking_status=?');  vals.push(trackingStatus); }
     if (resolvedStatus === 'Delivered') {
-      updates.push('delivered_date=?');  vals.push(new Date().toISOString().split('T')[0]);
+      // Use the DELIVERY EMAIL's own date, not today's. Using new Date() meant
+      // every reparse re-stamped every delivered order with the day the reparse
+      // ran, so an order delivered weeks ago showed today's date. Deriving it
+      // from the email makes the value idempotent: reparsing yields the same
+      // answer no matter when it runs.
+      const deliveredOn = (parsed.date ? parsed.date.toISOString() : new Date().toISOString()).split('T')[0];
+      updates.push('delivered_date=?');  vals.push(deliveredOn);
       updates.push('expected_date=?');   vals.push(null);
     }
     // Repair rows poisoned by the old footer-substring bug: if the stored status
