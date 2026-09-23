@@ -841,7 +841,8 @@
         <option value="">All Stock</option>
         <option value="in_stock">In Stock</option>
         <option value="low_stock">Low Stock</option>
-        <option value="out_stock">Out of Stock</option>
+        <!-- No "Out of Stock" option: sold-out products are hidden from the
+             storefront, so this filter would always return an empty list. -->
       </select>
       <select class="filter-select" id="subcat-filter" onchange="loadProducts()" style="display:none;">
         <option value="">All Types</option>

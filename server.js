@@ -347,6 +347,13 @@ function decomposeItem(s) {
 
 function parseItemName(s) { return decomposeItem(s).name; }
 
+function getSettingValue(key, fallback = null) {
+  try {
+    const row = db.prepare('SELECT value FROM settings WHERE key=?').get([key]);
+    return row ? row.value : fallback;
+  } catch (_) { return fallback; }
+}
+
 // One stored element can hold several items joined by " | " or newlines.
 function splitItemParts(raw) {
   return String(raw || '').split(/\s*\|\s*|\n+/).map(p => p.trim()).filter(Boolean);
@@ -360,13 +367,23 @@ function adminOnly(req, res, next) {
 
 // ─── PUBLIC ROUTES ────────────────────────────────────────────────────────────
 app.get('/api/products', (req, res) => {
-  const { category, search, stock, featured } = req.query;
+  const { category, search, stock, featured, includeOOS } = req.query;
   let sql = 'SELECT p.*, m.name as member_name FROM products p LEFT JOIN members m ON p.member_id=m.id WHERE 1=1';
   const params = [];
   if (category && category !== 'All') { sql += ' AND p.category=?'; params.push(category); }
   if (search) { sql += ' AND (p.name LIKE ? OR p.description LIKE ? OR p.subcategory LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
   if (stock) { sql += ' AND p.stock=?'; params.push(stock); }
   if (featured === '1') { sql += ' AND p.featured=1'; }
+
+  // Hide sold-out products from the storefront. The admin passes includeOOS=1 so
+  // it can still see and manage them, and an explicit stock= filter is honoured
+  // so "show me only out of stock" keeps working in the admin.
+  // Controlled by the hide_out_of_stock setting (default on).
+  const hideOOS = getSettingValue('hide_out_of_stock', '1') === '1';
+  if (hideOOS && includeOOS !== '1' && !stock) {
+    sql += " AND (p.stock IS NULL OR p.stock != 'out_stock')";
+  }
+
   sql += ' ORDER BY p.featured DESC, p.sort_order ASC, p.created_at DESC';
   res.json(db.prepare(sql).all(params));
 });
