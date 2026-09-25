@@ -4,18 +4,8 @@
 // the list view stripped the "@ $65.24" price suffix and the delete matcher did
 // not, so deleting an item matched zero rows and reported success anyway.
 
-// Mirrors decomposeItem() in server.js.
-function decomposeItem(s) {
-  let rest = String(s || '').trim();
-  let qtyPrefix = '', suffix = '';
-  let m;
-  if ((m = rest.match(/^(\d+\s*[xX×]\s+)([\s\S]+)$/))) { qtyPrefix = m[1]; rest = m[2]; }
-  if ((m = rest.match(/^([\s\S]*?)(\s*@\s*\$?[\d,]+\.?\d*\s*)$/))) { rest = m[1]; suffix = m[2] + suffix; }
-  if ((m = rest.match(/^([\s\S]*?)(\s*\(SKU\s[^)]*\)\s*)$/i)))     { rest = m[1]; suffix = m[2] + suffix; }
-  if ((m = rest.match(/^([\s\S]+?)(\s+[xX×]\s*\d+)$/)))            { rest = m[1]; suffix = m[2] + suffix; }
-  return { qtyPrefix, name: rest.trim(), suffix };
-}
-const parseItemName = s => decomposeItem(s).name;
+// Uses the real shared module — not a copy — so this can't drift from production.
+const { decomposeItem, parseItemName } = require('../itemNames');
 
 let passed = 0, failed = 0;
 const eq = (n, a, e) => {

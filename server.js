@@ -9,6 +9,14 @@ const multer = require('multer');
 const cheerio = require('cheerio');
 const puppeteer = require('puppeteer-core');
 
+// Local modules. Declared up here because startup code further down calls
+// them — a `const` used before its declaration line throws, and inside a
+// try/catch that failure would be silent.
+const { decomposeItem, parseItemName, splitItemParts, itemKey } = require('./itemNames');
+const { computeItemGroups } = require('./itemView');
+const SkuCatalog = require('./skuCatalog');
+const OrderMerge = require('./orderMerge');
+
 // Find Chrome/Chromium on Mac
 const CHROME_PATHS = [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -277,6 +285,14 @@ function importBaselineOrders(db, { force = false } = {}) {
 try { importBaselineOrders(db); }
 catch (e) { console.error('⚠️  baseline import failed:', e.message); }
 
+// Collapse duplicate rows left behind by the bot API (see orderMerge.js).
+// Idempotent: once merged, later startups find nothing to do.
+try { OrderMerge.mergeDuplicateOrders(db); }
+catch (e) { console.error('⚠️  duplicate merge failed:', e.message); }
+
+try { SkuCatalog.ensureSkuTables(db); }
+catch (e) { console.error('⚠️  sku catalog setup failed:', e.message); }
+
 // Seed default settings
 const defaultSettings = {
   business_name: 'Your Business Name',
@@ -320,43 +336,12 @@ function auth(req, res, next) {
   try { req.admin = jwt.verify(token, JWT_SECRET); next(); }
   catch(e) { res.status(401).json({ error: 'Invalid token' }); }
 }
-// ─── ITEM STRING PARSING ─────────────────────────────────────────────────────
-// Items are stored as display strings built by the scraper, e.g.
-//   "2x Pokemon TCG: Booster Bundle (SKU 10-10451-115) @ $35.14"
-// Listing, renaming and deleting all need the bare product name out of that, and
-// they MUST agree. They previously each had their own copy of the logic and the
-// copies disagreed — the list view stripped the "@ $65.24" price suffix but the
-// delete matcher did not, so deleting an item silently matched nothing and
-// reported success while removing zero rows.
-function decomposeItem(s) {
-  let rest = String(s || '').trim();
-  let qtyPrefix = '', suffix = '';
-  let m;
-
-  // Leading quantity: "2x "
-  if ((m = rest.match(/^(\d+\s*[xX×]\s+)([\s\S]+)$/))) { qtyPrefix = m[1]; rest = m[2]; }
-  // Trailing price: " @ $65.24"
-  if ((m = rest.match(/^([\s\S]*?)(\s*@\s*\$?[\d,]+\.?\d*\s*)$/))) { rest = m[1]; suffix = m[2] + suffix; }
-  // Trailing SKU: " (SKU 10-10451-115)"
-  if ((m = rest.match(/^([\s\S]*?)(\s*\(SKU\s[^)]*\)\s*)$/i)))     { rest = m[1]; suffix = m[2] + suffix; }
-  // Trailing quantity: " x2"
-  if ((m = rest.match(/^([\s\S]+?)(\s+[xX×]\s*\d+)$/)))            { rest = m[1]; suffix = m[2] + suffix; }
-
-  return { qtyPrefix, name: rest.trim(), suffix };
-}
-
-function parseItemName(s) { return decomposeItem(s).name; }
 
 function getSettingValue(key, fallback = null) {
   try {
     const row = db.prepare('SELECT value FROM settings WHERE key=?').get([key]);
     return row ? row.value : fallback;
   } catch (_) { return fallback; }
-}
-
-// One stored element can hold several items joined by " | " or newlines.
-function splitItemParts(raw) {
-  return String(raw || '').split(/\s*\|\s*|\n+/).map(p => p.trim()).filter(Boolean);
 }
 
 function adminOnly(req, res, next) {
@@ -962,17 +947,29 @@ app.post('/api/bot/orders', (req, res) => {
   const key = req.headers['x-bot-key'];
   if (key !== BOT_API_KEY) return res.status(401).json({ error: 'Unauthorized' });
   const orders = req.body.orders || [];
-  let inserted = 0;
+  let inserted = 0, merged = 0;
   for (const o of orders) {
     try {
-      db.prepare(`INSERT OR IGNORE INTO bot_orders
+      // If the email scraper already has this order, fill in what the bot
+      // knows (buyer, account, address) instead of inserting a second row.
+      // INSERT OR IGNORE never prevented this: order_number isn't unique.
+      const existing = OrderMerge.findExisting(db, o.order_number, o.retailer);
+      if (existing) {
+        OrderMerge.fillExisting(db, existing, {
+          ...o,
+          items: o.items && o.items.length ? JSON.stringify(o.items) : null,
+        });
+        merged++;
+        continue;
+      }
+      db.prepare(`INSERT INTO bot_orders
         (email_id,subject,from_email,category,retailer,order_number,account_email,order_date,delivered_date,shipping_name,shipping_address,status,items,order_total,refunded_amount,notes,raw_snippet,received_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
         .run([o.email_id||null,o.subject||null,o.from_email||null,o.category||'Other',o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||'Confirmed',JSON.stringify(o.items||[]),o.order_total||0,o.refunded_amount||0,o.notes||null,o.raw_snippet||null,o.received_at||null]);
       inserted++;
     } catch(e) {}
   }
-  res.json({ inserted });
+  res.json({ inserted, merged });
 });
 
 // ── Item view endpoint: expand orders → per-item rows, merge by SKU+cost ───────
@@ -993,116 +990,68 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
 
   const orders = db.prepare(sql).all(params);
 
-  function parseQty(str) {
-    const m = str.match(/^(\d+)\s*[xX×]\s+/) || str.match(/\s+[xX×]\s*(\d+)$/);
-    return m ? parseInt(m[1]) : 1;
-  }
-  function parsePrice(str) {
-    // Extracts "@ $40.00" price suffix added by scraper
-    const m = String(str||'').match(/@\s*\$?([\d,]+\.?\d*)/);
-    return m ? parseFloat(m[1].replace(/,/g,'')) : null;
-  }
-  // Shared with the rename and delete endpoints — see decomposeItem().
-  const parseName = parseItemName;
+  let pricingRows = [];
+  try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch(_) {}
+  res.json(computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db)));
+});
 
-  // groups keyed by name only — same SKU always merges into one row.
-  // Costs are accumulated and averaged (weighted by qty) at the end.
-  const groups = {};
-  for (const order of orders) {
-    let arr; try { arr = JSON.parse(order.items||'[]'); } catch(_) { arr = []; }
-    if (!arr.length) continue;
+// ── Product catalog (see skuCatalog.js) ─────────────────────────────────────
+// Links store titles to short product names. Editing here never rewrites order
+// data — the item view regroups from these links on its next load.
+app.get('/api/admin/sku-products', auth, adminOnly, (req, res) => {
+  res.json(SkuCatalog.listProducts(db));
+});
 
-    // Expand items separated by " | " or newlines
-    const expanded = [];
-    for (const raw of arr) {
-      String(raw||'').split(/\s*\|\s*|\n+/).map(p => p.trim()).filter(Boolean).forEach(p => expanded.push(p));
+// Create / rename / merge a product and link store titles to it, in one call.
+app.post('/api/admin/sku-products/save', auth, adminOnly, (req, res) => {
+  try {
+    const { productId, name, rawNames, mergeIntoId, buyer_fee, sale_price } = req.body || {};
+    const id = SkuCatalog.saveProduct(db, {
+      productId: productId || null,
+      name,
+      rawNames: Array.isArray(rawNames) ? rawNames : [],
+      mergeIntoId: mergeIntoId || null,
+    });
+    if (buyer_fee !== undefined || sale_price !== undefined) {
+      db.prepare('INSERT OR REPLACE INTO bot_sku_prices (sku, buyer_fee, sale_price) VALUES (?,?,?)')
+        .run([SkuCatalog.productSkuKey(id), parseFloat(buyer_fee) || 0, parseFloat(sale_price) || 0]);
     }
-    if (!expanded.length) continue;
-
-    // Calculate order-level cost components
-    const orderSubtotal = order.order_total || 0;
-    const taxAmount     = order.tax_amount  || 0;
-    const shipCost      = order.ship_cost   || 0;
-    const finderFee     = order.finder_fee  || 0;
-
-    // Check if items have embedded prices (scraped format: "3x ETB @ $40.00")
-    const itemPrices  = expanded.map(s => parsePrice(s));
-    const hasPrices   = itemPrices.some(p => p !== null);
-    // Subtotal from item prices (for proportional split)
-    const priceSubtotal = hasPrices
-      ? expanded.reduce((sum, s, i) => sum + (itemPrices[i] || 0) * parseQty(s), 0) || 1
-      : null;
-    const totalOrderQty = expanded.reduce((s,i) => s + parseQty(i), 0) || 1;
-
-    for (let idx = 0; idx < expanded.length; idx++) {
-      const s     = expanded[idx];
-      const name  = parseName(s);
-      const qty   = parseQty(s);
-      const iPrice = itemPrices[idx]; // may be null
-
-      let unitItem, unitTax, unitShip, unitFinder;
-
-      if (hasPrices && priceSubtotal && iPrice !== null) {
-        // Proportional split: item's share = (unitPrice × qty) / totalItemValue
-        const itemValue = iPrice * qty;
-        const share     = itemValue / priceSubtotal;
-        unitItem   = iPrice;                            // actual price per unit
-        unitTax    = (taxAmount  * share) / qty;        // proportional tax per unit
-        unitShip   = (shipCost   * share) / qty;        // proportional ship per unit
-        unitFinder = (finderFee  * share) / qty;
-      } else {
-        // Fallback: even split across all units
-        unitItem   = orderSubtotal / totalOrderQty;
-        unitTax    = taxAmount     / totalOrderQty;
-        unitShip   = shipCost      / totalOrderQty;
-        unitFinder = finderFee     / totalOrderQty;
-      }
-      const unitTotal = unitItem + unitTax + unitShip + unitFinder;
-
-      const key = name.toLowerCase();
-      if (!groups[key]) {
-        groups[key] = {
-          name, qty: 0,
-          _sumItem: 0, _sumTax: 0, _sumShip: 0, _sumFinder: 0, _sumTotal: 0,
-          // retailers is needed so the UI can filter this view by store. Without
-          // it the retailer dropdown had nothing to match on and silently did
-          // nothing, showing every store's items under whichever store was picked.
-          statuses: {}, addresses: [], retailers: []
-        };
-      }
-      groups[key].qty          += qty;
-      groups[key]._sumItem     += unitItem   * qty;
-      groups[key]._sumTax      += unitTax    * qty;
-      groups[key]._sumShip     += unitShip   * qty;
-      groups[key]._sumFinder   += unitFinder * qty;
-      groups[key]._sumTotal    += unitTotal  * qty;
-      const st = order.status || 'Confirmed';
-      groups[key].statuses[st] = (groups[key].statuses[st] || 0) + qty;
-      if (order.shipping_address) groups[key].addresses.push(order.shipping_address);
-      if (order.retailer && !groups[key].retailers.includes(order.retailer)) {
-        groups[key].retailers.push(order.retailer);
-      }
-    }
+    res.json({ productId: id });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
+});
 
-  // Load saved pricing
-  const pricing = {};
-  try { db.prepare('SELECT * FROM bot_sku_prices').all().forEach(r=>{ pricing[r.sku.toLowerCase()]=r; }); } catch(_) {}
+// Accept the suggested short names for many unlinked rows at once.
+app.post('/api/admin/sku-products/accept', auth, adminOnly, (req, res) => {
+  try {
+    const groups = Array.isArray(req.body?.groups) ? req.body.groups : [];
+    let created = 0, linked = 0;
+    for (const g of groups) {
+      if (!g || !g.name || !Array.isArray(g.rawNames) || !g.rawNames.length) continue;
+      const before = SkuCatalog.listProducts(db).length;
+      const id = SkuCatalog.createProduct(db, g.name);
+      if (SkuCatalog.listProducts(db).length > before) created++;
+      linked += SkuCatalog.linkTitles(db, id, g.rawNames);
+    }
+    res.json({ created, linked });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
 
-  const result = Object.values(groups).map(g => {
-    const p    = pricing[g.name.toLowerCase()] || {};
-    const qty  = g.qty || 1;
-    // Weighted-average per-unit costs across all orders containing this SKU
-    const perUnitItem   = Math.round(g._sumItem   / qty * 100) / 100;
-    const perUnitTax    = Math.round(g._sumTax    / qty * 100) / 100;
-    const perUnitShip   = Math.round(g._sumShip   / qty * 100) / 100;
-    const perUnitFinder = Math.round(g._sumFinder / qty * 100) / 100;
-    const perUnitTotal  = Math.round(g._sumTotal  / qty * 100) / 100;
-    const { _sumItem, _sumTax, _sumShip, _sumFinder, _sumTotal, ...rest } = g;
-    return { ...rest, perUnitItem, perUnitTax, perUnitShip, perUnitFinder, perUnitTotal,
-             buyer_fee: p.buyer_fee||0, sale_price: p.sale_price||0 };
-  }).sort((a,b)=>a.name.localeCompare(b.name));
-  res.json(result);
+// Unlink one store title — it reappears as its own unlinked row.
+app.delete('/api/admin/sku-aliases', auth, adminOnly, (req, res) => {
+  const { rawName } = req.body || {};
+  if (!rawName) return res.status(400).json({ error: 'rawName required' });
+  SkuCatalog.unlinkTitle(db, rawName);
+  res.json({ ok: true });
+});
+
+// Remove a product. Its orders are untouched; their titles become unlinked.
+app.delete('/api/admin/sku-products/:id', auth, adminOnly, (req, res) => {
+  SkuCatalog.deleteProduct(db, Number(req.params.id));
+  res.json({ ok: true });
 });
 
 // Save per-SKU pricing (buyer_fee + sale_price)
@@ -1130,7 +1079,7 @@ app.patch('/api/admin/bot-items/rename', auth, adminOnly, (req, res) => {
         // Match on the bare name, then rebuild keeping the quantity prefix and
         // any price/SKU suffix intact.
         const d = decomposeItem(p);
-        if (d.name.toLowerCase() === String(oldName).trim().toLowerCase()) {
+        if (itemKey(d.name) === itemKey(oldName)) {
           changed = true;
           return d.qtyPrefix + newName + d.suffix;
         }
@@ -1156,15 +1105,17 @@ app.patch('/api/admin/bot-items/rename', auth, adminOnly, (req, res) => {
 
 // Delete all orders that contain a specific item name; adds order#s to blocklist
 app.delete('/api/admin/bot-items/by-name', auth, adminOnly, (req, res) => {
-  const { name } = req.body;
-  if (!name) return res.status(400).json({ error: 'name required' });
+  // A product row can represent several store titles (see skuCatalog.js), so
+  // accept the full list. A single `name` is still accepted for compatibility.
+  const { name, names } = req.body || {};
+  const targets = new Set([...(Array.isArray(names) ? names : []), ...(name ? [name] : [])].map(itemKey).filter(Boolean));
+  if (!targets.size) return res.status(400).json({ error: 'name or names required' });
   const orders = db.prepare('SELECT id, order_number, items FROM bot_orders').all();
-  const target = String(name).trim().toLowerCase();
   const toDelete = [];
   for (const o of orders) {
     let arr; try { arr = JSON.parse(o.items||'[]'); } catch(_) { arr = []; }
-    const names = arr.flatMap(splitItemParts).map(parseItemName);
-    if (names.some(n => n.toLowerCase() === target)) toDelete.push(o);
+    const titles = arr.flatMap(splitItemParts).map(parseItemName);
+    if (titles.some(n => targets.has(itemKey(n)))) toDelete.push(o);
   }
   // Add to blocklist
   try {
@@ -1198,6 +1149,9 @@ app.get('/api/admin/bot-orders/refresh-status', auth, adminOnly, (req, res) => {
 
 app.post('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
   const { category, retailer, order_number, account_email, order_date, shipping_name, shipping_address, status, items, order_total, notes } = req.body;
+  // Refuse a manual duplicate rather than silently creating a second row.
+  const dup = OrderMerge.findExisting(db, order_number, retailer);
+  if (dup) return res.status(409).json({ error: `Order #${order_number} already exists`, id: dup.id });
   const r = db.prepare(`INSERT INTO bot_orders (category,retailer,order_number,account_email,order_date,shipping_name,shipping_address,status,items,order_total,notes,received_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
     .run([category||'Other',retailer||null,order_number||null,account_email||null,order_date||null,shipping_name||null,shipping_address||null,status||'Confirmed',JSON.stringify(items||[]),parseFloat(order_total)||0,notes||null]);

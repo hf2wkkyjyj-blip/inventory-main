@@ -423,6 +423,11 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   .bot-stat.s-pink{border-color:#8a3468;} .bot-stat.s-pink .lbl{color:#f472b6;} .bot-stat.s-pink .val{color:#f472b6;}
   .bot-stat.clickable{cursor:pointer;} .bot-stat.clickable:hover{opacity:.85;}
   .bot-stat.active-filter{outline:2px solid currentColor;outline-offset:-2px;}
+  /* Truncating text cell; full text is shown by the instant #tip tooltip. */
+  .clip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  #tip{position:fixed;z-index:10000;display:none;max-width:440px;padding:7px 10px;border-radius:7px;
+       background:#0b1220;border:1px solid var(--border);color:var(--text);font-size:12px;line-height:1.45;
+       white-space:pre-line;box-shadow:0 8px 24px rgba(0,0,0,.55);pointer-events:none;}
   .drange{font-size:11px;padding:4px 11px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;}
   .drange:hover{color:var(--text);}
   .drange.active{background:#1e3a5f;border-color:#2f6fb5;color:#8fbcf5;font-weight:700;}
@@ -536,6 +541,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
       <input type="text" id="bot-item-search" placeholder="Search item name…" oninput="renderBotItemView()" style="font-size:12px;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:240px;">
       <span id="bot-item-count" style="color:var(--muted);font-size:12px;"></span>
+      <span id="bot-unlinked-banner" style="display:inline-flex;gap:8px;align-items:center;font-size:12px;margin-left:10px;"></span>
     </div>
     <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
@@ -846,20 +852,39 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 
 <!-- ══ MODAL: ITEM EDIT (item view) ═════════════════════════════════════════ -->
 <div class="overlay" id="bot-item-edit-overlay" onclick="if(event.target.id==='bot-item-edit-overlay')closeBotItemEdit()" style="display:none;">
-  <div class="modal" style="width:480px;">
-    <h2 style="margin-bottom:16px;"><i class="fa fa-pen" style="color:var(--accent)"></i> Edit Item</h2>
-    <input type="hidden" id="bie-orig-name">
+  <div class="modal" style="width:560px;max-height:88vh;overflow:auto;">
+    <h2 style="margin-bottom:4px;"><i class="fa fa-box" style="color:var(--accent)"></i> <span id="bie-title">Edit product</span></h2>
+    <div id="bie-sub" style="font-size:12px;color:var(--muted);margin-bottom:16px;"></div>
+
     <div class="form-group" style="margin-bottom:12px;">
-      <label style="font-size:11px;">Item Name <span style="color:var(--muted);font-weight:400;">(rename across all orders)</span></label>
-      <input type="text" id="bie-name" style="width:100%;">
+      <label style="font-size:11px;">Product name <span style="color:var(--muted);font-weight:400;">— short name shown in this list</span></label>
+      <input type="text" id="bie-name" style="width:100%;" placeholder="e.g. Sylveon ex Box">
     </div>
+
+    <div class="form-group" style="margin-bottom:12px;">
+      <label style="font-size:11px;">…or this is the same product as</label>
+      <select id="bie-merge" style="width:100%;" onchange="botItemMergeChanged()">
+        <option value="">— keep as its own product —</option>
+      </select>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;">Pick one to combine these into it. Units, cost and pricing roll together.</div>
+    </div>
+
+    <div class="form-group" style="margin-bottom:14px;">
+      <label style="font-size:11px;">Store titles grouped here</label>
+      <div id="bie-titles" style="border:1px solid var(--border);border-radius:8px;padding:6px 8px;max-height:180px;overflow:auto;font-size:12px;"></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;">Unlink a title if it doesn't belong — it'll reappear as its own row to sort out.</div>
+    </div>
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Buyer Fee ($)</label>
         <input type="number" id="bie-buyer-fee" step="0.01" placeholder="0.00" style="width:100%;"></div>
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Sale Price ($)</label>
         <input type="number" id="bie-sale-price" step="0.01" placeholder="0.00" style="width:100%;"></div>
     </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;">
+
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-ghost btn-sm" id="bie-delete-product" onclick="botDeleteProduct()" style="color:#f87171;display:none;" title="Remove this product. Orders are kept; their titles go back to unlinked.">Remove product</button>
+      <div style="flex:1;"></div>
       <button class="btn btn-ghost btn-sm" onclick="closeBotItemEdit()">Cancel</button>
       <button class="btn btn-primary btn-sm" onclick="saveBotItemEdit()"><i class="fa fa-save"></i> Save</button>
     </div>
@@ -2046,6 +2071,52 @@ function botFilterStatus(s) {
   renderBotOrders();
 }
 
+// ── Instant tooltip ─────────────────────────────────────────────────────────
+// Native title="" tooltips wait ~1s, cancel if the pointer moves at all, and
+// won't reappear until you leave and re-enter — which is why full item names
+// showed up only some of the time. This one shows immediately and follows the
+// cursor. On .clip cells it only appears when the text is actually cut off.
+(function initTip() {
+  const start = () => {
+    if (document.getElementById('tip')) return;
+    const tip = document.createElement('div');
+    tip.id = 'tip';
+    document.body.appendChild(tip);
+    let cur = null;
+
+    const hide = () => { cur = null; tip.style.display = 'none'; };
+    const place = (e) => {
+      const pad = 14;
+      let x = e.clientX + pad, y = e.clientY + pad;
+      const w = tip.offsetWidth, h = tip.offsetHeight;
+      if (x + w > window.innerWidth  - 8) x = e.clientX - w - pad;
+      if (y + h > window.innerHeight - 8) y = e.clientY - h - pad;
+      tip.style.left = Math.max(8, x) + 'px';
+      tip.style.top  = Math.max(8, y) + 'px';
+    };
+
+    document.addEventListener('mouseover', (e) => {
+      const el = e.target.closest && e.target.closest('[data-tip]');
+      if (!el) { if (cur) hide(); return; }
+      if (el === cur) return;
+      // Don't pop a tooltip that just repeats text already fully visible.
+      if (el.classList.contains('clip') && el.scrollWidth <= el.clientWidth + 1) { hide(); return; }
+      const text = el.getAttribute('data-tip');
+      if (!text) { hide(); return; }
+      cur = el;
+      tip.textContent = text;          // textContent: item names can't inject markup
+      tip.style.display = 'block';
+      place(e);
+    });
+    document.addEventListener('mousemove', (e) => { if (cur) place(e); });
+    document.addEventListener('mouseout', (e) => {
+      if (cur && !cur.contains(e.relatedTarget)) hide();
+    });
+    window.addEventListener('scroll', hide, true);
+  };
+  if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
+})();
+
 // ── Date range ──────────────────────────────────────────────────────────────
 let _botRange = 'all';
 
@@ -2194,14 +2265,15 @@ function renderBotOrders() {
     return;
   }
   tbody.innerHTML = page.map(o => {
-    const items = (() => { try { const a=JSON.parse(o.items||'[]'); return Array.isArray(a)?a.join(', '):o.items; } catch(e){ return o.items||''; } })();
+    const itemList = (() => { try { const a=JSON.parse(o.items||'[]'); return Array.isArray(a)?a:[String(o.items||'')]; } catch(e){ return o.items?[String(o.items)]:[]; } })();
+    const items = itemList.join(', ');
     return `<tr>
       <td>${esc(o.category||'Other')}</td>
       <td>${esc(o.retailer||'—')}</td>
       <td style="font-weight:600;">${esc(o.order_number||'—')}</td>
       <td style="color:var(--muted);">${botDateCell(o, status)}</td>
       <td>${botStatusCell(o)}</td>
-      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(items)}">${esc(items||'—')}</td>
+      <td style="max-width:220px;"><div class="clip" data-tip="${esc(itemList.join('\n'))}">${esc(items||'—')}</div></td>
       <td style="text-align:right;font-variant-numeric:tabular-nums;">
         ${o.order_total?'$'+Number(o.order_total).toFixed(2):'—'}
         ${(()=>{const cpu=botLandedPerUnit(o);return cpu?`<div style="font-size:10px;color:#60a5fa;margin-top:1px;">$${cpu.toFixed(2)}/unit</div>`:''})()}
@@ -2406,6 +2478,8 @@ let _botItems = [];
 // entities BEFORE parsing the JS, any name containing an apostrophe terminated
 // the string and the button did nothing at all. Indexes have no such problem.
 let _botItemRows = [];
+let _botOnlyUnlinked = false;
+function botToggleOnlyUnlinked() { _botOnlyUnlinked = !_botOnlyUnlinked; renderBotItemView(); }
 
 async function loadBotItemView(cat) {
   const tbody = document.getElementById('bot-item-tbody');
@@ -2444,7 +2518,19 @@ function renderBotItemView() {
   if (addr) {
     rows = rows.filter(i => (i.addresses || []).some(a => normalizeAddr(a) === addr));
   }
-  document.getElementById('bot-item-count').textContent = rows.length + ' item' + (rows.length !== 1 ? 's' : '');
+  if (_botOnlyUnlinked) rows = rows.filter(i => i.unlinked);
+  document.getElementById('bot-item-count').textContent = rows.length + ' product' + (rows.length !== 1 ? 's' : '');
+
+  // Banner: how many rows are still only suggestions.
+  const unlinkedCount = (_botItems || []).filter(i => i.unlinked).length;
+  const banner = document.getElementById('bot-unlinked-banner');
+  if (banner) {
+    banner.innerHTML = unlinkedCount
+      ? `<span style="color:#fbbf24;">⚠ ${unlinkedCount} not confirmed yet</span>
+         <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;" onclick="botToggleOnlyUnlinked()">${_botOnlyUnlinked ? 'Show all' : 'Show only these'}</button>
+         <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;color:#34d399;" onclick="botAcceptAllSuggestions()"><i class="fa fa-check-double"></i> Confirm all suggestions</button>`
+      : (_botItems && _botItems.length ? '<span style="color:#34d399;">✓ All products confirmed</span>' : '');
+  }
   const tbody = document.getElementById('bot-item-tbody');
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:32px;color:var(--muted);">No items found.</td></tr>';
@@ -2471,12 +2557,39 @@ function renderBotItemView() {
 
     const inStyle = 'width:68px;text-align:right;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 5px;color:var(--text);font-size:11px;font-variant-numeric:tabular-nums;';
 
+    // Which store(s) this product came from — without it there was no way to
+    // tell a Target item from a Sam's Club one in this view.
+    // Hover lists every store title grouped under this product.
+    const titlesTip = (item.rawNames || []).length
+      ? 'Store titles grouped here:\n' + item.rawNames.map(t => '• ' + t).join('\n')
+      : '';
+    const retailerLine = (item.retailers || []).length
+      ? `<div style="font-size:10px;color:var(--muted);margin-top:2px;cursor:help;" data-tip="${esc(titlesTip)}">${esc(item.retailers.join(' · '))} · ${item.orders || 0} order${item.orders === 1 ? '' : 's'}${(item.rawNames||[]).length > 1 ? ` · ${item.rawNames.length} titles` : ''}</div>`
+      : '';
+    // Not yet confirmed: the name is only a suggestion. One click accepts it.
+    const suggestChip = item.unlinked
+      ? `<span data-tip="Suggested name — click ✓ to confirm, or ✎ to fix it" style="font-size:9px;font-weight:700;letter-spacing:.04em;color:#fbbf24;border:1px solid #8a6a10;border-radius:4px;padding:0 4px;margin-left:6px;vertical-align:middle;">SUGGESTED</span>
+         <button onclick="botAcceptSuggestion(${idx})" data-tip="Confirm this name" style="background:none;border:none;color:#34d399;cursor:pointer;padding:0 2px;font-size:12px;vertical-align:middle;"><i class="fa fa-check"></i></button>`
+      : '';
+
+    // Unknown ≠ free. A $0.00 here used to mean "we have no price or total at
+    // all", which looked like a real (and wrong) cost.
+    const landedHtml = item.costUnknown
+      ? `<span style="color:var(--muted);" data-tip="No price or order total recorded for these orders">—</span>`
+      : `<span style="color:#60a5fa;cursor:pointer;border-bottom:1px dotted #60a5fa;"
+           onclick="showLandedBreakdown(${idx}, this)">$${landed.toFixed(2)}${item.taxEstimated ? '<sup style="color:var(--muted);font-size:9px;margin-left:1px;">est</sup>' : ''}</span>`;
+
     return `<tr style="border-bottom:1px solid var(--border);">
-      <td style="padding:8px 12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(item.name)}">${esc(item.name)}</td>
+      <td style="padding:8px 12px;max-width:260px;">
+        <div style="display:flex;align-items:center;min-width:0;">
+          <div class="clip" data-tip="${esc(item.name)}" style="min-width:0;${item.unlinked ? 'color:#fcd9a0;' : ''}">${esc(item.name)}</div>
+          ${suggestChip}
+        </div>
+        ${retailerLine}
+      </td>
       <td style="padding:8px;text-align:center;font-weight:700;">${item.qty}</td>
       <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums;">
-        <span style="color:#60a5fa;cursor:pointer;border-bottom:1px dotted #60a5fa;" title="${esc(tip)}"
-          onclick="showLandedBreakdown(${idx}, this)">$${landed.toFixed(2)}</span>
+        ${landedHtml}
       </td>
       <td style="padding:8px;text-align:right;">
         <input type="number" step="0.01" value="${buyerFee||''}" placeholder="0.00" style="${inStyle}"
@@ -2506,7 +2619,9 @@ function showLandedBreakdown(idx, anchorEl) {
 
   const rowsHtml = [
     ['Item',   item.perUnitItem],
-    ['Tax',    item.perUnitTax],
+    // Estimated = recovered from the order total because the email's tax line
+    // was never captured. Say so, rather than presenting it as read from source.
+    [item.taxEstimated ? 'Tax <span style="font-size:10px;opacity:.7;">(est. from total)</span>' : 'Tax', item.perUnitTax],
     ['Ship',   item.perUnitShip],
     ['Finder', item.perUnitFinder],
   ].map(([label, v]) => `
@@ -2541,9 +2656,9 @@ function showLandedBreakdown(idx, anchorEl) {
 async function saveBotSkuField(idx, field, inputEl) {
   const item = _botItemRows[idx];
   if (!item) { console.warn('saveBotSkuField: no row at index', idx); return; }
-  const name = item.name;
   item[field] = parseFloat(inputEl.value) || 0;
-  await api('PATCH', '/admin/bot-items/sku', { sku: name, buyer_fee: item.buyer_fee||0, sale_price: item.sale_price||0 });
+  // skuKey is "#p<id>" for a linked product, so prices survive renaming it.
+  await api('PATCH', '/admin/bot-items/sku', { sku: item.skuKey || item.name, buyer_fee: item.buyer_fee||0, sale_price: item.sale_price||0 });
   // Update profit cell in this row without full re-render
   const row   = inputEl.closest('tr');
   const profit = (item.sale_price||0) > 0 ? (item.sale_price||0) - (item.perUnitTotal||0) - (item.buyer_fee||0) : null;
@@ -2555,43 +2670,148 @@ async function saveBotSkuField(idx, field, inputEl) {
 }
 
 // ── Item view edit/delete ─────────────────────────────────────────────────────
-function openBotItemEdit(idx) {
+// ── Product editor ──────────────────────────────────────────────────────────
+// Edits the SKU catalog, never the orders: the store titles are linked to a
+// product with a short name, and the list regroups from those links on reload.
+// (This replaced a "rename" that rewrote every order's item text — and was
+// undone by the next scraped email carrying the long title again.)
+let _bieItem = null;
+let _bieProducts = [];
+
+async function openBotItemEdit(idx) {
   const item = _botItemRows[idx];
   if (!item) { alert('Could not open this item for editing — try refreshing.'); return; }
-  document.getElementById('bie-orig-name').value  = item.name;
-  document.getElementById('bie-name').value        = item.name;
-  document.getElementById('bie-buyer-fee').value   = item.buyer_fee  || '';
-  document.getElementById('bie-sale-price').value  = item.sale_price || '';
+  _bieItem = item;
+
+  document.getElementById('bie-title').textContent = item.unlinked ? 'Confirm product' : 'Edit product';
+  document.getElementById('bie-sub').textContent = item.unlinked
+    ? 'Not linked yet — the name below is a suggestion. Save to confirm it (or fix it first).'
+    : `${item.qty} unit${item.qty === 1 ? '' : 's'} across ${item.orders || 0} order${item.orders === 1 ? '' : 's'}`;
+  document.getElementById('bie-name').value       = item.name;
+  document.getElementById('bie-buyer-fee').value  = item.buyer_fee  || '';
+  document.getElementById('bie-sale-price').value = item.sale_price || '';
+  document.getElementById('bie-delete-product').style.display = item.productId ? '' : 'none';
+
+  renderBieTitles();
+
+  const sel = document.getElementById('bie-merge');
+  sel.innerHTML = '<option value="">— keep as its own product —</option>';
   document.getElementById('bot-item-edit-overlay').style.display = 'flex';
+
+  _bieProducts = (await api('GET', '/admin/sku-products')) || [];
+  sel.innerHTML = '<option value="">— keep as its own product —</option>' +
+    _bieProducts
+      .filter(p => p.id !== item.productId)
+      .map(p => `<option value="${p.id}">${esc(p.name)} (${p.titles.length} title${p.titles.length === 1 ? '' : 's'})</option>`)
+      .join('');
+  botItemMergeChanged();
 }
+
+function renderBieTitles() {
+  const item = _bieItem;
+  const box = document.getElementById('bie-titles');
+  const titles = item.rawNames || [];
+  if (!titles.length) { box.innerHTML = '<div style="color:var(--muted);">No store titles.</div>'; return; }
+  box.innerHTML = titles.map((t, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:4px 0;${i ? 'border-top:1px solid var(--border);' : ''}">
+      <div style="flex:1;line-height:1.35;">${esc(t)}</div>
+      ${item.productId
+        ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;" onclick="botUnlinkTitle(${i})">Unlink</button>`
+        : ''}
+    </div>`).join('');
+}
+
+// Merging into an existing product means its name wins — lock the name box so
+// it's obvious what will happen.
+function botItemMergeChanged() {
+  const sel  = document.getElementById('bie-merge');
+  const name = document.getElementById('bie-name');
+  const target = _bieProducts.find(p => String(p.id) === sel.value);
+  if (target) { name.value = target.name; name.disabled = true; }
+  else        { name.disabled = false; if (_bieItem && name.value === '') name.value = _bieItem.name; }
+}
+
 function closeBotItemEdit() {
   document.getElementById('bot-item-edit-overlay').style.display = 'none';
+  document.getElementById('bie-name').disabled = false;
+  _bieItem = null;
 }
-async function saveBotItemEdit() {
-  const origName  = document.getElementById('bie-orig-name').value;
-  const newName   = document.getElementById('bie-name').value.trim();
-  const buyerFee  = parseFloat(document.getElementById('bie-buyer-fee').value)  || 0;
-  const salePrice = parseFloat(document.getElementById('bie-sale-price').value) || 0;
-  if (!newName) return;
-  // Rename if name changed
-  if (newName !== origName) {
-    const r = await api('PATCH', '/admin/bot-items/rename', { oldName: origName, newName });
-    if (r) console.log(`Renamed across ${r.updated} order(s)`);
-  }
-  // Save pricing
-  await api('PATCH', '/admin/bot-items/sku', { sku: newName, buyer_fee: buyerFee, sale_price: salePrice });
-  closeBotItemEdit();
-  // Reload current category view
+
+function botReloadItemView() {
   const cat = document.getElementById('bot-cat-tabs').dataset.active;
   if (cat && cat !== 'All') loadBotItemView(cat);
 }
+
+async function saveBotItemEdit() {
+  const item = _bieItem;
+  if (!item) return;
+  const name        = document.getElementById('bie-name').value.trim();
+  const mergeIntoId = document.getElementById('bie-merge').value || null;
+  if (!name && !mergeIntoId) { alert('Give the product a name.'); return; }
+
+  const r = await api('POST', '/admin/sku-products/save', {
+    productId:   item.productId || null,
+    name,
+    rawNames:    item.rawNames || [],
+    mergeIntoId,
+    buyer_fee:   parseFloat(document.getElementById('bie-buyer-fee').value)  || 0,
+    sale_price:  parseFloat(document.getElementById('bie-sale-price').value) || 0,
+  });
+  if (!r || r.error) { alert((r && r.error) || 'Could not save.'); return; }
+  closeBotItemEdit();
+  botReloadItemView();   // regroup from the new links
+}
+
+async function botUnlinkTitle(i) {
+  const item = _bieItem;
+  const title = item && item.rawNames[i];
+  if (!title) return;
+  if (!confirm(`Unlink this store title from "${item.name}"?\n\n${title}\n\nIt will show up as its own row.`)) return;
+  await api('DELETE', '/admin/sku-aliases', { rawName: title });
+  item.rawNames = item.rawNames.filter((_, j) => j !== i);
+  renderBieTitles();
+  botReloadItemView();
+}
+
+async function botDeleteProduct() {
+  const item = _bieItem;
+  if (!item || !item.productId) return;
+  if (!confirm(`Remove the product "${item.name}"?\n\nNo orders are deleted — their store titles just go back to unlinked.`)) return;
+  await api('DELETE', '/admin/sku-products/' + item.productId);
+  closeBotItemEdit();
+  botReloadItemView();
+}
+
+// One-click confirm of a suggested name, straight from the row.
+async function botAcceptSuggestion(idx) {
+  const item = _botItemRows[idx];
+  if (!item || !item.unlinked) return;
+  await api('POST', '/admin/sku-products/accept', { groups: [{ name: item.name, rawNames: item.rawNames }] });
+  botReloadItemView();
+}
+
+async function botAcceptAllSuggestions() {
+  const unlinked = (_botItems || []).filter(i => i.unlinked);
+  if (!unlinked.length) return;
+  if (!confirm(`Confirm the suggested names for ${unlinked.length} product${unlinked.length === 1 ? '' : 's'}?\n\nYou can still edit, merge or unlink any of them afterwards.`)) return;
+  const r = await api('POST', '/admin/sku-products/accept', {
+    groups: unlinked.map(i => ({ name: i.name, rawNames: i.rawNames })),
+  });
+  if (r && !r.error) botReloadItemView();
+}
+
 async function deleteBotItemByName(idx) {
   const item = _botItemRows[idx];
   if (!item) { alert('Could not find this item — try refreshing.'); return; }
-  const name = item.name;
-  const qty  = item.qty;
-  if (!confirm(`Delete ALL orders containing "${name}" (${qty} units)?\n\nThis cannot be undone. Those orders will also be blocked from being re-created by the scraper.`)) return;
-  const r = await api('DELETE', '/admin/bot-items/by-name', { name });
+  const name   = item.name;
+  const qty    = item.qty;
+  const titles = item.rawNames && item.rawNames.length ? item.rawNames : [name];
+  if (!confirm(`Delete ALL ${item.orders || ''} order(s) for "${name}" (${qty} units)?\n\n` +
+               (titles.length > 1 ? `This covers ${titles.length} store titles grouped under this product.\n\n` : '') +
+               `This cannot be undone. Those orders will also be blocked from being re-created by the scraper.`)) return;
+  // Send every store title in the group — the short display name matches none
+  // of the order text on its own.
+  const r = await api('DELETE', '/admin/bot-items/by-name', { names: titles });
   if (r) {
     alert(`Deleted ${r.deleted} order(s).`);
     const cat = document.getElementById('bot-cat-tabs').dataset.active;
