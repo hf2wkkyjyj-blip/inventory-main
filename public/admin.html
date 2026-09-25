@@ -851,7 +851,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 </div>
 
 <!-- ══ MODAL: ITEM EDIT (item view) ═════════════════════════════════════════ -->
-<div class="overlay" id="bot-item-edit-overlay" onclick="if(event.target.id==='bot-item-edit-overlay')closeBotItemEdit()" style="display:none;">
+<div class="overlay" id="bot-item-edit-overlay" onclick="if(event.target.id==='bot-item-edit-overlay')closeBotItemEdit()">
   <div class="modal" style="width:560px;max-height:88vh;overflow:auto;">
     <h2 style="margin-bottom:4px;"><i class="fa fa-box" style="color:var(--accent)"></i> <span id="bie-title">Edit product</span></h2>
     <div id="bie-sub" style="font-size:12px;color:var(--muted);margin-bottom:16px;"></div>
@@ -2696,7 +2696,10 @@ async function openBotItemEdit(idx) {
 
   const sel = document.getElementById('bie-merge');
   sel.innerHTML = '<option value="">— keep as its own product —</option>';
-  document.getElementById('bot-item-edit-overlay').style.display = 'flex';
+  // Every .overlay is hidden by opacity/pointer-events and shown by the `open`
+  // class. Setting style.display here (as this dialog used to) leaves it fully
+  // transparent and unclickable — the edit button appeared to do nothing.
+  document.getElementById('bot-item-edit-overlay').classList.add('open');
 
   _bieProducts = (await api('GET', '/admin/sku-products')) || [];
   sel.innerHTML = '<option value="">— keep as its own product —</option>' +
@@ -2732,7 +2735,7 @@ function botItemMergeChanged() {
 }
 
 function closeBotItemEdit() {
-  document.getElementById('bot-item-edit-overlay').style.display = 'none';
+  document.getElementById('bot-item-edit-overlay').classList.remove('open');
   document.getElementById('bie-name').disabled = false;
   _bieItem = null;
 }
@@ -2860,13 +2863,15 @@ function botEditRow(id) {
   document.getElementById('bot-edit-tax').value = o.tax_amount || '';
   document.getElementById('bot-edit-ship').value = o.ship_cost || '';
   document.getElementById('bot-edit-finder').value = o.finder_fee || '';
-  document.getElementById('bot-edit-overlay').style.display = 'flex';
+  // Shown via the `open` class like every other .overlay — style.display left it
+  // at opacity:0 / pointer-events:none, i.e. invisible and unclickable.
+  document.getElementById('bot-edit-overlay').classList.add('open');
   // Store qty for calc
   document.getElementById('bot-edit-overlay').dataset.qty = botTotalQty(o);
   botEditCalc();
 }
 function closeBotEdit() {
-  document.getElementById('bot-edit-overlay').style.display = 'none';
+  document.getElementById('bot-edit-overlay').classList.remove('open');
 }
 function botEditCalc() {
   const qty   = parseInt(document.getElementById('bot-edit-overlay').dataset.qty) || 1;
