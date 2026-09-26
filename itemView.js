@@ -11,6 +11,7 @@
 // load, which is what makes an edit regroup everything immediately.
 
 const { parseItemName, parseItemPrice, splitItemParts, itemKey, shortenName } = require('./itemNames');
+const { carrierOf, trackingUrl } = require('./carriers');
 
 const productSkuKey = id => `#p${id}`;
 
@@ -107,6 +108,7 @@ function computeItemGroups(orders, pricingRows, catalog) {
           qty: 0, statuses: {}, addresses: [], retailers: [],
           _rawNames: new Map(),       // itemKey → the store title as seen
           _orderIds: new Set(),
+          _lines:    new Map(),       // order id → this product's line in that order
           _sumItem: 0, _sumTax: 0, _sumShip: 0, _sumFinder: 0, _sumTotal: 0,
           _taxEstUnits: 0, _unknownCostUnits: 0,
         };
@@ -116,7 +118,29 @@ function computeItemGroups(orders, pricingRows, catalog) {
 
       const rk = itemKey(rawName);
       if (!g._rawNames.has(rk)) g._rawNames.set(rk, rawName);
-      g._orderIds.add(order.id != null ? order.id : `${order.order_number}|${idx}`);
+      const oKey = order.id != null ? order.id : `${order.order_number}|${idx}`;
+      g._orderIds.add(oKey);
+
+      // Per-order detail, so a product row can be expanded to show every order
+      // behind it — tracking number, carrier link, status, dates, ship-to.
+      const line = g._lines.get(oKey);
+      if (line) line.qty += qty;                 // same product twice in one order
+      else g._lines.set(oKey, {
+        id:              order.id ?? null,
+        order_number:    order.order_number || null,
+        retailer:        order.retailer || null,
+        status:          order.status || 'Confirmed',
+        qty,
+        tracking:        order.tracking || null,
+        carrier:         carrierOf(order.tracking),
+        trackUrl:        trackingUrl(order.tracking),
+        tracking_status: order.tracking_status || null,
+        expected_date:   order.expected_date || null,
+        delivered_date:  order.delivered_date || null,
+        order_date:      order.order_date || null,
+        shipping_name:   order.shipping_name || null,
+        shipping_address: order.shipping_address || null,
+      });
 
       if (taxEstimated) g._taxEstUnits      += qty;
       if (!costKnown)   g._unknownCostUnits += qty;
@@ -150,14 +174,24 @@ function computeItemGroups(orders, pricingRows, catalog) {
 
     const qty = g.qty || 1;
     const {
-      _rawNames, _orderIds, _sumItem, _sumTax, _sumShip, _sumFinder, _sumTotal,
+      _rawNames, _orderIds, _lines, _sumItem, _sumTax, _sumShip, _sumFinder, _sumTotal,
       _taxEstUnits, _unknownCostUnits, ...rest
     } = g;
+
+    // Soonest-arriving first; anything already delivered sinks to the bottom.
+    const orderLines = [..._lines.values()].sort((a, b) => {
+      const ad = a.status === 'Delivered', bd = b.status === 'Delivered';
+      if (ad !== bd) return ad ? 1 : -1;
+      return String(a.expected_date || '9999').localeCompare(String(b.expected_date || '9999'))
+          || String(a.order_number || '').localeCompare(String(b.order_number || ''));
+    });
 
     return {
       ...rest,
       rawNames, skuKey,
       orders:        _orderIds.size,
+      orderLines,
+      trackingCount: orderLines.filter(l => l.tracking).length,
       perUnitItem:   round2(_sumItem   / qty),
       perUnitTax:    round2(_sumTax    / qty),
       perUnitShip:   round2(_sumShip   / qty),

@@ -94,12 +94,26 @@ const seed = [
   ['903', 'Target',         JSON.stringify([`2x ${TECH_TARGET} @ $19.99`]), 43.39],
   ['P04', 'Pokemon Center', JSON.stringify([`1x ${TECH_PKC} (SKU 10-10449-122) @ $19.99`]), 21.70],
 ];
+// Shipped orders with tracking, for the expand-to-see-tracking feature.
+const EMBOAR = 'Pokemon Trading Card Game: Mega Evolution—Ascended Heroes Tin- Mega Emboar ex';
+const SHIPPED = [
+  ['S01', 'Target',         '1ZWY06570304019606', 'OFD',  '2026-09-25', 'Sang Nguyen', '7964 Brooklyn Blvd, Brooklyn Park, MN'],
+  ['S02', 'Target',         '1ZWY0657YW04307994', null,   '2026-09-27', 'HnB Market',  '8410 Yates ave n, Brooklyn Park, MN'],
+  ['S03', 'Pokemon Center', '876543210987',       null,   '2026-09-26', 'Kevin kim',   '8805 E Research Center Rd'],
+  ['S04', 'Target',         null,                 null,   null,         'Hailey Nguyen', '13564 142nd ave n'],
+];
 // server.js really boots, so it really imports bot_orders_import.json. Clear it
 // so assertions below depend only on the orders seeded here.
 DB.prepare('DELETE FROM bot_orders').run();
 for (const [num, retailer, items, total] of seed) {
   DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total)
               VALUES ('Pokemon', ?, ?, 'Delivered', ?, ?)`).run([retailer, num, items, total]);
+}
+for (const [num, retailer, trk, tstat, exp, name, addr] of SHIPPED) {
+  DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, tracking, tracking_status,
+              expected_date, shipping_name, shipping_address, items, order_total)
+              VALUES ('Pokemon', ?, ?, 'Shipped', ?, ?, ?, ?, ?, ?, 54.24)`)
+    .run([retailer, num, trk, tstat, exp, name, addr, JSON.stringify([`2x ${EMBOAR} @ $24.99`])]);
 }
 
 // ── Route dispatch for the page's fetch() ───────────────────────────────────
@@ -148,10 +162,12 @@ const dom = new JSDOM(html, {
     w.localStorage.setItem('inv_admin_role', 'admin');
     w.fetch   = fakeFetch;
     w.confirm = () => true;
+    Object.defineProperty(w.navigator, 'clipboard', { value: { writeText: async t => { copied.push(t); } }, configurable: true });
     w.alert   = m => { alerts.push(String(m)); };
   },
 });
 const alerts = [];
+const copied = [];
 const w = dom.window, d = w.document;
 const tick = (n = 25) => new Promise(r => realSetTimeout(r, n));
 
@@ -161,7 +177,10 @@ const check = (n, c, detail) => {
   else   { failed++; console.log(`  ❌ ${n}${detail !== undefined ? ` — ${detail}` : ''}`); }
 };
 
-const rows     = () => [...d.querySelectorAll('#bot-item-tbody tr')];
+// Direct children only — expanded products contain a nested table of orders,
+// and '#bot-item-tbody tr' would count those inner rows as products.
+const rows     = () => [...d.querySelectorAll('#bot-item-tbody > tr:not(.bot-subrow)')];
+const subrows  = () => [...d.querySelectorAll('#bot-item-tbody > tr.bot-subrow')];
 const rowNamed = re => rows().find(tr => re.test(tr.textContent));
 const overlay  = () => d.getElementById('bot-item-edit-overlay');
 const isVisible = el => {
@@ -270,6 +289,77 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
   [...overlay().querySelectorAll('button')].find(b => b.textContent.trim() === 'Cancel').click(); await tick();
   check('dialog closed',                  !isVisible(overlay()));
   check('nothing saved',                  !calls.slice(before).some(c => c.path.endsWith('/save')));
+
+  console.log('\n── Shipped: every order + tracking under each product ──');
+  {
+    const statusSel = d.getElementById('bot-filter-status');
+    statusSel.value = 'Shipped';
+    d.getElementById('bot-cat-tabs').dataset.active = 'Pokemon';
+    await w.loadBotItemView('Pokemon'); await tick();
+
+    const prod = rowNamed(/Mega Emboar ex/);
+    check('Emboar product row present',          !!prod);
+    const sub = prod && prod.nextElementSibling;
+    check('auto-expanded on Shipped',             !!sub && sub.classList.contains('bot-subrow'));
+    // tBodies[0].rows = only this inner table's body rows. (A descendant selector
+    // like 'tbody tr' also matches the header, because the PAGE's outer <tbody>
+    // counts as an ancestor even though it sits outside `sub`.)
+    const inner     = sub && sub.querySelector('table');
+    const orderRows = inner ? [...inner.tBodies[0].rows] : [];
+    check('header lives in <thead>, not the body', inner && inner.tHead && inner.tHead.rows.length === 1);
+    check('one line per order (4)',               orderRows.length === 4, orderRows.length);
+
+    const links = sub ? [...sub.querySelectorAll('a[href]')].map(a => a.getAttribute('href')) : [];
+    check('UPS number links to UPS, not Google',  links.some(h => h === 'https://www.ups.com/track?tracknum=1ZWY06570304019606'), links.join(' | '));
+    check('no Google fallback for UPS numbers',   !links.some(h => /google\.com/.test(h) && /1Z/.test(h)));
+    check('carrier label shown',                  sub && /UPS/.test(sub.textContent));
+    check('missing tracking called out',          sub && /1 without tracking yet/.test(sub.textContent));
+    check('OFD status shown',                     sub && /OFD/.test(sub.textContent));
+    check('expected date shown',                  sub && /Exp Sep 2[5-7]/.test(sub.textContent));
+    check('ship-to shown',                        sub && /HnB Market/.test(sub.textContent));
+    check('soonest arrival listed first',         orderRows[0] && /S01/.test(orderRows[0].textContent), orderRows[0] && orderRows[0].textContent.trim().slice(0, 40));
+    check('tracking count in product line',       /3 tracking/.test(prod.textContent));
+
+    // Copy all tracking numbers
+    [...sub.querySelectorAll('button')].find(b => /Copy all tracking/.test(b.textContent)).click();
+    await tick();
+    const got = (copied.pop() || '').split('\n');
+    check('copy all: 3 numbers, one per line',    got.length === 3 && got.includes('1ZWY06570304019606') && got.includes('876543210987'), JSON.stringify(got));
+
+    // Collapse / expand controls
+    const bannerBtn = re => [...d.querySelectorAll('#bot-unlinked-banner button')].find(b => re.test(b.textContent));
+    bannerBtn(/Collapse all/).click(); await tick();
+    check('collapse all hides order lists',       subrows().length === 0);
+    rowNamed(/Mega Emboar ex/).querySelector('button.bot-exp').click(); await tick();
+    check('chevron opens a single product',       subrows().length === 1);
+    await w.loadBotItemView('Pokemon'); await tick();
+    check('manual collapse survives a reload',    subrows().length === 1);
+    bannerBtn(/Collapse all/).click(); await tick();
+    bannerBtn(/Show all orders/).click(); await tick();
+    check('show all orders expands every row',    subrows().length === rows().length);
+
+    statusSel.value = '';
+  }
+
+  console.log('\n── Orders table tracking links use the right carrier too ──');
+  {
+    d.getElementById('bot-cat-tabs').dataset.active = 'All';
+    w.botSetCat('All'); await w.loadBotOrders(); await tick(40);
+    const a = [...d.querySelectorAll('#bot-orders-body a[href]')].find(x => /1ZWY06570304019606/.test(x.textContent));
+    check('orders table: UPS link goes to UPS', a && a.getAttribute('href').startsWith('https://www.ups.com/track'), a && a.getAttribute('href'));
+  }
+
+  console.log('\n── Page and carriers.js agree on every carrier ──');
+  {
+    const C = require(path.join(__dirname, '..', 'carriers.js'));
+    const samples = ['1ZWY06570304019606', '1zh9146g0308841629', '876543210987', '9400111899223856925683',
+                     '9261290100130623456789', 'EA123456789US', '123456789012', '961234567890123456789012',
+                     'TBA123456789012', 'C12345678901234', 'garbage', ''];
+    const mismatch = samples.filter(t =>
+      (w.botCarrierOf(t) || null) !== (C.carrierOf(t) || null) ||
+      (t && w.botTrackingUrl('Target', t) !== C.trackingUrl(t)));
+    check(`${samples.length} sample numbers agree`, mismatch.length === 0, mismatch.join(', '));
+  }
 
   console.log(`\n${'─'.repeat(60)}`);
   console.log(`${passed} passed, ${failed} failed`);

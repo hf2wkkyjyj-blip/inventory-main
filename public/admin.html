@@ -2312,8 +2312,31 @@ function fmtShortDate(d) {
   return dt.toLocaleDateString('en-US', { month:'short', day:'numeric' });
 }
 
+// Mirror of carriers.js (the page has no build step). test/ui.test.js asserts the
+// two agree on every sample number, so keep them in sync.
+const BOT_CARRIERS = [
+  { id: 'ups',    re: /^1Z[0-9A-Z]{16}$/i,                          url: t => `https://www.ups.com/track?tracknum=${encodeURIComponent(t)}` },
+  { id: 'amazon', re: /^TBA\d{9,}$/i,                               url: t => `https://track.amazon.com/tracking/${encodeURIComponent(t)}` },
+  { id: 'narvar', re: /^87\d{10}$/,                                 url: t => `https://www.google.com/search?q=${encodeURIComponent(t + ' tracking')}` },
+  { id: 'usps',   re: /^(?:9[1-5]\d{18,24}|82\d{8}|[A-Z]{2}\d{9}US)$/i, url: t => `https://tools.usps.com/go/TrackConfirmAction?qtc_tLabels1=${encodeURIComponent(t)}` },
+  { id: 'fedex',  re: /^(?:\d{12}|\d{15}|96\d{20}|7489\d{16,18}|61\d{18})$/, url: t => `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(t)}` },
+  { id: 'ontrac', re: /^[CD]\d{14}$/i,                              url: t => `https://www.ontrac.com/tracking/?number=${encodeURIComponent(t)}` },
+];
+const BOT_CARRIER_LABEL = { ups: 'UPS', usps: 'USPS', fedex: 'FedEx', amazon: 'Amazon', ontrac: 'OnTrac', narvar: 'Narvar' };
+function botCarrierOf(tracking) {
+  const t = String(tracking || '').replace(/\s+/g, '');
+  const c = t && BOT_CARRIERS.find(c => c.re.test(t));
+  return c ? c.id : null;
+}
+
+// The carrier comes from the TRACKING NUMBER. This used to check the retailer
+// name for "ups"/"fedex" — but the retailer is "Target", so every UPS number
+// fell through to a Google search instead of opening UPS tracking.
 function botTrackingUrl(retailer, tracking) {
   if (!tracking) return '#';
+  const t = String(tracking).replace(/\s+/g, '');
+  const c = BOT_CARRIERS.find(c => c.re.test(t));
+  if (c) return c.url(t);
   const r = (retailer||'').toLowerCase();
   if (r.includes('ups')) return `https://www.ups.com/track?tracknum=${encodeURIComponent(tracking)}`;
   if (r.includes('fedex')) return `https://www.fedex.com/fedex/track/?tracknumbers=${encodeURIComponent(tracking)}`;
@@ -2479,6 +2502,100 @@ let _botItems = [];
 // the string and the button did nothing at all. Indexes have no such problem.
 let _botItemRows = [];
 let _botOnlyUnlinked = false;
+
+// ── Expandable product rows: every order behind a product, with tracking ────
+// Keyed by skuKey (stable across reloads and renames) so rows stay open when
+// the list re-renders.
+const _botExpanded = new Set();
+let _botLastAutoExpandStatus = null;
+
+function botToggleOrders(idx) {
+  const item = _botItemRows[idx];
+  if (!item) return;
+  if (_botExpanded.has(item.skuKey)) _botExpanded.delete(item.skuKey);
+  else _botExpanded.add(item.skuKey);
+  renderBotItemView();
+}
+
+function botExpandAll(open) {
+  _botExpanded.clear();
+  if (open) (_botItemRows || []).forEach(i => _botExpanded.add(i.skuKey));
+  renderBotItemView();
+}
+
+function botShortDate(d) {
+  if (!d) return '';
+  const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const dt = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(d);
+  return isNaN(dt) ? '' : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function botOrdersPanel(item, idx) {
+  const lines = item.orderLines || [];
+  const withTracking = lines.filter(l => l.tracking);
+  const missing = lines.length - withTracking.length;
+
+  const rowsHtml = lines.map(l => {
+    const carrier = botCarrierOf(l.tracking);
+    const trk = l.tracking
+      ? `<a href="${esc(botTrackingUrl(l.retailer, l.tracking))}" target="_blank" rel="noopener"
+            style="color:#60a5fa;font-weight:600;font-variant-numeric:tabular-nums;">${esc(l.tracking)}</a>
+         ${carrier ? `<span style="font-size:9px;color:var(--muted);border:1px solid var(--border);border-radius:3px;padding:0 3px;margin-left:4px;">${BOT_CARRIER_LABEL[carrier] || carrier}</span>` : ''}`
+      : '<span style="color:var(--muted);">no tracking yet</span>';
+    const when = l.status === 'Delivered' && l.delivered_date ? `Delivered ${botShortDate(l.delivered_date)}`
+               : l.expected_date ? `Exp ${botShortDate(l.expected_date)}`
+               : l.order_date ? `Ordered ${botShortDate(l.order_date)}` : '';
+    const shipTo = [l.shipping_name, (l.shipping_address || '').split(',')[0]].filter(Boolean).join(' · ');
+    return `<tr>
+      <td style="padding:5px 8px;font-weight:600;white-space:nowrap;">${esc(l.order_number || '—')}</td>
+      <td style="padding:5px 8px;color:var(--muted);white-space:nowrap;">${esc(l.retailer || '—')}</td>
+      <td style="padding:5px 8px;text-align:center;">${l.qty}</td>
+      <td style="padding:5px 8px;white-space:nowrap;">${botStatusCell(l)}</td>
+      <td style="padding:5px 8px;white-space:nowrap;">${trk}</td>
+      <td style="padding:5px 8px;color:var(--muted);white-space:nowrap;">${esc(when)}</td>
+      <td style="padding:5px 8px;color:var(--muted);max-width:220px;"><div class="clip" data-tip="${esc([l.shipping_name, l.shipping_address].filter(Boolean).join('\n'))}">${esc(shipTo || '—')}</div></td>
+    </tr>`;
+  }).join('');
+
+  return `<tr class="bot-subrow"><td colspan="9" style="padding:0 12px 12px 34px;background:rgba(255,255,255,.015);border-bottom:1px solid var(--border);">
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0 6px;font-size:11px;color:var(--muted);">
+      <span>${lines.length} order${lines.length === 1 ? '' : 's'} · ${withTracking.length} tracking number${withTracking.length === 1 ? '' : 's'}</span>
+      ${missing ? `<span style="color:#fbbf24;">· ${missing} without tracking yet</span>` : ''}
+      ${withTracking.length ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;margin-left:auto;" onclick="botCopyTracking(${idx}, this)"><i class="fa fa-copy"></i> Copy all tracking</button>` : ''}
+    </div>
+    <table style="width:100%;font-size:12px;border-collapse:collapse;">
+      <thead><tr style="color:var(--muted);font-size:10px;letter-spacing:.04em;text-align:left;">
+        <th style="padding:4px 8px;font-weight:600;">ORDER #</th><th style="padding:4px 8px;font-weight:600;">STORE</th>
+        <th style="padding:4px 8px;font-weight:600;text-align:center;">QTY</th><th style="padding:4px 8px;font-weight:600;">STATUS</th>
+        <th style="padding:4px 8px;font-weight:600;">TRACKING</th><th style="padding:4px 8px;font-weight:600;">DATE</th>
+        <th style="padding:4px 8px;font-weight:600;">SHIP TO</th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+  </td></tr>`;
+}
+
+// One number per line — pastes straight into a carrier's multi-track box.
+async function botCopyTracking(idx, btn) {
+  const item = _botItemRows[idx];
+  const nums = [...new Set((item && item.orderLines || []).map(l => l.tracking).filter(Boolean))];
+  if (!nums.length) return;
+  const text = nums.join('\n');
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch (_) {}
+  if (!ok) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand('copy'); } catch (_) {}
+    ta.remove();
+  }
+  if (btn) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = ok ? `<i class="fa fa-check"></i> Copied ${nums.length}` : 'Copy failed';
+    setTimeout(() => { btn.innerHTML = orig; }, 1800);
+  }
+}
 function botToggleOnlyUnlinked() { _botOnlyUnlinked = !_botOnlyUnlinked; renderBotItemView(); }
 
 async function loadBotItemView(cat) {
@@ -2496,6 +2613,14 @@ async function loadBotItemView(cat) {
   const items = await api('GET', '/admin/bot-items?' + qs.toString());
   if (!items) return;
   _botItems = items;
+
+  // Looking at Shipped means checking where things are — open every product so
+  // its tracking is visible straight away. Only on switching INTO that filter,
+  // so a row the user collapses stays collapsed.
+  if ((status === 'Shipped' || status === 'OFD') && _botLastAutoExpandStatus !== status) {
+    items.forEach(i => _botExpanded.add(i.skuKey));
+  }
+  _botLastAutoExpandStatus = status;
   renderBotItemView();
 }
 
@@ -2524,12 +2649,16 @@ function renderBotItemView() {
   // Banner: how many rows are still only suggestions.
   const unlinkedCount = (_botItems || []).filter(i => i.unlinked).length;
   const banner = document.getElementById('bot-unlinked-banner');
+  const anyOpen = rows.some(i => _botExpanded.has(i.skuKey));
+  const expandBtn = rows.length
+    ? `<button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;" onclick="botExpandAll(${anyOpen ? 'false' : 'true'})"><i class="fa fa-${anyOpen ? 'compress' : 'expand'}"></i> ${anyOpen ? 'Collapse all' : 'Show all orders'}</button>`
+    : '';
   if (banner) {
-    banner.innerHTML = unlinkedCount
+    banner.innerHTML = expandBtn + (unlinkedCount
       ? `<span style="color:#fbbf24;">⚠ ${unlinkedCount} not confirmed yet</span>
          <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;" onclick="botToggleOnlyUnlinked()">${_botOnlyUnlinked ? 'Show all' : 'Show only these'}</button>
          <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px;color:#34d399;" onclick="botAcceptAllSuggestions()"><i class="fa fa-check-double"></i> Confirm all suggestions</button>`
-      : (_botItems && _botItems.length ? '<span style="color:#34d399;">✓ All products confirmed</span>' : '');
+      : (_botItems && _botItems.length ? '<span style="color:#34d399;">✓ All products confirmed</span>' : ''));
   }
   const tbody = document.getElementById('bot-item-tbody');
   if (!rows.length) {
@@ -2559,12 +2688,14 @@ function renderBotItemView() {
 
     // Which store(s) this product came from — without it there was no way to
     // tell a Target item from a Sam's Club one in this view.
+    const expanded = _botExpanded.has(item.skuKey);
+
     // Hover lists every store title grouped under this product.
     const titlesTip = (item.rawNames || []).length
       ? 'Store titles grouped here:\n' + item.rawNames.map(t => '• ' + t).join('\n')
       : '';
     const retailerLine = (item.retailers || []).length
-      ? `<div style="font-size:10px;color:var(--muted);margin-top:2px;cursor:help;" data-tip="${esc(titlesTip)}">${esc(item.retailers.join(' · '))} · ${item.orders || 0} order${item.orders === 1 ? '' : 's'}${(item.rawNames||[]).length > 1 ? ` · ${item.rawNames.length} titles` : ''}</div>`
+      ? `<div style="font-size:10px;color:var(--muted);margin-top:2px;padding-left:16px;cursor:help;" data-tip="${esc(titlesTip)}">${esc(item.retailers.join(' · '))} · ${item.orders || 0} order${item.orders === 1 ? '' : 's'}${item.trackingCount ? ` · <i class="fa fa-truck" style="font-size:9px;"></i> ${item.trackingCount} tracking` : ''}${(item.rawNames||[]).length > 1 ? ` · ${item.rawNames.length} titles` : ''}</div>`
       : '';
     // Not yet confirmed: the name is only a suggestion. One click accepts it.
     const suggestChip = item.unlinked
@@ -2582,7 +2713,9 @@ function renderBotItemView() {
     return `<tr style="border-bottom:1px solid var(--border);">
       <td style="padding:8px 12px;max-width:260px;">
         <div style="display:flex;align-items:center;min-width:0;">
-          <div class="clip" data-tip="${esc(item.name)}" style="min-width:0;${item.unlinked ? 'color:#fcd9a0;' : ''}">${esc(item.name)}</div>
+          <button class="bot-exp" onclick="botToggleOrders(${idx})" data-tip="${expanded ? 'Hide orders' : 'Show every order + tracking'}"
+            style="background:none;border:none;color:var(--muted);cursor:pointer;padding:0 6px 0 0;font-size:10px;width:16px;"><i class="fa fa-chevron-${expanded ? 'down' : 'right'}"></i></button>
+          <div class="clip" data-tip="${esc(item.name)}" onclick="botToggleOrders(${idx})" style="min-width:0;cursor:pointer;${item.unlinked ? 'color:#fcd9a0;' : ''}">${esc(item.name)}</div>
           ${suggestChip}
         </div>
         ${retailerLine}
@@ -2606,7 +2739,7 @@ function renderBotItemView() {
         <button title="Edit item" onclick="openBotItemEdit(${idx})" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:3px;"><i class="fa fa-pen" style="font-size:10px;"></i></button>
         <button title="Delete all orders for this item" onclick="deleteBotItemByName(${idx})" style="background:var(--surface);border:1px solid var(--border);color:#f87171;width:26px;height:26px;border-radius:6px;cursor:pointer;"><i class="fa fa-trash" style="font-size:10px;"></i></button>
       </td>
-    </tr>`;
+    </tr>${expanded ? botOrdersPanel(item, idx) : ''}`;
   }).join('');
 }
 
