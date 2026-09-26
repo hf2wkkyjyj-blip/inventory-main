@@ -1909,6 +1909,10 @@ async function loadBotOrders() {
   buildBotRetailerFilter();
   buildBotAddressFilter();
   renderBotOrders();
+  // Refresh / Scan / Reparse / Repair all land here. If a category tab is open,
+  // the visible list is the product view — reload it too, or it stays stale.
+  const cat = document.getElementById('bot-cat-tabs').dataset.active;
+  if (cat && cat !== 'All') await loadBotItemView(cat);
 }
 
 async function botRefresh() {
@@ -2063,12 +2067,15 @@ function botSetCat(cat) {
   }
 }
 
+// Status cards (CONFIRMED / SHIPPED / DELIVERED …). These used to call
+// renderBotOrders() — which redraws the ORDER list, hidden while a category tab
+// like Pokemon is open — so on the product view clicking a card changed the
+// highlight and the dropdown but left the list below untouched.
 function botFilterStatus(s) {
   _botStatusFilter = _botStatusFilter === s ? '' : s;
   document.getElementById('bot-filter-status').value = _botStatusFilter;
-  buildBotStats();
   _botPage = 0;
-  renderBotOrders();
+  botFilterChanged();
 }
 
 // ── Instant tooltip ─────────────────────────────────────────────────────────
@@ -2628,6 +2635,10 @@ async function loadBotItemView(cat) {
 // These used to call renderBotOrders() only, so in the per-item view the
 // dropdowns appeared to do nothing at all.
 function botFilterChanged() {
+  // Keep the highlighted status card in step with the dropdown, whichever one
+  // the user actually changed.
+  _botStatusFilter = document.getElementById('bot-filter-status').value;
+  buildBotStats();
   const cat = document.getElementById('bot-cat-tabs').dataset.active;
   if (cat && cat !== 'All') loadBotItemView(cat);
   else                      renderBotOrders();

@@ -341,6 +341,54 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     statusSel.value = '';
   }
 
+  // ── REAL user paths only from here: click cards, fire change events, press
+  //    buttons. An earlier version of this test set the dropdown value and then
+  //    called loadBotItemView() itself — skipping the very handler that was
+  //    broken, so a user-visible bug passed.
+  console.log('\n── Status cards drive the product view (real clicks) ──');
+  {
+    const statusSel = d.getElementById('bot-filter-status');
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change'));
+    await tick(60);
+    const pokeTab = [...d.querySelectorAll('.btab')].find(b => /^Pokemon/.test(b.textContent.trim()));
+    check('Pokemon tab button exists', !!pokeTab);
+    pokeTab.click(); await tick(80);
+
+    const names  = () => rows().map(r => r.textContent);
+    const has    = re => names().some(t => re.test(t));
+    const card   = st => d.getElementById('bsc-' + st);
+
+    check('no filter: shipped AND delivered products listed', has(/Mega Emboar/) && has(/Sylveon ex Box/));
+
+    card('Shipped').click(); await tick(80);
+    check('SHIPPED card: shipped product shown',       has(/Mega Emboar/));
+    check('SHIPPED card: delivered products hidden',   !has(/Sylveon ex Box/) && !has(/Tech Sticker/), names().map(t => t.trim().slice(0, 30)).join(' | '));
+    check('SHIPPED card highlighted',                  card('Shipped').classList.contains('active-filter'));
+
+    card('Delivered').click(); await tick(80);
+    check('DELIVERED card: list actually changed',     has(/Sylveon ex Box/) && !has(/Mega Emboar/), names().map(t => t.trim().slice(0, 30)).join(' | '));
+    check('DELIVERED highlighted, SHIPPED not',        card('Delivered').classList.contains('active-filter') && !card('Shipped').classList.contains('active-filter'));
+
+    card('Delivered').click(); await tick(80);
+    check('clicking again clears the filter',          has(/Mega Emboar/) && has(/Sylveon ex Box/));
+    check('no card highlighted after clearing',        !d.querySelector('.bot-stat.active-filter'));
+
+    console.log('\n── Status dropdown (real change event) ──');
+    statusSel.value = 'Shipped'; statusSel.dispatchEvent(new w.Event('change')); await tick(80);
+    check('dropdown Shipped filters the list',         has(/Mega Emboar/) && !has(/Sylveon ex Box/));
+    check('dropdown keeps the card highlight in sync', card('Shipped').classList.contains('active-filter'));
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(80);
+
+    console.log('\n── Refresh-style reload updates the product view ──');
+    DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total)
+                VALUES ('Pokemon','Target','NEW1','Delivered',?,21.70)`)
+      .run([JSON.stringify(['1x Pokémon Surging Sparks Booster Bundle @ $19.99'])]);
+    check('new product not shown before reload',       !has(/Surging Sparks/));
+    d.getElementById('bot-reparse-btn').click();       // ends in loadBotOrders(), like Refresh/Scan/Repair
+    await tick(200);
+    check('appears after Reparse, without switching tabs', has(/Surging Sparks/));
+  }
+
   console.log('\n── Orders table tracking links use the right carrier too ──');
   {
     d.getElementById('bot-cat-tabs').dataset.active = 'All';
