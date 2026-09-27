@@ -54,29 +54,9 @@ function getRetailerInfo(fromEmail, bodyText) {
   return null;
 }
 
-// Strip diacritics so "Pokémon" matches a plain "pokemon" test. Retailers write
-// the accented form constantly — Target's item names all use "Pokémon" — and an
-// ASCII-only comparison silently files every one of them under "Other".
-function deaccent(s) {
-  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
-}
-
-// Detect category from email content (for generic retailers like Target that sell everything)
-function detectCategoryFromContent(subject, text, defaultCategory) {
-  const s = deaccent((subject || '') + ' ' + (text || '')).toLowerCase();
-  if (s.includes('pokemon') || s.includes('pikachu') || s.includes('charizard') ||
-      s.includes('eevee') || s.includes('mewtwo') || s.includes('bulbasaur') ||
-      s.includes('squirtle') || s.includes('charmander') || s.includes('tcg') ||
-      s.includes('poke ball') || s.includes('pokeball'))
-    return 'Pokemon';
-  if (s.includes('one piece') || s.includes('luffy') || s.includes('zoro') ||
-      s.includes('nami') || s.includes('sanji') || s.includes('chopper'))
-    return 'One Piece';
-  if (s.includes('mattel') || s.includes('hot wheel') || s.includes('barbie') ||
-      s.includes('fisher-price') || s.includes('fisher price') || s.includes('uno '))
-    return 'Mattel';
-  return defaultCategory;
-}
+// Category is decided from the order's ITEM NAMES — see category.js for why the
+// old whole-email substring scan filed Topps and Ring orders under Pokemon.
+const { decideCategory, categoryOfText } = require('./category');
 
 // ── Extraction helpers ────────────────────────────────────────────────────────
 
@@ -659,9 +639,18 @@ async function processEmail(parsed, db, opts = {}) {
       if (correctingBadCancel) console.log(`   🔧 Corrected bad Cancelled → ${dbStatus} (has tracking ${tracking})`);
     }
     // Fix wrong category: if existing order is "Other" but content reveals a real category, upgrade it
-    const redetectedCategory = detectCategoryFromContent(subject, plainText, baseCategory);
-    if (redetectedCategory !== 'Other' && existing.category === 'Other') {
-      updates.push('category=?'); vals.push(redetectedCategory);
+    // Re-check the category against the order's items: the confirmation's items
+    // if this is one, otherwise what's already stored. With no items at all we
+    // only ever upgrade from "Other" using the subject line — never downgrade a
+    // category we can't disprove.
+    const catItems = (itemsJson && resolvedStatus === 'Confirmed') ? itemsJson
+                   : (existing.items && existing.items !== '[]' ? existing.items : itemsJson);
+    if (catItems) {
+      const cat = decideCategory({ items: catItems, retailerDefault: baseCategory });
+      if (cat !== existing.category) { updates.push('category=?'); vals.push(cat); }
+    } else if (existing.category === 'Other') {
+      const cat = categoryOfText(subject);
+      if (cat) { updates.push('category=?'); vals.push(cat); }
     }
     // Only an order CONFIRMATION states what was actually purchased. Shipping and
     // delivery notices list whatever happens to be in that box — and Target's
@@ -705,7 +694,7 @@ async function processEmail(parsed, db, opts = {}) {
       }
     } catch(_) {}
     // Create new order
-    const category  = detectCategoryFromContent(subject, plainText, baseCategory);
+    const category  = decideCategory({ items: itemStrings, subject, retailerDefault: baseCategory });
     const emailDate = parsed.date ? parsed.date.toISOString() : new Date().toISOString();
     const orderDate = emailDate.split('T')[0];
     db.prepare(`INSERT OR IGNORE INTO bot_orders

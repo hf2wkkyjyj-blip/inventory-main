@@ -17,6 +17,8 @@ const { computeItemGroups } = require('./itemView');
 const SkuCatalog = require('./skuCatalog');
 const { computePackages } = require('./packageView');
 const OrderMerge = require('./orderMerge');
+const { recategorizeOrders } = require('./category');
+const Retailers = require('./retailers');
 
 // Find Chrome/Chromium on Mac
 const CHROME_PATHS = [
@@ -293,6 +295,13 @@ catch (e) { console.error('⚠️  duplicate merge failed:', e.message); }
 
 try { SkuCatalog.ensureSkuTables(db); }
 catch (e) { console.error('⚠️  sku catalog setup failed:', e.message); }
+
+// Fix orders filed under the wrong category by the old whole-email keyword
+// scan (see category.js). Only orders with items are touched; idempotent.
+try {
+  const retailerDefault = r => (Retailers.BUILT_IN.find(p => p.name === r) || {}).category || 'Other';
+  recategorizeOrders(db, retailerDefault);
+} catch (e) { console.error('⚠️  recategorize failed:', e.message); }
 
 // Seed default settings
 const defaultSettings = {
