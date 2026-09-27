@@ -599,6 +599,24 @@ async function processEmail(parsed, db, opts = {}) {
     const updates = []; const vals = [];
 
     if (tracking && !existing.tracking)                    { updates.push('tracking=?');        vals.push(tracking); }
+    else if (tracking && existing.tracking && tracking !== existing.tracking &&
+             orderNumber && existing.order_number === orderNumber) {
+      // A stored tracking number is normally never replaced — an order shipped
+      // in two boxes legitimately gets a second tracking email, and that must
+      // not overwrite the first. But if the stored number ALSO sits on a
+      // different order, it's provably wrong: one box can't belong to two
+      // orders. This email names this order explicitly, so its number wins.
+      //
+      // Real case: Jenny Xiong's P0038311805 held Kien Lai's 876928855241 while
+      // her own shipping email said 876937209516. With "never replace", every
+      // rescan kept the wrong one.
+      const sharedWith = db.prepare('SELECT order_number FROM bot_orders WHERE tracking=? AND id<>? LIMIT 1')
+        .get([existing.tracking, existing.id]);
+      if (sharedWith) {
+        updates.push('tracking=?'); vals.push(tracking);
+        console.log(`   🔧 Corrected tracking on #${existing.order_number}: ${existing.tracking} (also on #${sharedWith.order_number}) → ${tracking}`);
+      }
+    }
     if (expectedDate)                                      { updates.push('expected_date=?');    vals.push(expectedDate); }
     if (trackingStatus)                                    { updates.push('tracking_status=?');  vals.push(trackingStatus); }
     if (resolvedStatus === 'Delivered') {

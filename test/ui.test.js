@@ -489,6 +489,30 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('packages back in the list',              pkgRows().length === 6, pkgRows().length);
     check('undo bar gone',                          undoBar().style.display === 'none');
 
+    console.log('\n── Fix a wrong tracking number from the package view ──');
+    {
+      const flagged = pkgRow(/876928855241/);
+      const pen = [...flagged.querySelectorAll('button.bot-pkg-edit')]
+        .find(b => /P0038311805/.test(b.closest('div').textContent));
+      check('✎ shown next to each order in the box',   flagged.querySelectorAll('button.bot-pkg-edit').length === 2);
+      check('flag says how to fix it',                  /fix with ✎/.test(flagged.textContent));
+      pen.click(); await tick(40);
+      const ov = d.getElementById('bot-edit-overlay');
+      const ocs = w.getComputedStyle(ov);
+      check('order editor opens visibly',              ov.classList.contains('open') && ocs.opacity === '1' && ocs.pointerEvents !== 'none');
+      check('it is the right order',                   /P0038311805/.test(d.getElementById('bot-edit-ordnum').textContent));
+      check('shows the wrong number',                  d.getElementById('bot-edit-tracking').value === '876928855241');
+      d.getElementById('bot-edit-tracking').value = '876937209516';
+      ov.querySelector('button[onclick="saveBotEdit()"]').click(); await tick(150);
+
+      check('saved to the database',                   dbRow('P0038311805') && DB.prepare("SELECT tracking FROM bot_orders WHERE order_number='P0038311805'").get().tracking === '876937209516');
+      check('other order untouched',                   DB.prepare("SELECT tracking FROM bot_orders WHERE order_number='P0038320540'").get().tracking === '876928855241');
+      check('dialog closed',                           !ov.classList.contains('open'));
+      check('flagged row gone — now 2 separate boxes', !pkgRows().some(r => /same tracking/.test(r.textContent)) && !!pkgRow(/876937209516/) && !!pkgRow(/876928855241/));
+      check('7 packages now',                          pkgRows().length === 7, pkgRows().length);
+      check('warning banner cleared',                  !/need checking/.test(d.getElementById('bot-unlinked-banner').textContent));
+    }
+
     console.log('\n── View switch ──');
     d.getElementById('bsc-Delivered').click(); await tick(80);
     check('Delivered defaults to By product',       d.getElementById('bot-pkg-wrap').style.display === 'none');

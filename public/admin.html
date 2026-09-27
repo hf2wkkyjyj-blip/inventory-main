@@ -2609,7 +2609,7 @@ function renderBotPackages() {
                  : p.expected_date ? `Exp ${botShortDate(p.expected_date)}`
                  : p.order_date ? `Ordered ${botShortDate(p.order_date)}` : '';
       const shipTo = p.shipTo.map(s => `<div class="clip" data-tip="${esc([s.name, s.address].filter(Boolean).join('\n'))}">${esc([s.name, (s.address || '').split(',')[0]].filter(Boolean).join(' · '))}</div>`).join('')
-        + (p.conflict ? `<div style="color:#fbbf24;font-size:11px;margin-top:2px;">⚠ same tracking, ${p.shipTo.length} addresses — check before marking</div>` : '');
+        + (p.conflict ? `<div style="color:#fbbf24;font-size:11px;margin-top:2px;">⚠ same tracking, ${p.shipTo.length} addresses — fix with ✎ next to the wrong order</div>` : '');
       const tags = p.contents.map(c => `<span class="bot-pkg-tag">${esc(c.name)} ×${c.qty}</span>`).join('');
       return `<tr class="${sel ? 'sel' : ''}" style="border-bottom:1px solid var(--border);vertical-align:top;">
         <td style="padding:9px 8px 9px 12px;"><input type="checkbox" ${sel ? 'checked' : ''} ${botPkgSelectable(p) ? '' : 'disabled'} onchange="botPkgToggle(${i}, this.checked)"></td>
@@ -2617,7 +2617,12 @@ function renderBotPackages() {
         <td style="padding:9px 8px;white-space:nowrap;"><span class="bpill bpill-${esc(p.status)}">${esc(p.status)}</span>${p.mixedStatus ? '<span style="font-size:10px;color:var(--muted);"> (mixed)</span>' : ''}<div style="font-size:11px;color:var(--muted);margin-top:3px;">${esc(when)}</div></td>
         <td style="padding:9px 8px;max-width:260px;">${shipTo || '<span style="color:var(--muted);">—</span>'}</td>
         <td style="padding:9px 8px;max-width:360px;">${tags}</td>
-        <td style="padding:9px 8px;color:var(--muted);white-space:nowrap;font-size:11px;">${p.orders.map(o => esc(o.order_number || '—')).join('<br>')}</td>
+        <td style="padding:9px 8px;color:var(--muted);white-space:nowrap;font-size:11px;">${p.orders.map(o => `
+          <div style="display:flex;align-items:center;gap:6px;line-height:20px;">
+            <span>${esc(o.order_number || '—')}</span>
+            <button class="bot-pkg-edit" onclick="botEditRow(${Number(o.id)})" data-tip="Edit order ${esc(o.order_number || '')} — tracking, status, costs"
+              style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;width:22px;height:20px;font-size:9px;"><i class="fa fa-pen"></i></button>
+          </div>`).join('')}</td>
       </tr>`;
     }).join('');
   }
@@ -3210,8 +3215,9 @@ function botLandedPerUnit(o) {
 }
 
 function botEditRow(id) {
-  const o = _botOrders.find(x=>x.id===id);
-  if (!o) return;
+  const o = _botOrders.find(x => Number(x.id) === Number(id));
+  // This used to return silently — a button that does nothing. Say so instead.
+  if (!o) { alert('Could not open this order — try Refresh.'); return; }
   document.getElementById('bot-edit-id').value = id;
   document.getElementById('bot-edit-ordnum').textContent = o.order_number ? '#'+o.order_number : '';
   document.getElementById('bot-edit-status').value = o.status || 'Confirmed';
