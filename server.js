@@ -15,6 +15,7 @@ const puppeteer = require('puppeteer-core');
 const { decomposeItem, parseItemName, splitItemParts, itemKey } = require('./itemNames');
 const { computeItemGroups } = require('./itemView');
 const SkuCatalog = require('./skuCatalog');
+const { computePackages } = require('./packageView');
 const OrderMerge = require('./orderMerge');
 
 // Find Chrome/Chromium on Mac
@@ -973,6 +974,58 @@ app.post('/api/bot/orders', (req, res) => {
 });
 
 // ── Item view endpoint: expand orders → per-item rows, merge by SKU+cost ───────
+// ── Package view: one row per tracking number (see packageView.js) ──────────
+app.get('/api/admin/bot-packages', auth, adminOnly, (req, res) => {
+  const { category, retailer, status } = req.query;
+  if (!category) return res.status(400).json({ error: 'category required' });
+  let sql = 'SELECT * FROM bot_orders WHERE category=?';
+  const params = [category];
+  if (retailer) { sql += ' AND retailer=?'; params.push(retailer); }
+  if (status)   { sql += ' AND status=?';   params.push(status); }
+  else          { sql += " AND status NOT IN ('Cancelled','Refunded')"; }
+  res.json(computePackages(db.prepare(sql).all(params), SkuCatalog.loadCatalog(db)));
+});
+
+const BOT_STATUS_SET = new Set(['Confirmed', 'Unship', 'Shipped', 'OFD', 'Delivered', 'Cancelled', 'Refunded']);
+const isIsoDate = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s + 'T12:00:00'));
+
+// Bulk "Mark delivered". Returns every order's previous state so the page can
+// offer Undo. Deliberately only accepts Delivered — the one bulk action wanted.
+app.post('/api/admin/bot-orders/bulk-status', auth, adminOnly, (req, res) => {
+  const { orderIds, status, delivered_date } = req.body || {};
+  const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
+  if (!ids.length)            return res.status(400).json({ error: 'orderIds required' });
+  if (status !== 'Delivered') return res.status(400).json({ error: 'Only Delivered is supported' });
+  const date = delivered_date || new Date().toISOString().slice(0, 10);
+  if (!isIsoDate(date))       return res.status(400).json({ error: 'delivered_date must be YYYY-MM-DD' });
+
+  const previous = [];
+  for (const id of ids) {
+    const row = db.prepare('SELECT id, status, tracking_status, delivered_date, expected_date, status_changed_at FROM bot_orders WHERE id=?').get([id]);
+    if (!row) continue;
+    previous.push(row);
+    db.prepare(`UPDATE bot_orders SET status='Delivered', tracking_status='Delivered',
+                delivered_date=?, expected_date=NULL, status_changed_at=? WHERE id=?`)
+      .run([date, date, id]);
+  }
+  res.json({ updated: previous.length, delivered_date: date, previous });
+});
+
+// Undo: put back exactly what bulk-status returned.
+app.post('/api/admin/bot-orders/bulk-restore', auth, adminOnly, (req, res) => {
+  const previous = Array.isArray(req.body?.previous) ? req.body.previous : [];
+  const orNull = v => (v === undefined || v === '' ? null : v);
+  let restored = 0;
+  for (const p of previous) {
+    const id = Number(p && p.id);
+    if (!Number.isInteger(id) || id <= 0 || !BOT_STATUS_SET.has(p.status)) continue;
+    db.prepare(`UPDATE bot_orders SET status=?, tracking_status=?, delivered_date=?, expected_date=?, status_changed_at=? WHERE id=?`)
+      .run([p.status, orNull(p.tracking_status), orNull(p.delivered_date), orNull(p.expected_date), orNull(p.status_changed_at), id]);
+    restored++;
+  }
+  res.json({ restored });
+});
+
 app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
   const { category, retailer, status } = req.query;
   if (!category) return res.status(400).json({ error: 'category required' });

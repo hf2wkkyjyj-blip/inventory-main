@@ -423,6 +423,13 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   .bot-stat.s-pink{border-color:#8a3468;} .bot-stat.s-pink .lbl{color:#f472b6;} .bot-stat.s-pink .val{color:#f472b6;}
   .bot-stat.clickable{cursor:pointer;} .bot-stat.clickable:hover{opacity:.85;}
   .bot-stat.active-filter{outline:2px solid currentColor;outline-offset:-2px;}
+  .bot-float-bar{position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:300;display:flex;align-items:center;gap:10px;
+       padding:10px 14px;border-radius:12px;background:#111827;border:1px solid #2f6fb5;box-shadow:0 10px 30px rgba(0,0,0,.55);font-size:13px;white-space:nowrap;}
+  #bot-undo-bar{border-color:#1c5a3f;bottom:78px;}
+  .bot-vs-btn{background:none;border:none;color:var(--muted);font-size:11px;padding:5px 10px;cursor:pointer;}
+  .bot-vs-btn.active{background:#1e3a5f;color:#8fbcf5;font-weight:700;}
+  .bot-pkg-tag{display:inline-block;font-size:11px;padding:1px 6px;margin:1px 3px 1px 0;border-radius:4px;border:1px solid var(--border);white-space:nowrap;}
+  #bot-pkg-tbody tr.sel{background:rgba(47,111,181,.10);}
   /* Truncating text cell; full text is shown by the instant #tip tooltip. */
   .clip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   #tip{position:fixed;z-index:10000;display:none;max-width:440px;padding:7px 10px;border-radius:7px;
@@ -542,8 +549,25 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <input type="text" id="bot-item-search" placeholder="Search item name…" oninput="renderBotItemView()" style="font-size:12px;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:240px;">
       <span id="bot-item-count" style="color:var(--muted);font-size:12px;"></span>
       <span id="bot-unlinked-banner" style="display:inline-flex;gap:8px;align-items:center;font-size:12px;margin-left:10px;"></span>
+      <span id="bot-view-switch" style="margin-left:auto;display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;"></span>
     </div>
-    <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
+    <!-- Package view: one row per tracking number (packageView.js) -->
+    <div id="bot-pkg-wrap" style="display:none;border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead>
+          <tr style="font-size:10px;letter-spacing:.06em;color:var(--muted);text-align:left;">
+            <th style="padding:10px 8px 10px 12px;border-bottom:1px solid var(--border);width:28px;"><input type="checkbox" id="bot-pkg-all" onchange="botPkgSelectAll(this.checked)" data-tip="Select every package shown (flagged ones excluded)"></th>
+            <th style="padding:10px 8px;border-bottom:1px solid var(--border);">TRACKING</th>
+            <th style="padding:10px 8px;border-bottom:1px solid var(--border);">STATUS</th>
+            <th style="padding:10px 8px;border-bottom:1px solid var(--border);">SHIP TO</th>
+            <th style="padding:10px 8px;border-bottom:1px solid var(--border);">CONTENTS</th>
+            <th style="padding:10px 8px;border-bottom:1px solid var(--border);">ORDER #</th>
+          </tr>
+        </thead>
+        <tbody id="bot-pkg-tbody"></tbody>
+      </table>
+    </div>
+    <div id="bot-product-table-wrap" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
         <thead>
           <tr>
@@ -564,6 +588,11 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       </table>
     </div>
   </div>
+
+  <!-- Bulk actions for selected packages -->
+  <div id="bot-pkg-actionbar" class="bot-float-bar" style="display:none;"></div>
+  <!-- Undo after a bulk change -->
+  <div id="bot-undo-bar" class="bot-float-bar" style="display:none;"></div>
 
   <!-- Orders Table -->
   <div id="bot-orders-wrap" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
@@ -2510,6 +2539,175 @@ let _botItems = [];
 let _botItemRows = [];
 let _botOnlyUnlinked = false;
 
+// ── Package view: one row per tracking number ──────────────────────────────
+// A box with an ETB, a Knock Out and two Tech Sticker sets has ONE tracking
+// number; the product view listed it four times. Packages are what you check
+// and mark delivered, so on Shipped this is the default.
+let _botViewMode   = 'auto';     // 'auto' | 'package' | 'product'
+let _botViewStatus = null;
+let _botPackages   = [];
+let _botPkgRows    = [];         // as rendered (after search/address filters)
+const _botPkgSelected = new Set();
+let _botUndo = null;
+
+function botEffectiveView() {
+  if (_botViewMode !== 'auto') return _botViewMode;
+  const st = document.getElementById('bot-filter-status').value;
+  return (st === 'Shipped' || st === 'OFD') ? 'package' : 'product';
+}
+
+function botSetView(mode) {
+  _botViewMode = mode;
+  const cat = document.getElementById('bot-cat-tabs').dataset.active;
+  if (cat && cat !== 'All') loadBotItemView(cat);
+}
+
+function botApplyView(view) {
+  document.getElementById('bot-pkg-wrap').style.display           = view === 'package' ? '' : 'none';
+  document.getElementById('bot-product-table-wrap').style.display = view === 'package' ? 'none' : '';
+  document.getElementById('bot-view-switch').innerHTML =
+    `<button class="bot-vs-btn${view === 'package' ? ' active' : ''}" onclick="botSetView('package')"><i class="fa fa-box"></i> By package</button>` +
+    `<button class="bot-vs-btn${view === 'product' ? ' active' : ''}" onclick="botSetView('product')"><i class="fa fa-layer-group"></i> By product</button>`;
+  if (view !== 'package') { _botPkgSelected.clear(); botRenderActionBar(); }
+}
+
+// Delivered packages and flagged ones (one tracking, two addresses) are never
+// picked up by Select all — flagged ones need a deliberate, individual click.
+const botPkgSelectable = p => p.status !== 'Delivered';
+const botPkgBulkable   = p => botPkgSelectable(p) && !p.conflict;
+
+function renderBotPackages() {
+  const q    = (document.getElementById('bot-item-search').value || '').toLowerCase();
+  const addr = document.getElementById('bot-filter-address').value;
+  let rows = _botPackages;
+  if (q) rows = rows.filter(p => [
+      p.tracking, ...p.orders.map(o => o.order_number),
+      ...p.shipTo.map(s => s.name), ...p.shipTo.map(s => s.address),
+      ...p.contents.map(c => c.name)].filter(Boolean).join(' ').toLowerCase().includes(q));
+  if (addr) rows = rows.filter(p => p.shipTo.some(s => normalizeAddr(s.address) === addr));
+  _botPkgRows = rows;
+
+  const units = rows.reduce((s, p) => s + p.units, 0);
+  document.getElementById('bot-item-count').textContent =
+    `${rows.length} package${rows.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'}`;
+  const flagged = rows.filter(p => p.conflict).length;
+  document.getElementById('bot-unlinked-banner').innerHTML = flagged
+    ? `<span style="color:#fbbf24;" data-tip="The same tracking number is on orders going to different addresses. One box can't go to two places, so one of these orders probably has the wrong tracking number.">⚠ ${flagged} package${flagged === 1 ? '' : 's'} need checking</span>`
+    : '';
+
+  const tbody = document.getElementById('bot-pkg-tbody');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">No packages.</td></tr>';
+  } else {
+    tbody.innerHTML = rows.map((p, i) => {
+      const sel = _botPkgSelected.has(p.key);
+      const trk = p.tracking
+        ? `<a href="${esc(p.trackUrl)}" target="_blank" rel="noopener" style="color:#60a5fa;font-weight:600;font-variant-numeric:tabular-nums;">${esc(p.tracking)}</a>
+           ${p.carrierLabel ? `<span style="font-size:9px;color:var(--muted);border:1px solid var(--border);border-radius:3px;padding:0 3px;margin-left:4px;">${esc(p.carrierLabel)}</span>` : ''}`
+        : '<span style="color:var(--muted);">no tracking yet</span>';
+      const when = p.status === 'Delivered' && p.delivered_date ? `Delivered ${botShortDate(p.delivered_date)}`
+                 : p.expected_date ? `Exp ${botShortDate(p.expected_date)}`
+                 : p.order_date ? `Ordered ${botShortDate(p.order_date)}` : '';
+      const shipTo = p.shipTo.map(s => `<div class="clip" data-tip="${esc([s.name, s.address].filter(Boolean).join('\n'))}">${esc([s.name, (s.address || '').split(',')[0]].filter(Boolean).join(' · '))}</div>`).join('')
+        + (p.conflict ? `<div style="color:#fbbf24;font-size:11px;margin-top:2px;">⚠ same tracking, ${p.shipTo.length} addresses — check before marking</div>` : '');
+      const tags = p.contents.map(c => `<span class="bot-pkg-tag">${esc(c.name)} ×${c.qty}</span>`).join('');
+      return `<tr class="${sel ? 'sel' : ''}" style="border-bottom:1px solid var(--border);vertical-align:top;">
+        <td style="padding:9px 8px 9px 12px;"><input type="checkbox" ${sel ? 'checked' : ''} ${botPkgSelectable(p) ? '' : 'disabled'} onchange="botPkgToggle(${i}, this.checked)"></td>
+        <td style="padding:9px 8px;white-space:nowrap;">${trk}<div style="font-size:10px;color:var(--muted);margin-top:2px;">${esc(p.retailers.join(' · '))}</div></td>
+        <td style="padding:9px 8px;white-space:nowrap;"><span class="bpill bpill-${esc(p.status)}">${esc(p.status)}</span>${p.mixedStatus ? '<span style="font-size:10px;color:var(--muted);"> (mixed)</span>' : ''}<div style="font-size:11px;color:var(--muted);margin-top:3px;">${esc(when)}</div></td>
+        <td style="padding:9px 8px;max-width:260px;">${shipTo || '<span style="color:var(--muted);">—</span>'}</td>
+        <td style="padding:9px 8px;max-width:360px;">${tags}</td>
+        <td style="padding:9px 8px;color:var(--muted);white-space:nowrap;font-size:11px;">${p.orders.map(o => esc(o.order_number || '—')).join('<br>')}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const bulk = rows.filter(botPkgBulkable);
+  const all  = document.getElementById('bot-pkg-all');
+  all.checked = bulk.length > 0 && bulk.every(p => _botPkgSelected.has(p.key));
+  all.indeterminate = !all.checked && bulk.some(p => _botPkgSelected.has(p.key));
+  botRenderActionBar();
+}
+
+function botPkgToggle(i, on) {
+  const p = _botPkgRows[i];
+  if (!p) return;
+  if (on) _botPkgSelected.add(p.key); else _botPkgSelected.delete(p.key);
+  renderBotPackages();
+}
+
+function botPkgSelectAll(on) {
+  _botPkgRows.filter(botPkgBulkable).forEach(p => on ? _botPkgSelected.add(p.key) : _botPkgSelected.delete(p.key));
+  renderBotPackages();
+}
+
+function botPkgClear() { _botPkgSelected.clear(); renderBotPackages(); }
+
+function botLocalToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function botSelectedPackages() { return _botPackages.filter(p => _botPkgSelected.has(p.key)); }
+
+function botRenderActionBar() {
+  const bar = document.getElementById('bot-pkg-actionbar');
+  const sel = botSelectedPackages();
+  if (!sel.length || botEffectiveView() !== 'package') { bar.style.display = 'none'; return; }
+  const orders  = sel.reduce((s, p) => s + p.orderIds.length, 0);
+  const flagged = sel.filter(p => p.conflict).length;
+  const keepDate = document.getElementById('bot-pkg-date');
+  const date = (keepDate && keepDate.value) || botLocalToday();
+  bar.innerHTML = `
+    <span><b>${sel.length}</b> package${sel.length === 1 ? '' : 's'} selected <span style="color:var(--muted);">(${orders} order${orders === 1 ? '' : 's'})</span></span>
+    ${flagged ? `<span style="color:#fbbf24;">· includes ${flagged} flagged</span>` : ''}
+    <span style="color:var(--muted);">→</span>
+    <label style="display:flex;align-items:center;gap:6px;">Mark delivered on
+      <input type="date" id="bot-pkg-date" value="${date}" max="${botLocalToday()}" style="font-size:12px;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+    </label>
+    <button class="btn btn-primary btn-sm" id="bot-pkg-mark" onclick="botPkgMarkDelivered()"><i class="fa fa-check"></i> Mark delivered</button>
+    <button class="btn btn-ghost btn-sm" onclick="botPkgClear()">Clear</button>`;
+  bar.style.display = 'flex';
+}
+
+async function botPkgMarkDelivered() {
+  const sel = botSelectedPackages();
+  if (!sel.length) return;
+  const date = document.getElementById('bot-pkg-date').value || botLocalToday();
+  const btn = document.getElementById('bot-pkg-mark');
+  btn.disabled = true;
+  const r = await api('POST', '/admin/bot-orders/bulk-status', {
+    orderIds: sel.flatMap(p => p.orderIds), status: 'Delivered', delivered_date: date,
+  });
+  if (!r || r.error) { btn.disabled = false; alert((r && r.error) || 'Could not mark delivered.'); return; }
+  _botPkgSelected.clear();
+  botShowUndo(sel.length, r.previous, date);
+  await loadBotOrders();   // refreshes the cards and the visible list
+}
+
+// Undo is offered for 10 seconds, then the bar goes away.
+function botShowUndo(count, previous, date) {
+  const token = {};
+  _botUndo = { token, previous };
+  const bar = document.getElementById('bot-undo-bar');
+  bar.innerHTML = `<span><i class="fa fa-check" style="color:#34d399;"></i> ${count} package${count === 1 ? '' : 's'} marked delivered on ${botShortDate(date)}</span>
+    <button class="btn btn-ghost btn-sm" id="bot-undo-btn" onclick="botUndo()" style="color:#8fbcf5;font-weight:700;">Undo</button>`;
+  bar.style.display = 'flex';
+  setTimeout(() => {
+    if (_botUndo && _botUndo.token === token) { _botUndo = null; bar.style.display = 'none'; }
+  }, 10000);
+}
+
+async function botUndo() {
+  if (!_botUndo) return;
+  const { previous } = _botUndo;
+  _botUndo = null;
+  document.getElementById('bot-undo-bar').style.display = 'none';
+  const r = await api('POST', '/admin/bot-orders/bulk-restore', { previous });
+  if (!r || r.error) { alert('Undo failed — the orders are still marked delivered.'); return; }
+  await loadBotOrders();
+}
+
 // ── Expandable product rows: every order behind a product, with tracking ────
 // Keyed by skuKey (stable across reloads and renames) so rows stay open when
 // the list re-renders.
@@ -2617,6 +2815,21 @@ async function loadBotItemView(cat) {
   if (retailer) qs.set('retailer', retailer);
   if (status)   qs.set('status', status);
 
+  // Each status gets its sensible default view; an explicit switch holds until
+  // the status changes.
+  if (status !== _botViewStatus) { _botViewMode = 'auto'; _botViewStatus = status; }
+  const view = botEffectiveView();
+  botApplyView(view);
+  if (view === 'package') {
+    const pk = await api('GET', '/admin/bot-packages?' + qs.toString());
+    if (!pk) return;
+    _botPackages = pk;
+    const present = new Set(pk.map(p => p.key));
+    [..._botPkgSelected].forEach(k => { if (!present.has(k)) _botPkgSelected.delete(k); });
+    renderBotPackages();
+    return;
+  }
+
   const items = await api('GET', '/admin/bot-items?' + qs.toString());
   if (!items) return;
   _botItems = items;
@@ -2645,6 +2858,7 @@ function botFilterChanged() {
 }
 
 function renderBotItemView() {
+  if (botEffectiveView() === 'package') return renderBotPackages();
   const search = (document.getElementById('bot-item-search').value || '').toLowerCase();
   const addr   = document.getElementById('bot-filter-address').value;
   let rows = _botItems;

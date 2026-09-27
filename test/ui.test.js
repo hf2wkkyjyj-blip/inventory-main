@@ -109,6 +109,24 @@ for (const [num, retailer, items, total] of seed) {
   DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total)
               VALUES ('Pokemon', ?, ?, 'Delivered', ?, ?)`).run([retailer, num, items, total]);
 }
+const BOX_ITEMS = JSON.stringify([
+  '2x Pokemon TCG: 30th Celebration Pokemon Center Elite Trainer Box (SKU 10-10447-111)',
+  '1x Pokemon TCG: 30th Celebration Knock Out Collection (SKU 10-10667-101)',
+  '1x Pokemon TCG: Mega Evolution-Pitch Black Booster Bundle (6 Packs) (SKU 10-10422-109)',
+]);
+const PKC_SHIPPED = [
+  // one box, three products
+  ['P0038241809', '876893093507', 'Jason Yang',  '8410 Yates Ave North Fl 6, Minneapolis, MN 55443'],
+  // same tracking on two orders to two buildings — seen in the real data
+  ['P0038311805', '876928855241', 'Jenny Xiong', '8410 Yates Ave N Apt 3f, Minneapolis, MN 55443'],
+  ['P0038320540', '876928855241', 'Kien Lai',    '08805 E Research Center Dr Rm 5, Minneapolis, MN 55428'],
+];
+for (const [num, trk, name, addr] of PKC_SHIPPED) {
+  DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, tracking, expected_date,
+              shipping_name, shipping_address, items, order_total)
+              VALUES ('Pokemon','Pokemon Center',?,'Shipped',?,'2026-09-29',?,?,?,165.21)`)
+    .run([num, trk, name, addr, BOX_ITEMS]);
+}
 for (const [num, retailer, trk, tstat, exp, name, addr] of SHIPPED) {
   DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, tracking, tracking_status,
               expected_date, shipping_name, shipping_address, items, order_total)
@@ -296,6 +314,9 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     statusSel.value = 'Shipped';
     d.getElementById('bot-cat-tabs').dataset.active = 'Pokemon';
     await w.loadBotItemView('Pokemon'); await tick();
+    // Shipped now opens By package; this section covers the product view.
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By product/.test(b.textContent)).click();
+    await tick(60);
 
     const prod = rowNamed(/Mega Emboar ex/);
     check('Emboar product row present',          !!prod);
@@ -354,7 +375,11 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('Pokemon tab button exists', !!pokeTab);
     pokeTab.click(); await tick(80);
 
-    const names  = () => rows().map(r => r.textContent);
+    // Shipped opens the package view, Delivered the product view — read the one on screen.
+    const pkgOn  = () => d.getElementById('bot-pkg-wrap').style.display !== 'none';
+    const names  = () => pkgOn()
+      ? [...d.querySelectorAll('#bot-pkg-tbody > tr')].map(r => r.textContent)
+      : rows().map(r => r.textContent);
     const has    = re => names().some(t => re.test(t));
     const card   = st => d.getElementById('bsc-' + st);
 
@@ -387,6 +412,90 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     d.getElementById('bot-reparse-btn').click();       // ends in loadBotOrders(), like Refresh/Scan/Repair
     await tick(200);
     check('appears after Reparse, without switching tabs', has(/Surging Sparks/));
+  }
+
+  console.log('\n── Shipped opens the package view (real click) ──');
+  {
+    const statusSel = d.getElementById('bot-filter-status');
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
+    [...d.querySelectorAll('.btab')].find(b => /^Pokemon/.test(b.textContent.trim())).click(); await tick(80);
+    d.getElementById('bsc-Shipped').click(); await tick(80);
+
+    const pkgRows = () => [...d.querySelectorAll('#bot-pkg-tbody > tr')];
+    const pkgRow  = re => pkgRows().find(r => re.test(r.textContent));
+    const dbRow   = num => DB.prepare('SELECT status, tracking_status, delivered_date, expected_date FROM bot_orders WHERE order_number=?').get([num]);
+    const bar     = () => d.getElementById('bot-pkg-actionbar');
+    const undoBar = () => d.getElementById('bot-undo-bar');
+    const checkbox = tr => tr.querySelector('input[type=checkbox]');
+
+    check('package view shown on Shipped',          d.getElementById('bot-pkg-wrap').style.display !== 'none');
+    check('product table hidden',                   d.getElementById('bot-product-table-wrap').style.display === 'none');
+    check('"By package" is the active switch',      /By package/.test(d.querySelector('#bot-view-switch .active').textContent));
+
+    // 4 Emboar orders (3 tracked + 1 not) + 1 multi-item box + 1 shared-tracking pair = 6 packages
+    check('6 packages (not one row per product)',   pkgRows().length === 6, pkgRows().length);
+    const boxRow = pkgRow(/876893093507/);
+    check('multi-item box is ONE row',              pkgRows().filter(r => /876893093507/.test(r.textContent)).length === 1);
+    check('box lists all 3 products as tags',       boxRow && boxRow.querySelectorAll('.bot-pkg-tag').length === 3);
+    check('ETB ×2 shown',                           boxRow && /PC ETB ×2/.test(boxRow.textContent), boxRow && boxRow.textContent.replace(/\s+/g, ' ').slice(0, 160));
+
+    const flagRow = pkgRow(/876928855241/);
+    check('shared tracking = one flagged row',      flagRow && /same tracking, 2 addresses/.test(flagRow.textContent));
+    check('both destinations listed',               flagRow && /Jenny Xiong/.test(flagRow.textContent) && /Kien Lai/.test(flagRow.textContent));
+    check('banner warns about it',                  /1 package need/.test(d.getElementById('bot-unlinked-banner').textContent));
+    check('no-tracking order has its own row',      !!pkgRow(/no tracking yet/));
+
+    console.log('\n── Select all skips the flagged package ──');
+    const all = d.getElementById('bot-pkg-all');
+    all.click(); await tick();
+    check('select all → 5 selected',               /5 packages selected/.test(bar().textContent), bar().textContent.replace(/\s+/g, ' ').trim().slice(0, 80));
+    check('flagged package NOT selected',           !checkbox(pkgRow(/876928855241/)).checked);
+    check('action bar visible',                     bar().style.display === 'flex');
+    check('date defaults to today',                 d.getElementById('bot-pkg-date').value === w.botLocalToday());
+    all.click(); await tick();
+    check('unselect all → bar hidden',              bar().style.display === 'none');
+
+    console.log('\n── Flagged package can still be picked deliberately ──');
+    checkbox(pkgRow(/876928855241/)).click(); await tick();
+    check('bar warns it includes a flagged one',    /includes 1 flagged/.test(bar().textContent));
+    check('counts both orders in that box',         /\(2 orders\)/.test(bar().textContent));
+    [...bar().querySelectorAll('button')].find(b => /Clear/.test(b.textContent)).click(); await tick();
+
+    console.log('\n── Mark 2 packages delivered on a chosen date ──');
+    checkbox(pkgRow(/1ZWY0657YW04307994/)).click(); await tick();   // S02
+    checkbox(pkgRow(/876893093507/)).click(); await tick();          // the box
+    check('2 selected',                             /2 packages selected/.test(bar().textContent));
+    d.getElementById('bot-pkg-date').value = '2026-09-20';
+    const shippedBefore = Number(d.getElementById('bs-shipped').textContent);
+    d.getElementById('bot-pkg-mark').click(); await tick(150);
+
+    const s2 = dbRow('S02'), bx = dbRow('P0038241809');
+    check('S02 now Delivered',                      s2.status === 'Delivered' && s2.tracking_status === 'Delivered');
+    check('box order now Delivered',                bx.status === 'Delivered');
+    check('uses the chosen date, not today',        s2.delivered_date === '2026-09-20' && bx.delivered_date === '2026-09-20', `${s2.delivered_date} / ${bx.delivered_date}`);
+    check('other packages untouched',               dbRow('S01').status === 'Shipped' && dbRow('P0038311805').status === 'Shipped');
+    check('they left the Shipped list',             pkgRows().length === 4 && !pkgRow(/876893093507/), pkgRows().length);
+    const shippedAfter = Number(d.getElementById('bs-shipped').textContent);
+    check('SHIPPED card dropped by 2 orders',       shippedBefore - shippedAfter === 2, `${shippedBefore} → ${shippedAfter}`);
+    check('undo bar shown',                         undoBar().style.display === 'flex' && /2 packages marked delivered on Sep 20/.test(undoBar().textContent), undoBar().textContent.trim());
+
+    console.log('\n── Undo restores everything exactly ──');
+    d.getElementById('bot-undo-btn').click(); await tick(150);
+    const s2b = dbRow('S02'), bxb = dbRow('P0038241809');
+    check('S02 back to Shipped',                    s2b.status === 'Shipped');
+    check('tracking_status restored',               s2b.tracking_status === null);
+    check('delivered_date cleared again',           s2b.delivered_date === null && bxb.delivered_date === null);
+    check('expected date restored',                 s2b.expected_date === '2026-09-27' && bxb.expected_date === '2026-09-29', `${s2b.expected_date} / ${bxb.expected_date}`);
+    check('packages back in the list',              pkgRows().length === 6, pkgRows().length);
+    check('undo bar gone',                          undoBar().style.display === 'none');
+
+    console.log('\n── View switch ──');
+    d.getElementById('bsc-Delivered').click(); await tick(80);
+    check('Delivered defaults to By product',       d.getElementById('bot-pkg-wrap').style.display === 'none');
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(80);
+    check('can switch Delivered to By package',     d.getElementById('bot-pkg-wrap').style.display !== 'none');
+    check('delivered packages not selectable',      [...d.querySelectorAll('#bot-pkg-tbody input[type=checkbox]')].every(c => c.disabled));
+    d.getElementById('bsc-Delivered').click(); await tick(80);   // clear filter
   }
 
   console.log('\n── Orders table tracking links use the right carrier too ──');
