@@ -201,6 +201,55 @@ function email(id, date, subject, body, orderNo, tracking) {
     eq('stable across repeated reparses', db._orders[0].delivered_date, '2026-08-28');
   }
 
+  console.log('\n── Repair Statuses keeps deliveries the emails never saw ──');
+  {
+    // Emails only ever said "shipped"; the delivery came from you or the carrier.
+    const shippedOnly = [email('<s>', '2026-09-12T10:00:00Z', 'Your order has shipped', 'Your package is on its way.', '102000000000011', '1ZAA11110000000001')];
+    const row = source => ({ id: 1, order_number: '102000000000011', status: 'Delivered', tracking_status: 'Delivered',
+      delivered_date: '2026-09-27', status_source: source, category: 'Pokemon', retailer: 'Target',
+      tracking: '1ZAA11110000000001', items: null, order_total: null });
+
+    for (const source of ['manual', 'carrier']) {
+      const db = makeDb([row(source)], shippedOnly);
+      await reparseStoredEmails(db, { rebuildStatus: true });
+      const o = db._orders[0];
+      eq(`${source}-marked delivery stays Delivered`, o.status, 'Delivered');
+      eq(`${source}: delivered date kept`,            o.delivered_date, '2026-09-27');
+    }
+
+    // A Delivered that came from an email reading the emails now disprove:
+    // corrected, and its delivery fields cleared so the row is consistent.
+    {
+      const db = makeDb([row('email')], shippedOnly);
+      await reparseStoredEmails(db, { rebuildStatus: true });
+      const o = db._orders[0];
+      eq('email-derived false Delivered → Shipped', o.status, 'Shipped');
+      eq('its delivered date cleared',              o.delivered_date, null);
+      eq('its tracking status cleared',             o.tracking_status, null);
+    }
+
+    // Older rows don't know their source: the rebuild may move status, but must
+    // keep the delivery date so the server's reconcile step can restore it.
+    {
+      const db = makeDb([row(null)], shippedOnly);
+      await reparseStoredEmails(db, { rebuildStatus: true });
+      eq('legacy row keeps its delivered date', db._orders[0].delivered_date, '2026-09-27');
+      eq('legacy row keeps tracking Delivered', db._orders[0].tracking_status, 'Delivered');
+    }
+
+    // A real later delivery email still wins normally, and a manual status
+    // still gets UPGRADED by emails.
+    {
+      const db = makeDb([{ ...row('manual'), status: 'Confirmed', tracking_status: null, delivered_date: null }], [
+        ...shippedOnly,
+        email('<d>', '2026-09-14T10:00:00Z', 'Your order was delivered', 'Your package was delivered.', '102000000000011', '1ZAA11110000000001'),
+      ]);
+      await reparseStoredEmails(db, { rebuildStatus: true });
+      eq('manual Confirmed upgraded by emails to Delivered', db._orders[0].status, 'Delivered');
+      eq('uses the delivery email date', db._orders[0].delivered_date, '2026-09-14');
+    }
+  }
+
   console.log(`\n${'─'.repeat(60)}`);
   console.log(`${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);

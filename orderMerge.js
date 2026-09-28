@@ -97,6 +97,15 @@ function mergeDuplicateOrders(db, log = console.log) {
     const others = rows.slice(1);
 
     const { sets, vals } = planFill(keep, others);
+    // Take the furthest a duplicate got (Confirmed → Shipped → Delivered). The
+    // fill above copied a donor's delivered_date / tracking_status but left the
+    // kept row's older status, so a delivered order stayed listed as Shipped.
+    // Cancelled/Refunded are never taken from a donor — too final to guess.
+    const furthest = others.filter(r => (RANK[r.status] || 0) <= RANK.Delivered)
+      .reduce((b, r) => ((RANK[r.status] || 0) > (RANK[b.status] || 0) ? r : b), keep);
+    if (furthest !== keep && (RANK[keep.status] || 0) <= RANK.Delivered) {
+      sets.push('status'); vals.push(furthest.status);
+    }
     if (sets.length) {
       db.prepare(`UPDATE bot_orders SET ${sets.map(c => `${c}=?`).join(',')} WHERE id=?`)
         .run([...vals, keep.id]);
@@ -137,7 +146,26 @@ function fillExisting(db, existing, incoming) {
   return sets;
 }
 
+// An order whose tracking says Delivered, with a delivery date, IS delivered —
+// the package view already shows it that way. Older code could leave status
+// behind at Shipped (Repair Statuses undoing a hand-marked delivery; the merge
+// above). Those orders sat in the Shipped list forever. Idempotent.
+function reconcileDelivered(db, log = console.log) {
+  let n = 0;
+  try {
+    const rows = db.prepare(`SELECT id FROM bot_orders WHERE status IN ('Confirmed','Unship','Shipped')
+                             AND tracking_status='Delivered' AND delivered_date IS NOT NULL AND delivered_date<>''`).all();
+    for (const r of rows) {
+      db.prepare(`UPDATE bot_orders SET status='Delivered', status_source=COALESCE(status_source,'manual') WHERE id=?`).run([r.id]);
+      n++;
+    }
+  } catch (e) { log(`⚠️  delivered reconcile failed: ${e.message}`); }
+  if (n) log(`📬 ${n} order(s) marked delivered but still listed as Shipped — fixed`);
+  return n;
+}
+
 module.exports = {
+  reconcileDelivered,
   mergeDuplicateOrders, findExisting, fillExisting,
   planFill, richness, retailersCompatible, isEmpty, FILLABLE,
 };

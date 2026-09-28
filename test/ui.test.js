@@ -507,6 +507,7 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const s2 = dbRow('S02'), bx = dbRow('P0099000001');
     check('S02 now Delivered',                      s2.status === 'Delivered' && s2.tracking_status === 'Delivered');
     check('box order now Delivered',                bx.status === 'Delivered');
+    check('recorded as set by hand (survives Repair)', DB.prepare("SELECT status_source FROM bot_orders WHERE order_number='S02'").get().status_source === 'manual');
     check('uses the chosen date, not today',        s2.delivered_date === '2026-09-20' && bx.delivered_date === '2026-09-20', `${s2.delivered_date} / ${bx.delivered_date}`);
     check('other packages untouched',               dbRow('S01').status === 'Shipped' && dbRow('P0099000002').status === 'Shipped');
     check('they left the Shipped list',             pkgRows().length === 4 && !pkgRow(/870000000301/), pkgRows().length);
@@ -519,6 +520,7 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const s2b = dbRow('S02'), bxb = dbRow('P0099000001');
     check('S02 back to Shipped',                    s2b.status === 'Shipped');
     check('tracking_status restored',               s2b.tracking_status === null);
+    check('status source restored too',             DB.prepare("SELECT status_source FROM bot_orders WHERE order_number='S02'").get().status_source === null);
     check('delivered_date cleared again',           s2b.delivered_date === null && bxb.delivered_date === null);
     check('expected date restored',                 s2b.expected_date === '2026-09-27' && bxb.expected_date === '2026-09-29', `${s2b.expected_date} / ${bxb.expected_date}`);
     check('packages back in the list',              pkgRows().length === 6, pkgRows().length);
@@ -775,6 +777,25 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('already-$35 orders not offered again', again.length === 1 && /D04/.test(again[0]), JSON.stringify(again));
     [...ov.querySelectorAll('button')].find(b => b.textContent.trim() === 'Skip').click(); await tick(100);
     check('Skip closes without changing D04',    !isVisible(ov) && ffee('D04') === 20);
+  }
+
+  console.log('\n── Delivered-but-listed-as-Shipped gets fixed (real clicks) ──');
+  {
+    // The reported state: status Shipped, tracking says Delivered, with a date.
+    DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, tracking, tracking_status, delivered_date, items, order_total)
+                VALUES ('Pokemon','Pokemon Center','X01','Shipped','870000000601','Delivered','2026-09-27',?,20)`)
+      .run([JSON.stringify(['1x Test Stuck Pack @ $20.00'])]);
+    const statusSel = d.getElementById('bot-filter-status');
+    [...d.querySelectorAll('.btab')].find(b => /^Pokemon/.test(b.textContent.trim())).click(); await tick(80);
+    statusSel.value = 'Shipped'; statusSel.dispatchEvent(new w.Event('change')); await tick(80);
+    const inShipped = () => [...d.querySelectorAll('#bot-pkg-tbody > tr')].some(r => /870000000601/.test(r.textContent));
+    check('stuck order shows in Shipped (the bug)', inShipped());
+    d.getElementById('bot-reparse-btn').click(); await tick(250);
+    check('after Reparse: gone from Shipped',     !inShipped());
+    check('status now Delivered',                 DB.prepare("SELECT status FROM bot_orders WHERE order_number='X01'").get().status === 'Delivered');
+    statusSel.value = 'Delivered'; statusSel.dispatchEvent(new w.Event('change')); await tick(80);
+    check('listed under Delivered',               !!rowNamed(/Test Stuck Pack/));
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
   }
 
   console.log('\n── Orders table tracking links use the right carrier too ──');

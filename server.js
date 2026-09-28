@@ -145,6 +145,10 @@ try { db.exec("ALTER TABLE bot_orders ADD COLUMN finder_fee REAL DEFAULT 0"); } 
 // When the order last changed status. Needed to answer "what was delivered
 // today?" — order_date is when it was placed, which is a different question.
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN status_changed_at DATETIME"); } catch(e) {}
+// Who last set the status: 'manual' (you — ✎ or bulk), 'carrier' (tracking
+// check), 'email', or NULL (older rows). Repair Statuses rebuilds from emails
+// and must not undo a status the emails never knew about.
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN status_source TEXT"); } catch(e) {}
 // Backfill so existing rows aren't invisible to date filters.
 try { db.exec("UPDATE bot_orders SET status_changed_at=COALESCE(delivered_date, received_at, order_date) WHERE status_changed_at IS NULL"); } catch(e) {}
 try { db.exec("CREATE TABLE IF NOT EXISTS bot_sku_prices (sku TEXT PRIMARY KEY, buyer_fee REAL DEFAULT 0, sale_price REAL DEFAULT 0)"); } catch(e) {}
@@ -300,6 +304,7 @@ catch (e) { console.error('⚠️  baseline import failed:', e.message); }
 // Idempotent: once merged, later startups find nothing to do.
 try { OrderMerge.mergeDuplicateOrders(db); }
 catch (e) { console.error('⚠️  duplicate merge failed:', e.message); }
+OrderMerge.reconcileDelivered(db);
 
 try { SkuCatalog.ensureSkuTables(db); }
 catch (e) { console.error('⚠️  sku catalog setup failed:', e.message); }
@@ -1090,11 +1095,11 @@ app.post('/api/admin/bot-orders/bulk-status', auth, adminOnly, (req, res) => {
 
   const previous = [];
   for (const id of ids) {
-    const row = db.prepare('SELECT id, status, tracking_status, delivered_date, expected_date, status_changed_at FROM bot_orders WHERE id=?').get([id]);
+    const row = db.prepare('SELECT id, status, tracking_status, delivered_date, expected_date, status_changed_at, status_source FROM bot_orders WHERE id=?').get([id]);
     if (!row) continue;
     previous.push(row);
     db.prepare(`UPDATE bot_orders SET status='Delivered', tracking_status='Delivered',
-                delivered_date=?, expected_date=NULL, status_changed_at=? WHERE id=?`)
+                delivered_date=?, expected_date=NULL, status_changed_at=?, status_source='manual' WHERE id=?`)
       .run([date, date, id]);
   }
   res.json({ updated: previous.length, delivered_date: date, previous });
@@ -1108,8 +1113,8 @@ app.post('/api/admin/bot-orders/bulk-restore', auth, adminOnly, (req, res) => {
   for (const p of previous) {
     const id = Number(p && p.id);
     if (!Number.isInteger(id) || id <= 0 || !BOT_STATUS_SET.has(p.status)) continue;
-    db.prepare(`UPDATE bot_orders SET status=?, tracking_status=?, delivered_date=?, expected_date=?, status_changed_at=? WHERE id=?`)
-      .run([p.status, orNull(p.tracking_status), orNull(p.delivered_date), orNull(p.expected_date), orNull(p.status_changed_at), id]);
+    db.prepare(`UPDATE bot_orders SET status=?, tracking_status=?, delivered_date=?, expected_date=?, status_changed_at=?, status_source=? WHERE id=?`)
+      .run([p.status, orNull(p.tracking_status), orNull(p.delivered_date), orNull(p.expected_date), orNull(p.status_changed_at), orNull(p.status_source), id]);
     restored++;
   }
   res.json({ restored });
@@ -1340,6 +1345,8 @@ app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
     tax_amount=COALESCE(?,tax_amount), ship_cost=COALESCE(?,ship_cost), finder_fee=COALESCE(?,finder_fee)
     WHERE id=?`)
     .run([o.category||null,o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||null,o.items?JSON.stringify(o.items):null,o.order_total!=null?o.order_total:null,o.refunded_amount!=null?o.refunded_amount:null,o.notes||null,o.tracking||null,o.tracking_status||null,o.expected_date||null,o.tax_amount!=null?o.tax_amount:null,o.ship_cost!=null?o.ship_cost:null,o.finder_fee!=null?o.finder_fee:null,req.params.id]);
+  // A status you set by hand survives Repair Statuses (see status_source).
+  if (o.status) db.prepare("UPDATE bot_orders SET status_source='manual' WHERE id=?").run([req.params.id]);
   res.json({ success: true });
 });
 
@@ -1423,6 +1430,7 @@ app.post('/api/admin/scrape-emails/reparse', auth, adminOnly, async (req, res) =
       db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('scraper_blocked_orders','[]')").run();
     }
     const result = await reparseStoredEmails(db, { rebuildStatus: req.body?.rebuildStatus === true });
+    result.reconciled = OrderMerge.reconcileDelivered(db);
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1611,7 +1619,7 @@ async function autoUpdateTracking() {
         // COALESCE: the carrier tells us it's delivered but not when, so "today"
         // is only a detection-time fallback. Never overwrite a real delivery date
         // already derived from the retailer's own delivery email.
-        db.prepare(`UPDATE bot_orders SET status='Delivered', delivered_date=COALESCE(delivered_date,?), tracking_status='Delivered', expected_date=NULL WHERE id=?`).run([today, order.id]);
+        db.prepare(`UPDATE bot_orders SET status='Delivered', delivered_date=COALESCE(delivered_date,?), tracking_status='Delivered', expected_date=NULL, status_source='carrier' WHERE id=?`).run([today, order.id]);
         console.log(`   ✅ Delivered: #${order.order_number} (${order.tracking})`);
         updated++;
       } else {

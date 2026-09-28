@@ -629,8 +629,26 @@ async function processEmail(parsed, db, opts = {}) {
       firstTouch = true;
     }
 
+    // A status you set by hand, or the carrier check found, isn't in any email.
+    // The rebuild's "first email sets it outright" must not drag it backwards —
+    // that's how bulk-marked deliveries went back to Shipped while keeping their
+    // delivered date. Upgrades by later emails still apply as usual.
+    const protectedStatus = existing.status_source === 'manual' || existing.status_source === 'carrier';
+    if (firstTouch && protectedStatus && newRank < curRank) firstTouch = false;
+
     if (dbStatus && (newRank > curRank || correctingBadCancel || firstTouch)) {
       updates.push('status=?'); vals.push(dbStatus);
+      updates.push('status_source=?'); vals.push('email');
+      // Rebuild moving an email-derived Delivered back: its delivery fields came
+      // from the same (now disproved) reading — clear them so the row is
+      // consistent. A later delivery email in this replay sets them again.
+      // Only for an email-derived status: older rows don't record a source, and
+      // a hand-marked delivery must not lose its date.
+      if (firstTouch && existing.status_source === 'email' && existing.status === 'Delivered' &&
+          dbStatus !== 'Delivered' && resolvedStatus !== 'Delivered') {
+        if (!trackingStatus) { updates.push('tracking_status=?'); vals.push(null); }
+        updates.push('delivered_date=?'); vals.push(null);
+      }
       // Stamp when the status actually changed, using the email's own date so a
       // rescan reconstructs the real timeline instead of collapsing everything
       // onto the day the rescan ran.
