@@ -142,6 +142,14 @@ DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, it
             VALUES (NULL,'Bear Walker','B01','Delivered',?,20.00)`)
   .run([JSON.stringify(['2x Sample Card Sleeves @ $10.00'])]);
 
+// A box with two orders on one tracking number, item prices known (made up).
+DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, tracking, shipping_name, shipping_address, items, order_total)
+            VALUES ('One Piece','Test Store','F01','Delivered','870000000401','Test Buyer','1 Test St, Springfield',?,140)`)
+  .run([JSON.stringify(['2x Test Deck Box @ $60.00', '1x Test Collector Tin @ $20.00'])]);
+DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, tracking, shipping_name, shipping_address, items, order_total)
+            VALUES ('One Piece','Test Store','F02','Delivered','870000000401','Test Buyer','1 Test St, Springfield',?,120)`)
+  .run([JSON.stringify(['3x Test Card Bundle @ $40.00'])]);
+
 // ── Route dispatch for the page's fetch() ───────────────────────────────────
 const calls = [];
 function matchRoute(verb, pathname) {
@@ -658,6 +666,59 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('back bar hidden again',            d.getElementById('bot-orders-back').style.display === 'none');
     [...d.querySelectorAll('.btab')].find(b => /^Pokemon/.test(b.textContent.trim())).click(); await tick(80);
     check('no Order list switch on category tabs', ![...d.querySelectorAll('#bot-view-switch button')].some(b => /Order list/.test(b.textContent)));
+  }
+
+  console.log('\n── Box fee: one fee for the whole box, split by retail (real clicks) ──');
+  {
+    const statusSel = d.getElementById('bot-filter-status');
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
+    [...d.querySelectorAll('.btab')].find(b => /^One Piece/.test(b.textContent.trim())).click(); await tick(80);
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(80);
+    const box = () => [...d.querySelectorAll('#bot-pkg-tbody > tr')].find(r => /870000000401/.test(r.textContent));
+    check('two orders = one box row',          !!box() && /F01/.test(box().textContent) && /F02/.test(box().textContent));
+    const feeBtn = () => box().querySelector('button.bot-pkg-fee');
+    check('box shows "+ Fee" before any fee',  feeBtn() && /\+ Fee/.test(feeBtn().textContent));
+
+    feeBtn().click(); await tick();
+    const ov = d.getElementById('bot-fee-overlay');
+    check('Fee opens a VISIBLE dialog',        isVisible(ov));
+    const feeIn = d.getElementById('bf-fee');
+    feeIn.value = '100'; feeIn.dispatchEvent(new w.Event('input')); await tick(350);
+    const rate = d.getElementById('bf-rate').textContent;
+    check('shows box retail and rate',         /\$260\.00/.test(rate) && /38\.5%/.test(rate), rate.trim());
+    const line = re => [...d.querySelectorAll('#bf-items tr.bf-item')].find(tr => re.test(tr.textContent));
+    check('Deck Box: $46.16, $23.08/unit',     line(/Deck Box/) && /\$46\.16/.test(line(/Deck Box/).textContent) && /\$23\.08/.test(line(/Deck Box/).textContent), line(/Deck Box/) && line(/Deck Box/).textContent.replace(/\s+/g, ' '));
+    check('Bundle: $15.38/unit',               line(/Bundle/) && /\$15\.38/.test(line(/Bundle/).textContent));
+    check('per-order split listed',            /F01 \$53\.85/.test(d.getElementById('bf-items').textContent) && /F02 \$46\.15/.test(d.getElementById('bf-items').textContent));
+    const ff = n => DB.prepare('SELECT finder_fee FROM bot_orders WHERE order_number=?').get([n]).finder_fee;
+    check('preview saved nothing',             !ff('F01') && !ff('F02'));
+
+    d.getElementById('bf-save').click(); await tick(150);
+    check('saved per order',                   ff('F01') === 53.85 && ff('F02') === 46.15, `${ff('F01')} / ${ff('F02')}`);
+    check('dialog closed',                     !isVisible(ov));
+    check('box now shows $100.00',             /\$100\.00/.test(feeBtn().textContent), feeBtn().textContent.trim());
+
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By product/.test(b.textContent)).click(); await tick(80);
+    const deck = rowNamed(/Test Deck Box/);
+    check('Deck Box landed = $60 + $23.08',    deck && /\$83\.08/.test(deck.querySelectorAll(':scope > td')[2].textContent), deck && deck.querySelectorAll(':scope > td')[2].textContent.trim());
+
+    // Change it back to nothing.
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(80);
+    feeBtn().click(); await tick();
+    check('dialog prefilled with $100',        d.getElementById('bf-fee').value === '100');
+    d.getElementById('bf-fee').value = ''; d.getElementById('bf-save').click(); await tick(150);
+    check('clearing sets both orders to 0',    ff('F01') === 0 && ff('F02') === 0);
+    check('box back to "+ Fee"',               /\+ Fee/.test(feeBtn().textContent));
+
+    // A filter can hide part of a box; the fee must still cover the whole box.
+    const f01 = DB.prepare("SELECT id FROM bot_orders WHERE order_number='F01'").get().id;
+    const part = await (await fakeFetch('/api/admin/bot-packages/fee', { method: 'POST', body: JSON.stringify({ orderIds: [f01], fee: 100, dryRun: true }) })).json();
+    check('one order sent → whole box split',  part && part.orders.length === 2 && part.retail === 260, part && JSON.stringify(part.orders));
+
+    const bad = await fakeFetch('/api/admin/bot-packages/fee', { method: 'POST', body: JSON.stringify({ orderIds: [], fee: 5 }) });
+    check('server rejects empty box',          bad.status === 400);
+    const neg = await fakeFetch('/api/admin/bot-packages/fee', { method: 'POST', body: JSON.stringify({ orderIds: [1], fee: -5 }) });
+    check('server rejects a negative fee',     neg.status === 400);
   }
 
   console.log('\n── Orders table tracking links use the right carrier too ──');

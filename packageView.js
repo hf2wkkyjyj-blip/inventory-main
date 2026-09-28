@@ -66,7 +66,7 @@ function computePackages(orders, catalog) {
       id: o.id, order_number: o.order_number || null, retailer: o.retailer || null,
       status: o.status || 'Confirmed', tracking_status: o.tracking_status || null,
       expected_date: o.expected_date || null, delivered_date: o.delivered_date || null,
-      order_date: o.order_date || null,
+      order_date: o.order_date || null, finder_fee: Number(o.finder_fee) || 0,
       shipping_name: o.shipping_name || null, shipping_address: o.shipping_address || null,
     });
 
@@ -110,6 +110,8 @@ function computePackages(orders, catalog) {
       orderIds:      p.orders.map(o => o.id),
       contents:      [..._contents.values()].sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name)),
       units:         [..._contents.values()].reduce((s, c) => s + c.qty, 0),
+      // Box fee = what's been put on its orders (see feeSplit.js).
+      fee:           Math.round(p.orders.reduce((s, o) => s + o.finder_fee, 0) * 100) / 100,
     };
   });
 

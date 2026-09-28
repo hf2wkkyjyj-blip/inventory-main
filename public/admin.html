@@ -561,6 +561,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
             <th style="padding:10px 8px;border-bottom:1px solid var(--border);">STATUS</th>
             <th style="padding:10px 8px;border-bottom:1px solid var(--border);">SHIP TO</th>
             <th style="padding:10px 8px;border-bottom:1px solid var(--border);">CONTENTS</th>
+            <th style="padding:10px 8px;border-bottom:1px solid var(--border);text-align:right;" data-tip="One fee for the whole box, split over its items by retail cost">BOX FEE</th>
             <th style="padding:10px 8px;border-bottom:1px solid var(--border);">ORDER #</th>
           </tr>
         </thead>
@@ -574,7 +575,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
             <th style="padding:10px 12px;text-align:left;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">ITEM</th>
             <th style="padding:10px 8px;text-align:center;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">QTY</th>
             <th style="padding:10px 8px;text-align:right;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);">LANDED/unit</th>
-            <th style="padding:10px 8px;text-align:right;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);" data-tip="Per-unit fee (finder / buyer). Added to landed cost.">FINDER FEE</th>
+            <th style="padding:10px 8px;text-align:right;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);" data-tip="Extra fee PER UNIT, on top of any box fee. For a fee on a whole box, use BOX FEE in By package.">FEE / UNIT</th>
             <th style="padding:10px 8px;text-align:right;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);" data-tip="What you plan to sell each unit for. Pre-fills Record sale.">ASKING</th>
             <th style="padding:10px 8px;text-align:center;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);" data-tip="Units sold / units bought. Click to record a sale.">SOLD</th>
             <th style="padding:10px 8px;text-align:right;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);" data-tip="Per unit at the asking price. Below it: actual profit from recorded sales.">PROFIT</th>
@@ -924,6 +925,27 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <div style="flex:1;"></div>
       <button class="btn btn-ghost btn-sm" onclick="closeBotItemEdit()">Cancel</button>
       <button class="btn btn-primary btn-sm" onclick="saveBotItemEdit()"><i class="fa fa-save"></i> Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: BOX FEE (package view) ══════════════════════════════════════════ -->
+<div class="overlay" id="bot-fee-overlay" onclick="if(event.target.id==='bot-fee-overlay')closeBoxFee()">
+  <div class="modal" style="width:520px;max-height:88vh;overflow:auto;">
+    <h2 style="margin-bottom:4px;"><i class="fa fa-hand-holding-usd" style="color:var(--accent)"></i> Box fee</h2>
+    <div id="bf-sub" style="font-size:12px;color:var(--muted);margin-bottom:14px;"></div>
+    <div class="form-group" style="margin-bottom:10px;"><label style="font-size:11px;">Fee for the whole box ($)</label>
+      <input type="number" id="bf-fee" min="0" step="0.01" placeholder="0.00" style="width:100%;" oninput="boxFeePreviewSoon()"></div>
+    <div id="bf-rate" style="font-size:12px;margin-bottom:8px;"></div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px;">
+      <thead><tr style="font-size:10px;letter-spacing:.06em;color:var(--muted);text-align:right;">
+        <th style="text-align:left;padding:4px 0;">ITEM</th><th>QTY</th><th>RETAIL</th><th>FEE</th><th>FEE / UNIT</th></tr></thead>
+      <tbody id="bf-items"></tbody>
+    </table>
+    <div id="bf-error" style="font-size:12px;color:#f87171;margin-bottom:8px;display:none;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-ghost btn-sm" onclick="closeBoxFee()">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="bf-save" onclick="saveBoxFee()"><i class="fa fa-save"></i> Save fee</button>
     </div>
   </div>
 </div>
@@ -2642,7 +2664,7 @@ function renderBotPackages() {
 
   const tbody = document.getElementById('bot-pkg-tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--muted);">No packages.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--muted);">No packages.</td></tr>';
   } else {
     tbody.innerHTML = rows.map((p, i) => {
       const sel = _botPkgSelected.has(p.key);
@@ -2662,6 +2684,10 @@ function renderBotPackages() {
         <td style="padding:9px 8px;white-space:nowrap;"><span class="bpill bpill-${esc(p.status)}">${esc(p.status)}</span>${p.mixedStatus ? '<span style="font-size:10px;color:var(--muted);"> (mixed)</span>' : ''}<div style="font-size:11px;color:var(--muted);margin-top:3px;">${esc(when)}</div></td>
         <td style="padding:9px 8px;max-width:260px;">${shipTo || '<span style="color:var(--muted);">—</span>'}</td>
         <td style="padding:9px 8px;max-width:360px;">${tags}</td>
+        <td style="padding:9px 8px;text-align:right;white-space:nowrap;">
+          <button class="bot-pkg-fee" onclick="openBoxFee(${i})" data-tip="${p.fee ? 'Change the fee for this box' : 'Add one fee for this whole box — split by retail cost'}"
+            style="background:none;border:1px ${p.fee ? 'solid #4ade80' : 'dashed var(--border)'};border-radius:5px;cursor:pointer;padding:1px 7px;font-size:11px;font-variant-numeric:tabular-nums;color:${p.fee ? '#4ade80' : 'var(--muted)'};">${p.fee ? '$' + p.fee.toFixed(2) : '+ Fee'}</button>
+        </td>
         <td style="padding:9px 8px;color:var(--muted);white-space:nowrap;font-size:11px;">${p.orders.map(o => `
           <div style="display:flex;align-items:center;gap:6px;line-height:20px;">
             <span>${esc(o.order_number || '—')}</span>
@@ -2677,6 +2703,63 @@ function renderBotPackages() {
   all.checked = bulk.length > 0 && bulk.every(p => _botPkgSelected.has(p.key));
   all.indeterminate = !all.checked && bulk.some(p => _botPkgSelected.has(p.key));
   botRenderActionBar();
+}
+
+// ── Box fee ─────────────────────────────────────────────────────────────────
+// One fee for the whole box. The server splits it (feeSplit.js) — the preview
+// asks it with dryRun, so what you see is exactly what gets saved.
+let _bfPkg = null, _bfTimer = null;
+
+function openBoxFee(i) {
+  const p = _botPkgRows[i];
+  if (!p) return;
+  _bfPkg = p;
+  document.getElementById('bf-sub').textContent =
+    `${p.tracking || 'No tracking yet'} · ${p.orders.length} order${p.orders.length === 1 ? '' : 's'} · ${p.units} unit${p.units === 1 ? '' : 's'}`;
+  document.getElementById('bf-fee').value = p.fee || '';
+  document.getElementById('bf-error').style.display = 'none';
+  document.getElementById('bot-fee-overlay').classList.add('open');
+  boxFeePreview();
+  setTimeout(() => document.getElementById('bf-fee').focus(), 0);
+}
+
+function closeBoxFee() {
+  document.getElementById('bot-fee-overlay').classList.remove('open');
+  _bfPkg = null;
+}
+
+function boxFeePreviewSoon() { clearTimeout(_bfTimer); _bfTimer = setTimeout(boxFeePreview, 200); }
+
+async function boxFeePreview() {
+  if (!_bfPkg) return;
+  const fee = parseFloat(document.getElementById('bf-fee').value) || 0;
+  const r = await api('POST', '/admin/bot-packages/fee', { orderIds: _bfPkg.orderIds, fee, dryRun: true });
+  if (!r || !_bfPkg) return;
+  const money = n => '$' + (n || 0).toFixed(2);
+  document.getElementById('bf-rate').innerHTML = r.basis === 'retail'
+    ? `Retail in this box <b>${money(r.retail)}</b> → fee rate <b>${(r.rate * 100).toFixed(1)}%</b> of each item's price`
+    : '<span style="color:#fbbf24;">No prices in this box — split evenly per unit.</span>';
+  document.getElementById('bf-items').innerHTML = r.items.map(it => `
+    <tr class="bf-item" style="border-top:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums;">
+      <td style="text-align:left;padding:5px 0;">${esc(it.name)}</td><td>${it.qty}</td><td>${money(it.retail)}</td>
+      <td>${money(it.fee)}</td><td style="color:#4ade80;">${money(it.perUnit)}</td></tr>`).join('')
+    + (r.orders.length > 1 ? `<tr><td colspan="5" style="padding-top:6px;font-size:11px;color:var(--muted);text-align:left;">
+        Per order: ${r.orders.map(o => `${esc(o.order_number || '#' + o.id)} ${money(o.fee)}`).join(' · ')}</td></tr>` : '');
+}
+
+async function saveBoxFee() {
+  if (!_bfPkg) return;
+  const err = document.getElementById('bf-error');
+  const raw = document.getElementById('bf-fee').value;
+  const fee = raw === '' ? 0 : parseFloat(raw);
+  if (!(fee >= 0)) { err.textContent = 'Enter the fee as a number.'; err.style.display = ''; return; }
+  const btn = document.getElementById('bf-save'); btn.disabled = true;
+  try {
+    const r = await api('POST', '/admin/bot-packages/fee', { orderIds: _bfPkg.orderIds, fee });
+    if (!r) { err.textContent = 'Could not save the fee.'; err.style.display = ''; return; }
+    closeBoxFee();
+    await loadBotItemView(botCurCat());
+  } finally { btn.disabled = false; }
 }
 
 function botPkgToggle(i, on) {

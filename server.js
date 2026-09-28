@@ -16,6 +16,7 @@ const { decomposeItem, parseItemName, splitItemParts, itemKey } = require('./ite
 const { computeItemGroups } = require('./itemView');
 const SkuCatalog = require('./skuCatalog');
 const { computePackages } = require('./packageView');
+const { splitBoxFee } = require('./feeSplit');
 const OrderMerge = require('./orderMerge');
 const { recategorizeOrders } = require('./category');
 const Retailers = require('./retailers');
@@ -1016,6 +1017,38 @@ const isIsoDate = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) &&
 
 // Bulk "Mark delivered". Returns every order's previous state so the page can
 // offer Undo. Deliberately only accepts Delivered — the one bulk action wanted.
+// ── Box fee: one fee for a whole box, split over its items by retail cost ────
+// The box = the given orders plus every other live order on the same tracking
+// number (a filter may be hiding some of them). dryRun returns the split for
+// the preview without saving. Each order's share goes in finder_fee, which the
+// item view already spreads over that order's items.
+app.post('/api/admin/bot-packages/fee', auth, adminOnly, (req, res) => {
+  const { orderIds, fee, dryRun } = req.body || {};
+  const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
+  const amount = Number(fee);
+  if (!ids.length)                                return res.status(400).json({ error: 'orderIds required' });
+  if (!Number.isFinite(amount) || amount < 0)     return res.status(400).json({ error: 'Fee must be a number' });
+
+  const byId = new Map();
+  for (const id of ids) {
+    const o = db.prepare('SELECT * FROM bot_orders WHERE id=?').get([id]);
+    if (!o) continue;
+    byId.set(o.id, o);
+    if (o.tracking) {
+      db.prepare("SELECT * FROM bot_orders WHERE tracking=? AND status NOT IN ('Cancelled','Refunded')")
+        .all([o.tracking]).forEach(x => byId.set(x.id, x));
+    }
+  }
+  const orders = [...byId.values()].sort((a, b) => a.id - b.id);
+  if (!orders.length) return res.status(404).json({ error: 'No such orders' });
+
+  const split = splitBoxFee(orders, amount, SkuCatalog.loadCatalog(db));
+  if (!dryRun) {
+    for (const o of split.orders) db.prepare('UPDATE bot_orders SET finder_fee=? WHERE id=?').run([o.fee, o.id]);
+  }
+  res.json({ ...split, saved: !dryRun });
+});
+
 app.post('/api/admin/bot-orders/bulk-status', auth, adminOnly, (req, res) => {
   const { orderIds, status, delivered_date } = req.body || {};
   const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
