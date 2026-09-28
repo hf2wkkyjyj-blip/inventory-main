@@ -543,7 +543,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     </div>
   </div>
 
-  <!-- Item view (shown for specific category tabs) -->
+  <!-- Item view (every tab; All can switch to the order list) -->
   <div id="bot-item-view" style="display:none;">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
       <input type="text" id="bot-item-search" placeholder="Search item name…" oninput="renderBotItemView()" style="font-size:12px;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:240px;">
@@ -596,6 +596,13 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   <div id="bot-undo-bar" class="bot-float-bar" style="display:none;"></div>
 
   <!-- Orders Table -->
+  <div id="bot-orders-back" style="display:none;justify-content:flex-end;margin-bottom:10px;">
+    <span style="display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+      <button class="bot-vs-btn" onclick="_botViewMode='package';botShowOrderList(false)"><i class="fa fa-box"></i> By package</button>
+      <button class="bot-vs-btn" onclick="_botViewMode='product';botShowOrderList(false)"><i class="fa fa-layer-group"></i> By product</button>
+      <button class="bot-vs-btn active"><i class="fa fa-list"></i> Order list</button>
+    </span>
+  </div>
   <div id="bot-orders-wrap" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
     <table id="bot-orders-table" style="width:100%;border-collapse:collapse;">
       <thead>
@@ -1971,8 +1978,7 @@ async function loadBotOrders() {
   renderBotOrders();
   // Refresh / Scan / Reparse / Repair all land here. If a category tab is open,
   // the visible list is the product view — reload it too, or it stays stale.
-  const cat = document.getElementById('bot-cat-tabs').dataset.active;
-  if (cat && cat !== 'All') await loadBotItemView(cat);
+  if (botItemViewActive()) await loadBotItemView(botCurCat());
 }
 
 async function botRefresh() {
@@ -2110,11 +2116,20 @@ function buildBotAddressFilter() {
   }).join('');
 }
 
+// The All tab shows products too (so every order can be sold from), with a
+// switch back to the plain order list. Category tabs always show products.
+let _botAllOrders = false;
+const botCurCat = () => document.getElementById('bot-cat-tabs').dataset.active || 'All';
+const botItemViewActive = () => botCurCat() !== 'All' || !_botAllOrders;
+function botShowOrderList(on) { _botAllOrders = !!on; botSetCat('All'); }
+
 function botSetCat(cat) {
   document.getElementById('bot-cat-tabs').dataset.active = cat;
   document.querySelectorAll('.btab').forEach(b => b.classList.toggle('active', b.textContent.trim().startsWith(cat)));
   _botPage = 0;
-  const isItemView = cat !== 'All';
+  const isItemView = cat !== 'All' || !_botAllOrders;
+  const back = document.getElementById('bot-orders-back');
+  if (back) back.style.display = cat === 'All' && _botAllOrders ? 'flex' : 'none';
   document.getElementById('bot-item-view').style.display   = isItemView ? 'block' : 'none';
   document.getElementById('bot-orders-wrap').style.display = isItemView ? 'none'  : 'block';
   if (isItemView) {
@@ -2193,8 +2208,7 @@ function botSetRange(r, btn) {
   _botPage = 0;
   buildBotStats();
   renderBotOrders();
-  const cat = document.getElementById('bot-cat-tabs').dataset.active;
-  if (cat && cat !== 'All') loadBotItemView(cat);
+  if (botItemViewActive()) loadBotItemView(botCurCat());
 }
 
 // ── What the DATE column should show ────────────────────────────────────────
@@ -2589,8 +2603,7 @@ function botEffectiveView() {
 
 function botSetView(mode) {
   _botViewMode = mode;
-  const cat = document.getElementById('bot-cat-tabs').dataset.active;
-  if (cat && cat !== 'All') loadBotItemView(cat);
+  if (botItemViewActive()) loadBotItemView(botCurCat());
 }
 
 function botApplyView(view) {
@@ -2598,7 +2611,8 @@ function botApplyView(view) {
   document.getElementById('bot-product-table-wrap').style.display = view === 'package' ? 'none' : '';
   document.getElementById('bot-view-switch').innerHTML =
     `<button class="bot-vs-btn${view === 'package' ? ' active' : ''}" onclick="botSetView('package')"><i class="fa fa-box"></i> By package</button>` +
-    `<button class="bot-vs-btn${view === 'product' ? ' active' : ''}" onclick="botSetView('product')"><i class="fa fa-layer-group"></i> By product</button>`;
+    `<button class="bot-vs-btn${view === 'product' ? ' active' : ''}" onclick="botSetView('product')"><i class="fa fa-layer-group"></i> By product</button>` +
+    (botCurCat() === 'All' ? `<button class="bot-vs-btn" onclick="botShowOrderList(true)"><i class="fa fa-list"></i> Order list</button>` : '');
   if (view !== 'package') { _botPkgSelected.clear(); botRenderActionBar(); }
 }
 
@@ -2840,6 +2854,11 @@ async function botCopyTracking(idx, btn) {
 function botToggleOnlyUnlinked() { _botOnlyUnlinked = !_botOnlyUnlinked; renderBotItemView(); }
 
 async function loadBotItemView(cat) {
+  // Whoever asked for products, make sure products are what's on screen (on
+  // first load the All tab starts here without going through botSetCat).
+  document.getElementById('bot-item-view').style.display   = 'block';
+  document.getElementById('bot-orders-wrap').style.display = 'none';
+  document.getElementById('bot-orders-back').style.display = 'none';
   const tbody = document.getElementById('bot-item-tbody');
   tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--muted);">Loading ${esc(cat)} items…</td></tr>`;
 
@@ -2888,8 +2907,7 @@ function botFilterChanged() {
   // the user actually changed.
   _botStatusFilter = document.getElementById('bot-filter-status').value;
   buildBotStats();
-  const cat = document.getElementById('bot-cat-tabs').dataset.active;
-  if (cat && cat !== 'All') loadBotItemView(cat);
+  if (botItemViewActive()) loadBotItemView(botCurCat());
   else                      renderBotOrders();
 }
 
@@ -3141,8 +3159,7 @@ function renderBotSaleHistory() {
 // After a change, reload the item view and re-point the dialog at the fresh row.
 async function botSaleRefresh() {
   const key = _bsItem && _bsItem.skuKey;
-  const cat = document.getElementById('bot-cat-tabs').dataset.active;
-  if (cat && cat !== 'All') await loadBotItemView(cat);
+  if (botItemViewActive()) await loadBotItemView(botCurCat());
   const fresh = (_botItems || []).find(i => i.skuKey === key);
   if (fresh && _bsItem) {
     _bsItem = fresh;
@@ -3254,8 +3271,7 @@ function closeBotItemEdit() {
 }
 
 function botReloadItemView() {
-  const cat = document.getElementById('bot-cat-tabs').dataset.active;
-  if (cat && cat !== 'All') loadBotItemView(cat);
+  if (botItemViewActive()) loadBotItemView(botCurCat());
 }
 
 async function saveBotItemEdit() {
@@ -3330,8 +3346,7 @@ async function deleteBotItemByName(idx) {
   const r = await api('DELETE', '/admin/bot-items/by-name', { names: titles });
   if (r) {
     alert(`Deleted ${r.deleted} order(s).`);
-    const cat = document.getElementById('bot-cat-tabs').dataset.active;
-    if (cat && cat !== 'All') loadBotItemView(cat);
+    if (botItemViewActive()) loadBotItemView(botCurCat());
   }
 }
 

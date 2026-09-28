@@ -990,12 +990,21 @@ app.post('/api/bot/orders', (req, res) => {
 });
 
 // ── Item view endpoint: expand orders → per-item rows, merge by SKU+cost ───────
+// Category filter shared by the product and package views. "All" = every
+// category. "Other" also takes orders with no category, since the tabs count
+// those as Other — otherwise the tab said 7 and the list showed fewer.
+function botCategoryWhere(category) {
+  if (category === 'All')   return ['1=1', []];
+  if (category === 'Other') return ["(category='Other' OR category IS NULL OR category='')", []];
+  return ['category=?', [category]];
+}
+
 // ── Package view: one row per tracking number (see packageView.js) ──────────
 app.get('/api/admin/bot-packages', auth, adminOnly, (req, res) => {
   const { category, retailer, status } = req.query;
   if (!category) return res.status(400).json({ error: 'category required' });
-  let sql = 'SELECT * FROM bot_orders WHERE category=?';
-  const params = [category];
+  const [where, params] = botCategoryWhere(category);
+  let sql = 'SELECT * FROM bot_orders WHERE ' + where;
   if (retailer) { sql += ' AND retailer=?'; params.push(retailer); }
   if (status)   { sql += ' AND status=?';   params.push(status); }
   else          { sql += " AND status NOT IN ('Cancelled','Refunded')"; }
@@ -1049,8 +1058,8 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
   // Filter BEFORE grouping so the per-unit landed costs below are averaged over
   // exactly the orders being displayed. Filtering after the fact would show a
   // cost blended from stores the user had filtered out.
-  let sql = 'SELECT * FROM bot_orders WHERE category=?';
-  const params = [category];
+  const [where, params] = botCategoryWhere(category);
+  let sql = 'SELECT * FROM bot_orders WHERE ' + where;
   if (retailer) { sql += ' AND retailer=?'; params.push(retailer); }
   if (status)   { sql += ' AND status=?';   params.push(status); }
   // Cancelled/Refunded carry no inventory, so they're excluded by default — but

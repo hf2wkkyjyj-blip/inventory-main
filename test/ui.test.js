@@ -134,6 +134,14 @@ for (const [num, retailer, trk, tstat, exp, name, addr] of SHIPPED) {
     .run([retailer, num, trk, tstat, exp, name, addr, JSON.stringify([`2x ${EMBOAR} @ $24.99`])]);
 }
 
+// Non-Pokemon orders: selling must work for every order, not just Pokemon.
+DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total)
+            VALUES ('Mattel','Mattel','M01','Delivered',?,32.50)`)
+  .run([JSON.stringify(['1x Hot Wheels Test Car Set @ $30.00'])]);
+DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total)
+            VALUES (NULL,'Bear Walker','B01','Delivered',?,20.00)`)
+  .run([JSON.stringify(['2x Sample Card Sleeves @ $10.00'])]);
+
 // ── Route dispatch for the page's fetch() ───────────────────────────────────
 const calls = [];
 function matchRoute(verb, pathname) {
@@ -206,6 +214,14 @@ const isVisible = el => {
   return el.classList.contains('open') && cs.opacity === '1' && cs.pointerEvents !== 'none' && cs.display !== 'none';
 };
 const editBtn  = tr => tr.querySelector('button[title="Edit item"]');
+// All tab → "Order list" switch, by real clicks (All shows products by default).
+async function openOrderList() {
+  if (!d.querySelector('.btab')) { await w.loadBotOrders(); await tick(40); }   // tabs are built by the page's own load
+  [...d.querySelectorAll('.btab')].find(b => /^All/.test(b.textContent.trim())).click(); await tick(80);
+  const btn = [...d.querySelectorAll('#bot-view-switch button')].find(b => /Order list/.test(b.textContent));
+  if (btn) { btn.click(); await tick(60); }
+  return !!btn && d.getElementById('bot-orders-wrap').style.display === 'block';
+}
 const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save/.test(b.textContent));
 
 (async () => {
@@ -275,10 +291,7 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
   console.log('\n── Orders-table ✎ (bot-edit-overlay) opens visibly too ──');
   {
     const ov = d.getElementById('bot-edit-overlay');
-    d.getElementById('bot-cat-tabs').dataset.active = 'All';
-    w.botSetCat('All');
-    await w.loadBotOrders();
-    await tick(40);
+    check('Order list switch opens the order table', await openOrderList());
     const pencil = d.querySelector('#bot-orders-body button[onclick^="botEditRow("]');
     check('order row has an edit button', !!pencil);
     check('order dialog hidden before click', !isVisible(ov));
@@ -607,10 +620,49 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('server rejects missing product',   bad2.status === 400);
   }
 
+  console.log('\n── All tab: products from every category, sellable ──');
+  {
+    const statusSel = d.getElementById('bot-filter-status');
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
+    await openOrderList();   // the earlier sections left All on the order list — that choice sticks
+    [...d.querySelectorAll('#bot-orders-back button')].find(b => /By product/.test(b.textContent)).click(); await tick(80);
+    check('All shows the product table',      d.getElementById('bot-item-view').style.display === 'block' && d.getElementById('bot-orders-wrap').style.display === 'none');
+    check('Pokemon product listed',           !!rowNamed(/Sylveon ex Box/));
+    check('Mattel product listed',            !!rowNamed(/Hot Wheels Test Car Set/));
+    check('uncategorised order listed',       !!rowNamed(/Sample Card Sleeves/));
+
+    const hw = () => rowNamed(/Hot Wheels Test Car Set/);
+    hw().querySelector('button[title="Record a sale"]').click(); await tick();
+    const ov = d.getElementById('bot-sale-overlay');
+    check('Record sale opens for a Mattel item', isVisible(ov));
+    d.getElementById('bs-qty').value = '1'; d.getElementById('bs-price').value = '45';
+    d.getElementById('bs-save').click(); await tick(120);
+    check('Mattel sale saved',                DB.prepare("SELECT COUNT(*) n FROM bot_sales WHERE product_name LIKE '%Hot Wheels%'").get().n === 1);
+    check('SOLD 1/1 on the All tab',          hw().querySelectorAll(':scope > td')[5].textContent.trim() === '1/1');
+    w.closeBotSale(); await tick();
+
+    // Same sale shows on the Mattel tab — one set of sales, whichever tab.
+    [...d.querySelectorAll('.btab')].find(b => /^Mattel/.test(b.textContent.trim())).click(); await tick(80);
+    check('Mattel tab shows the same sale',   hw() && hw().querySelectorAll(':scope > td')[5].textContent.trim() === '1/1');
+    check('Mattel tab has no Pokemon rows',   !rowNamed(/Sylveon ex Box/));
+    const otherTab = [...d.querySelectorAll('.btab')].find(b => /^Other/.test(b.textContent.trim()));
+    check('Other tab exists for the uncategorised order', !!otherTab);
+    if (otherTab) { otherTab.click(); await tick(80); }
+    check('Other tab lists the no-category order', !!rowNamed(/Sample Card Sleeves/));
+
+    console.log('\n── Order list and back ──');
+    check('switch to Order list',             await openOrderList());
+    check('back bar shown on order list',     d.getElementById('bot-orders-back').style.display === 'flex');
+    [...d.querySelectorAll('#bot-orders-back button')].find(b => /By product/.test(b.textContent)).click(); await tick(80);
+    check('By product returns to products',   d.getElementById('bot-item-view').style.display === 'block' && !!rowNamed(/Hot Wheels/));
+    check('back bar hidden again',            d.getElementById('bot-orders-back').style.display === 'none');
+    [...d.querySelectorAll('.btab')].find(b => /^Pokemon/.test(b.textContent.trim())).click(); await tick(80);
+    check('no Order list switch on category tabs', ![...d.querySelectorAll('#bot-view-switch button')].some(b => /Order list/.test(b.textContent)));
+  }
+
   console.log('\n── Orders table tracking links use the right carrier too ──');
   {
-    d.getElementById('bot-cat-tabs').dataset.active = 'All';
-    w.botSetCat('All'); await w.loadBotOrders(); await tick(40);
+    await openOrderList();
     const a = [...d.querySelectorAll('#bot-orders-body a[href]')].find(x => /1ZAA11110000000001/.test(x.textContent));
     check('orders table: UPS link goes to UPS', a && a.getAttribute('href').startsWith('https://www.ups.com/track'), a && a.getAttribute('href'));
   }
