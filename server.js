@@ -16,7 +16,7 @@ const { decomposeItem, parseItemName, splitItemParts, itemKey } = require('./ite
 const { computeItemGroups } = require('./itemView');
 const SkuCatalog = require('./skuCatalog');
 const { computePackages } = require('./packageView');
-const { splitBoxFee } = require('./feeSplit');
+const { splitBoxFee, orderSignature } = require('./feeSplit');
 const OrderMerge = require('./orderMerge');
 const { recategorizeOrders } = require('./category');
 const Retailers = require('./retailers');
@@ -1047,6 +1047,37 @@ app.post('/api/admin/bot-packages/fee', auth, adminOnly, (req, res) => {
     for (const o of split.orders) db.prepare('UPDATE bot_orders SET finder_fee=? WHERE id=?').run([o.fee, o.id]);
   }
   res.json({ ...split, saved: !dryRun });
+});
+
+// Orders that look like this one (same store, items and quantities) — so a fee
+// typed once can be copied to the rest of the drop.
+app.get('/api/admin/bot-orders/:id/similar', auth, adminOnly, (req, res) => {
+  const o = db.prepare('SELECT * FROM bot_orders WHERE id=?').get([Number(req.params.id)]);
+  if (!o) return res.status(404).json({ error: 'No such order' });
+  const sig = orderSignature(o);
+  if (!sig) return res.json({ matches: [] });
+  const matches = db.prepare("SELECT * FROM bot_orders WHERE id<>? AND retailer IS ? AND status NOT IN ('Cancelled','Refunded')")
+    .all([o.id, o.retailer ?? null])
+    .filter(x => orderSignature(x) === sig)
+    .map(x => ({ id: x.id, order_number: x.order_number, shipping_name: x.shipping_name, order_date: x.order_date,
+                 status: x.status, finder_fee: Number(x.finder_fee) || 0 }))
+    .sort((a, b) => String(a.order_number || '').localeCompare(String(b.order_number || '')));
+  res.json({ matches });
+});
+
+// Same fee on each of these orders (one order = one fee, not split between them).
+app.post('/api/admin/bot-orders/bulk-fee', auth, adminOnly, (req, res) => {
+  const { orderIds, fee } = req.body || {};
+  const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
+  const amount = Number(fee);
+  if (!ids.length)                            return res.status(400).json({ error: 'orderIds required' });
+  if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'Fee must be a number' });
+  let updated = 0;
+  for (const id of ids) {
+    const r = db.prepare('UPDATE bot_orders SET finder_fee=? WHERE id=?').run([Math.round(amount * 100) / 100, id]);
+    if (r && r.changes) updated += Number(r.changes);
+  }
+  res.json({ updated });
 });
 
 app.post('/api/admin/bot-orders/bulk-status', auth, adminOnly, (req, res) => {

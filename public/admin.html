@@ -943,9 +943,22 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <tbody id="bf-items"></tbody>
     </table>
     <div id="bf-error" style="font-size:12px;color:#f87171;margin-bottom:8px;display:none;"></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;">
+    <div id="bf-main-actions" style="display:flex;gap:8px;justify-content:flex-end;">
       <button class="btn btn-ghost btn-sm" onclick="closeBoxFee()">Cancel</button>
       <button class="btn btn-primary btn-sm" id="bf-save" onclick="saveBoxFee()"><i class="fa fa-save"></i> Save fee</button>
+    </div>
+    <!-- After saving: same fee on the rest of the drop (same store, items, qty) -->
+    <div id="bf-similar" style="display:none;border-top:1px solid var(--border);padding-top:12px;">
+      <div id="bf-sim-head" style="font-size:13px;margin-bottom:8px;"></div>
+      <div style="display:flex;gap:10px;font-size:11px;margin-bottom:6px;">
+        <a href="#" onclick="boxFeeSimAll(true);return false;" style="color:#60a5fa;">Check all</a>
+        <a href="#" onclick="boxFeeSimAll(false);return false;" style="color:#60a5fa;">Uncheck all</a>
+      </div>
+      <div id="bf-sim-list" style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:4px 8px;font-size:12px;margin-bottom:10px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn btn-ghost btn-sm" onclick="closeBoxFee();loadBotItemView(botCurCat());">Skip</button>
+        <button class="btn btn-primary btn-sm" id="bf-sim-apply" onclick="applyBoxFeeSimilar()"></button>
+      </div>
     </div>
   </div>
 </div>
@@ -2718,6 +2731,9 @@ function openBoxFee(i) {
     `${p.tracking || 'No tracking yet'} · ${p.orders.length} order${p.orders.length === 1 ? '' : 's'} · ${p.units} unit${p.units === 1 ? '' : 's'}`;
   document.getElementById('bf-fee').value = p.fee || '';
   document.getElementById('bf-error').style.display = 'none';
+  document.getElementById('bf-similar').style.display = 'none';
+  document.getElementById('bf-main-actions').style.display = 'flex';
+  document.getElementById('bf-fee').disabled = false;
   document.getElementById('bot-fee-overlay').classList.add('open');
   boxFeePreview();
   setTimeout(() => document.getElementById('bf-fee').focus(), 0);
@@ -2757,9 +2773,65 @@ async function saveBoxFee() {
   try {
     const r = await api('POST', '/admin/bot-packages/fee', { orderIds: _bfPkg.orderIds, fee });
     if (!r) { err.textContent = 'Could not save the fee.'; err.style.display = ''; return; }
+    // One-order box with a fee: offer the same fee to the rest of the drop.
+    if (fee > 0 && _bfPkg.orderIds.length === 1 && await boxFeeOfferSimilar(_bfPkg.orderIds[0], fee)) return;
     closeBoxFee();
     await loadBotItemView(botCurCat());
   } finally { btn.disabled = false; }
+}
+
+let _bfSimFee = 0;
+async function boxFeeOfferSimilar(orderId, fee) {
+  const r = await api('GET', `/admin/bot-orders/${orderId}/similar`);
+  const all = (r && r.matches) || [];
+  const todo = all.filter(m => Math.abs(m.finder_fee - fee) > 0.004);   // already at this fee → nothing to do
+  if (!todo.length) return false;
+  _bfSimFee = fee;
+  const money = n => '$' + (n || 0).toFixed(2);
+  const done = all.length - todo.length;
+  const items = (_bfPkg.contents || []).map(c => `${c.name} ×${c.qty}`).join(', ');
+  document.getElementById('bf-sim-head').innerHTML =
+    `✓ Saved. <b>${todo.length}</b> other ${esc((_bfPkg.retailers || []).join(', '))} order${todo.length === 1 ? '' : 's'} with the same items <span style="color:var(--muted);">(${esc(items)})</span>${done ? ` <span style="color:var(--muted);">· ${done} already at ${money(fee)}</span>` : ''}`;
+  document.getElementById('bf-sim-list').innerHTML = todo.map(m => {
+    // An order that already has a DIFFERENT fee is shown but left unchecked.
+    const other = m.finder_fee > 0;
+    return `<label class="bf-sim" style="display:flex;gap:8px;align-items:center;padding:3px 0;border-bottom:1px solid var(--border);">
+      <input type="checkbox" value="${Number(m.id)}" ${other ? '' : 'checked'} onchange="boxFeeSimCount()">
+      <span style="width:110px;">${esc(m.order_number || '#' + m.id)}</span>
+      <span style="flex:1;" class="clip">${esc(m.shipping_name || '')}</span>
+      <span style="color:var(--muted);">${esc(m.status || '')}</span>
+      ${other ? `<span style="color:#fbbf24;" data-tip="Has its own fee already — check to overwrite">has ${money(m.finder_fee)}</span>` : ''}
+    </label>`;
+  }).join('');
+  document.getElementById('bf-main-actions').style.display = 'none';
+  document.getElementById('bf-fee').disabled = true;
+  document.getElementById('bf-similar').style.display = 'block';
+  boxFeeSimCount();
+  return true;
+}
+
+function boxFeeSimChecked() {
+  return [...document.querySelectorAll('#bf-sim-list input[type=checkbox]:checked')].map(c => Number(c.value));
+}
+function boxFeeSimAll(on) {
+  document.querySelectorAll('#bf-sim-list input[type=checkbox]').forEach(c => { c.checked = on; });
+  boxFeeSimCount();
+}
+function boxFeeSimCount() {
+  const n = boxFeeSimChecked().length;
+  const b = document.getElementById('bf-sim-apply');
+  b.textContent = `Apply $${_bfSimFee.toFixed(2)} to ${n} order${n === 1 ? '' : 's'}`;
+  b.disabled = n === 0;
+}
+
+async function applyBoxFeeSimilar() {
+  const ids = boxFeeSimChecked();
+  if (!ids.length) return;
+  const b = document.getElementById('bf-sim-apply'); b.disabled = true;
+  const r = await api('POST', '/admin/bot-orders/bulk-fee', { orderIds: ids, fee: _bfSimFee });
+  if (!r) { b.disabled = false; alert('Could not apply the fee.'); return; }
+  closeBoxFee();
+  await loadBotItemView(botCurCat());
 }
 
 function botPkgToggle(i, on) {

@@ -107,4 +107,21 @@ function splitBoxFee(orders, fee, catalog) {
   };
 }
 
-module.exports = { splitBoxFee, orderValue };
+// "Same order" fingerprint for copying a fee: same store, same items, same
+// quantities. Prices, dates and addresses don't matter — a drop of 26 identical
+// Mattel orders all match. Returns null for an order with no items.
+function orderSignature(o) {
+  let arr; try { arr = JSON.parse(o.items || '[]'); } catch (_) { arr = []; }
+  const qty = new Map();
+  for (const p of (Array.isArray(arr) ? arr : [arr]).flatMap(splitItemParts)) {
+    const name = parseItemName(p);
+    if (!name) continue;
+    const k = itemKey(name);
+    qty.set(k, (qty.get(k) || 0) + parseQty(p));
+  }
+  if (!qty.size) return null;
+  const store = String(o.retailer || '').trim().toLowerCase();
+  return store + '|' + [...qty.entries()].sort().map(([k, n]) => `${n}x${k}`).join(';');
+}
+
+module.exports = { splitBoxFee, orderValue, orderSignature };

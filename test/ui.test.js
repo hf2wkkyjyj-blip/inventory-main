@@ -150,6 +150,20 @@ DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, tr
             VALUES ('One Piece','Test Store','F02','Delivered','870000000401','Test Buyer','1 Test St, Springfield',?,120)`)
   .run([JSON.stringify(['3x Test Card Bundle @ $40.00'])]);
 
+// A "drop": the same order placed many times (made up). Plus near-misses.
+for (const [num, retailer, items, status, fee] of [
+  ['D01', 'Test Drop Store', ['2x Test Drop Car @ $32.50'], 'Confirmed', 0],
+  ['D02', 'Test Drop Store', ['2x Test Drop Car @ $32.50'], 'Confirmed', 0],
+  ['D03', 'Test Drop Store', ['2x Test Drop Car @ $32.50'], 'Shipped',   0],
+  ['D04', 'Test Drop Store', ['2x Test Drop Car @ $32.50'], 'Confirmed', 20],    // has its own fee
+  ['D05', 'Test Drop Store', ['1x Test Drop Car @ $32.50'], 'Confirmed', 0],     // different qty
+  ['D06', 'Other Test Shop', ['2x Test Drop Car @ $32.50'], 'Confirmed', 0],     // different store
+  ['D07', 'Test Drop Store', ['2x Test Drop Car @ $32.50'], 'Cancelled', 0],     // cancelled
+]) {
+  DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total, finder_fee, shipping_name)
+              VALUES ('Mattel',?,?,?,?,65,?,'Test Buyer')`).run([retailer, num, status, JSON.stringify(items), fee]);
+}
+
 // ── Route dispatch for the page's fetch() ───────────────────────────────────
 const calls = [];
 function matchRoute(verb, pathname) {
@@ -719,6 +733,48 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('server rejects empty box',          bad.status === 400);
     const neg = await fakeFetch('/api/admin/bot-packages/fee', { method: 'POST', body: JSON.stringify({ orderIds: [1], fee: -5 }) });
     check('server rejects a negative fee',     neg.status === 400);
+  }
+
+  console.log('\n── Fee on one order → offered to the same orders (real clicks) ──');
+  {
+    const ffee = n => DB.prepare('SELECT finder_fee FROM bot_orders WHERE order_number=?').get([n]).finder_fee;
+    [...d.querySelectorAll('.btab')].find(b => /^Mattel/.test(b.textContent.trim())).click(); await tick(80);
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(80);
+    const pkg = num => [...d.querySelectorAll('#bot-pkg-tbody > tr')].find(r => new RegExp(num).test(r.textContent));
+    pkg('D01').querySelector('button.bot-pkg-fee').click(); await tick();
+    const fee = d.getElementById('bf-fee');
+    fee.value = '35'; fee.dispatchEvent(new w.Event('input'));
+    d.getElementById('bf-save').click(); await tick(200);
+
+    const ov = d.getElementById('bot-fee-overlay');
+    check('D01 saved at $35',                    ffee('D01') === 35);
+    check('dialog stays open with matches',      isVisible(ov) && d.getElementById('bf-similar').style.display === 'block');
+    const listed = [...d.querySelectorAll('#bf-sim-list .bf-sim')].map(l => l.textContent.replace(/\s+/g, ' ').trim());
+    check('lists D02, D03, D04 only',            listed.length === 3 && ['D02', 'D03', 'D04'].every(n => listed.some(t => t.includes(n))), JSON.stringify(listed));
+    check('not: other qty / store / cancelled',  !listed.some(t => /D05|D06|D07/.test(t)));
+    const box = n => [...d.querySelectorAll('#bf-sim-list .bf-sim')].find(l => l.textContent.includes(n)).querySelector('input');
+    check('same orders pre-checked',             box('D02').checked && box('D03').checked);
+    check('order with its own fee NOT checked',  !box('D04').checked && /has \$20\.00/.test(listed.find(t => t.includes('D04'))));
+    const apply = d.getElementById('bf-sim-apply');
+    check('button says "Apply $35.00 to 2 orders"', /Apply \$35\.00 to 2 orders/.test(apply.textContent), apply.textContent);
+
+    box('D03').click(); await tick();
+    check('unchecking updates the count',        /to 1 order$/.test(apply.textContent.trim()), apply.textContent);
+    box('D03').click(); await tick();
+    apply.click(); await tick(200);
+    check('applied to D02 and D03',              ffee('D02') === 35 && ffee('D03') === 35);
+    check('D04 kept its own $20',                ffee('D04') === 20);
+    check('near-misses untouched',               ffee('D05') === 0 && ffee('D06') === 0 && ffee('D07') === 0);
+    check('dialog closed',                       !isVisible(ov));
+    check('rows now show $35.00',                ['D01', 'D02', 'D03'].every(n => /\$35\.00/.test(pkg(n).querySelector('button.bot-pkg-fee').textContent)));
+
+    // Next time, the ones already at $35 aren't offered again; only D04 is left.
+    pkg('D02').querySelector('button.bot-pkg-fee').click(); await tick();
+    d.getElementById('bf-save').click(); await tick(200);
+    const again = [...d.querySelectorAll('#bf-sim-list .bf-sim')].map(l => l.textContent);
+    check('already-$35 orders not offered again', again.length === 1 && /D04/.test(again[0]), JSON.stringify(again));
+    [...ov.querySelectorAll('button')].find(b => b.textContent.trim() === 'Skip').click(); await tick(100);
+    check('Skip closes without changing D04',    !isVisible(ov) && ffee('D04') === 20);
   }
 
   console.log('\n── Orders table tracking links use the right carrier too ──');

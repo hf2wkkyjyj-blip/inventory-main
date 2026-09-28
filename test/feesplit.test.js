@@ -78,6 +78,23 @@ console.log('\n── Zero clears ──');
   eq('all shares 0', r.orders.map(o => o.fee), [0]);
 }
 
+console.log('\n── Similar-order fingerprint ──');
+{
+  const { orderSignature: sig } = require('../feeSplit');
+  const o = (retailer, items) => ({ retailer, items: JSON.stringify(items) });
+  const base = sig(o('Mattel Creations', ['2x Test Car F40 @ $32.50']));
+  eq('same store + items + qty match',      sig(o('Mattel Creations', ['2x Test Car F40 @ $32.50'])), base);
+  eq('price difference still matches',      sig(o('Mattel Creations', ['2x Test Car F40 @ $30.00'])), base);
+  eq('store name case/spaces ignored',      sig(o(' mattel creations ', ['2x Test Car F40'])), base);
+  eq('different qty → no match',            sig(o('Mattel Creations', ['1x Test Car F40'])) === base, false);
+  eq('different store → no match',          sig(o('Target', ['2x Test Car F40'])) === base, false);
+  eq('extra item → no match',               sig(o('Mattel Creations', ['2x Test Car F40', '1x Test Tin'])) === base, false);
+  eq('item order in the list ignored',
+     sig(o('S', ['3x Test Bundle', '1x Test Tin'])), sig(o('S', ['1x Test Tin', '3x Test Bundle'])));
+  eq('same item on two lines = summed qty', sig(o('S', ['1x Test Car', '1x Test Car'])), sig(o('S', ['2x Test Car'])));
+  eq('no items → no fingerprint',           sig(o('S', [])), null);
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
