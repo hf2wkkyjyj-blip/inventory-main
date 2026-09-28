@@ -97,10 +97,10 @@ const seed = [
 // Shipped orders with tracking, for the expand-to-see-tracking feature.
 const EMBOAR = 'Pokemon Trading Card Game: Mega Evolution—Ascended Heroes Tin- Mega Emboar ex';
 const SHIPPED = [
-  ['S01', 'Target',         '1ZWY06570304019606', 'OFD',  '2026-09-25', 'Sang Nguyen', '7964 Brooklyn Blvd, Brooklyn Park, MN'],
-  ['S02', 'Target',         '1ZWY0657YW04307994', null,   '2026-09-27', 'HnB Market',  '8410 Yates ave n, Brooklyn Park, MN'],
-  ['S03', 'Pokemon Center', '876543210987',       null,   '2026-09-26', 'Kevin kim',   '8805 E Research Center Rd'],
-  ['S04', 'Target',         null,                 null,   null,         'Hailey Nguyen', '13564 142nd ave n'],
+  ['S01', 'Target',         '1ZAA11110000000001', 'OFD',  '2026-09-25', 'Sam Carter', '4200 Example Blvd, Springfield, MN'],
+  ['S02', 'Target',         '1ZAA11110000000002', null,   '2026-09-27', 'Acme Market',  '1000 Test ave n, Springfield, MN'],
+  ['S03', 'Pokemon Center', '876543210987',       null,   '2026-09-26', 'Dana Lee',   '5000 E Sample Park Rd'],
+  ['S04', 'Target',         null,                 null,   null,         'Kim Park', '1300 12th ave n'],
 ];
 // server.js really boots, so it really imports bot_orders_import.json. Clear it
 // so assertions below depend only on the orders seeded here.
@@ -116,10 +116,10 @@ const BOX_ITEMS = JSON.stringify([
 ]);
 const PKC_SHIPPED = [
   // one box, three products
-  ['P0038241809', '876893093507', 'Jason Yang',  '8410 Yates Ave North Fl 6, Minneapolis, MN 55443'],
+  ['P0099000001', '870000000301', 'Chris Moss',  '1000 Test Ave North Fl 6, Springfield, MN 55001'],
   // same tracking on two orders to two buildings — seen in the real data
-  ['P0038311805', '876928855241', 'Jenny Xiong', '8410 Yates Ave N Apt 3f, Minneapolis, MN 55443'],
-  ['P0038320540', '876928855241', 'Kien Lai',    '08805 E Research Center Dr Rm 5, Minneapolis, MN 55428'],
+  ['P0099000002', '870000000302', 'Alex Rivera', '1000 Test Ave N Apt 3f, Springfield, MN 55001'],
+  ['P0099000003', '870000000302', 'Bea Tran',    '05000 E Sample Park Dr Rm 5, Springfield, MN 55002'],
 ];
 for (const [num, trk, name, addr] of PKC_SHIPPED) {
   DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, tracking, expected_date,
@@ -331,13 +331,13 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('one line per order (4)',               orderRows.length === 4, orderRows.length);
 
     const links = sub ? [...sub.querySelectorAll('a[href]')].map(a => a.getAttribute('href')) : [];
-    check('UPS number links to UPS, not Google',  links.some(h => h === 'https://www.ups.com/track?tracknum=1ZWY06570304019606'), links.join(' | '));
+    check('UPS number links to UPS, not Google',  links.some(h => h === 'https://www.ups.com/track?tracknum=1ZAA11110000000001'), links.join(' | '));
     check('no Google fallback for UPS numbers',   !links.some(h => /google\.com/.test(h) && /1Z/.test(h)));
     check('carrier label shown',                  sub && /UPS/.test(sub.textContent));
     check('missing tracking called out',          sub && /1 without tracking yet/.test(sub.textContent));
     check('OFD status shown',                     sub && /OFD/.test(sub.textContent));
     check('expected date shown',                  sub && /Exp Sep 2[5-7]/.test(sub.textContent));
-    check('ship-to shown',                        sub && /HnB Market/.test(sub.textContent));
+    check('ship-to shown',                        sub && /Acme Market/.test(sub.textContent));
     check('soonest arrival listed first',         orderRows[0] && /S01/.test(orderRows[0].textContent), orderRows[0] && orderRows[0].textContent.trim().slice(0, 40));
     check('tracking count in product line',       /3 tracking/.test(prod.textContent));
 
@@ -345,7 +345,7 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     [...sub.querySelectorAll('button')].find(b => /Copy all tracking/.test(b.textContent)).click();
     await tick();
     const got = (copied.pop() || '').split('\n');
-    check('copy all: 3 numbers, one per line',    got.length === 3 && got.includes('1ZWY06570304019606') && got.includes('876543210987'), JSON.stringify(got));
+    check('copy all: 3 numbers, one per line',    got.length === 3 && got.includes('1ZAA11110000000001') && got.includes('876543210987'), JSON.stringify(got));
 
     // Collapse / expand controls
     const bannerBtn = re => [...d.querySelectorAll('#bot-unlinked-banner button')].find(b => re.test(b.textContent));
@@ -434,14 +434,14 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
 
     // 4 Emboar orders (3 tracked + 1 not) + 1 multi-item box + 1 shared-tracking pair = 6 packages
     check('6 packages (not one row per product)',   pkgRows().length === 6, pkgRows().length);
-    const boxRow = pkgRow(/876893093507/);
-    check('multi-item box is ONE row',              pkgRows().filter(r => /876893093507/.test(r.textContent)).length === 1);
+    const boxRow = pkgRow(/870000000301/);
+    check('multi-item box is ONE row',              pkgRows().filter(r => /870000000301/.test(r.textContent)).length === 1);
     check('box lists all 3 products as tags',       boxRow && boxRow.querySelectorAll('.bot-pkg-tag').length === 3);
     check('ETB ×2 shown',                           boxRow && /PC ETB ×2/.test(boxRow.textContent), boxRow && boxRow.textContent.replace(/\s+/g, ' ').slice(0, 160));
 
-    const flagRow = pkgRow(/876928855241/);
+    const flagRow = pkgRow(/870000000302/);
     check('shared tracking = one flagged row',      flagRow && /same tracking, 2 addresses/.test(flagRow.textContent));
-    check('both destinations listed',               flagRow && /Jenny Xiong/.test(flagRow.textContent) && /Kien Lai/.test(flagRow.textContent));
+    check('both destinations listed',               flagRow && /Alex Rivera/.test(flagRow.textContent) && /Bea Tran/.test(flagRow.textContent));
     check('banner warns about it',                  /1 package need/.test(d.getElementById('bot-unlinked-banner').textContent));
     check('no-tracking order has its own row',      !!pkgRow(/no tracking yet/));
 
@@ -449,39 +449,39 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const all = d.getElementById('bot-pkg-all');
     all.click(); await tick();
     check('select all → 5 selected',               /5 packages selected/.test(bar().textContent), bar().textContent.replace(/\s+/g, ' ').trim().slice(0, 80));
-    check('flagged package NOT selected',           !checkbox(pkgRow(/876928855241/)).checked);
+    check('flagged package NOT selected',           !checkbox(pkgRow(/870000000302/)).checked);
     check('action bar visible',                     bar().style.display === 'flex');
     check('date defaults to today',                 d.getElementById('bot-pkg-date').value === w.botLocalToday());
     all.click(); await tick();
     check('unselect all → bar hidden',              bar().style.display === 'none');
 
     console.log('\n── Flagged package can still be picked deliberately ──');
-    checkbox(pkgRow(/876928855241/)).click(); await tick();
+    checkbox(pkgRow(/870000000302/)).click(); await tick();
     check('bar warns it includes a flagged one',    /includes 1 flagged/.test(bar().textContent));
     check('counts both orders in that box',         /\(2 orders\)/.test(bar().textContent));
     [...bar().querySelectorAll('button')].find(b => /Clear/.test(b.textContent)).click(); await tick();
 
     console.log('\n── Mark 2 packages delivered on a chosen date ──');
-    checkbox(pkgRow(/1ZWY0657YW04307994/)).click(); await tick();   // S02
-    checkbox(pkgRow(/876893093507/)).click(); await tick();          // the box
+    checkbox(pkgRow(/1ZAA11110000000002/)).click(); await tick();   // S02
+    checkbox(pkgRow(/870000000301/)).click(); await tick();          // the box
     check('2 selected',                             /2 packages selected/.test(bar().textContent));
     d.getElementById('bot-pkg-date').value = '2026-09-20';
     const shippedBefore = Number(d.getElementById('bs-shipped').textContent);
     d.getElementById('bot-pkg-mark').click(); await tick(150);
 
-    const s2 = dbRow('S02'), bx = dbRow('P0038241809');
+    const s2 = dbRow('S02'), bx = dbRow('P0099000001');
     check('S02 now Delivered',                      s2.status === 'Delivered' && s2.tracking_status === 'Delivered');
     check('box order now Delivered',                bx.status === 'Delivered');
     check('uses the chosen date, not today',        s2.delivered_date === '2026-09-20' && bx.delivered_date === '2026-09-20', `${s2.delivered_date} / ${bx.delivered_date}`);
-    check('other packages untouched',               dbRow('S01').status === 'Shipped' && dbRow('P0038311805').status === 'Shipped');
-    check('they left the Shipped list',             pkgRows().length === 4 && !pkgRow(/876893093507/), pkgRows().length);
+    check('other packages untouched',               dbRow('S01').status === 'Shipped' && dbRow('P0099000002').status === 'Shipped');
+    check('they left the Shipped list',             pkgRows().length === 4 && !pkgRow(/870000000301/), pkgRows().length);
     const shippedAfter = Number(d.getElementById('bs-shipped').textContent);
     check('SHIPPED card dropped by 2 orders',       shippedBefore - shippedAfter === 2, `${shippedBefore} → ${shippedAfter}`);
     check('undo bar shown',                         undoBar().style.display === 'flex' && /2 packages marked delivered on Sep 20/.test(undoBar().textContent), undoBar().textContent.trim());
 
     console.log('\n── Undo restores everything exactly ──');
     d.getElementById('bot-undo-btn').click(); await tick(150);
-    const s2b = dbRow('S02'), bxb = dbRow('P0038241809');
+    const s2b = dbRow('S02'), bxb = dbRow('P0099000001');
     check('S02 back to Shipped',                    s2b.status === 'Shipped');
     check('tracking_status restored',               s2b.tracking_status === null);
     check('delivered_date cleared again',           s2b.delivered_date === null && bxb.delivered_date === null);
@@ -491,24 +491,24 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
 
     console.log('\n── Fix a wrong tracking number from the package view ──');
     {
-      const flagged = pkgRow(/876928855241/);
+      const flagged = pkgRow(/870000000302/);
       const pen = [...flagged.querySelectorAll('button.bot-pkg-edit')]
-        .find(b => /P0038311805/.test(b.closest('div').textContent));
+        .find(b => /P0099000002/.test(b.closest('div').textContent));
       check('✎ shown next to each order in the box',   flagged.querySelectorAll('button.bot-pkg-edit').length === 2);
       check('flag says how to fix it',                  /fix with ✎/.test(flagged.textContent));
       pen.click(); await tick(40);
       const ov = d.getElementById('bot-edit-overlay');
       const ocs = w.getComputedStyle(ov);
       check('order editor opens visibly',              ov.classList.contains('open') && ocs.opacity === '1' && ocs.pointerEvents !== 'none');
-      check('it is the right order',                   /P0038311805/.test(d.getElementById('bot-edit-ordnum').textContent));
-      check('shows the wrong number',                  d.getElementById('bot-edit-tracking').value === '876928855241');
-      d.getElementById('bot-edit-tracking').value = '876937209516';
+      check('it is the right order',                   /P0099000002/.test(d.getElementById('bot-edit-ordnum').textContent));
+      check('shows the wrong number',                  d.getElementById('bot-edit-tracking').value === '870000000302');
+      d.getElementById('bot-edit-tracking').value = '870000000303';
       ov.querySelector('button[onclick="saveBotEdit()"]').click(); await tick(150);
 
-      check('saved to the database',                   dbRow('P0038311805') && DB.prepare("SELECT tracking FROM bot_orders WHERE order_number='P0038311805'").get().tracking === '876937209516');
-      check('other order untouched',                   DB.prepare("SELECT tracking FROM bot_orders WHERE order_number='P0038320540'").get().tracking === '876928855241');
+      check('saved to the database',                   dbRow('P0099000002') && DB.prepare("SELECT tracking FROM bot_orders WHERE order_number='P0099000002'").get().tracking === '870000000303');
+      check('other order untouched',                   DB.prepare("SELECT tracking FROM bot_orders WHERE order_number='P0099000003'").get().tracking === '870000000302');
       check('dialog closed',                           !ov.classList.contains('open'));
-      check('flagged row gone — now 2 separate boxes', !pkgRows().some(r => /same tracking/.test(r.textContent)) && !!pkgRow(/876937209516/) && !!pkgRow(/876928855241/));
+      check('flagged row gone — now 2 separate boxes', !pkgRows().some(r => /same tracking/.test(r.textContent)) && !!pkgRow(/870000000303/) && !!pkgRow(/870000000302/));
       check('7 packages now',                          pkgRows().length === 7, pkgRows().length);
       check('warning banner cleared',                  !/need checking/.test(d.getElementById('bot-unlinked-banner').textContent));
     }
@@ -522,18 +522,103 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     d.getElementById('bsc-Delivered').click(); await tick(80);   // clear filter
   }
 
+  console.log('\n── Finder fee raises landed cost (real typing) ──');
+  {
+    const statusSel = d.getElementById('bot-filter-status');
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
+    [...d.querySelectorAll('.btab')].find(b => /^Pokemon/.test(b.textContent.trim())).click(); await tick(80);
+    const sy   = () => rowNamed(/Sylveon ex Box/);
+    const cell = i => sy().querySelectorAll(':scope > td')[i];
+    check('product view shown', !!sy());
+    check('landed before fee is $32.55', /\$32\.55/.test(cell(2).textContent), cell(2).textContent.trim());
+
+    const fee = cell(3).querySelector('input');
+    fee.value = '8'; fee.dispatchEvent(new w.Event('change')); await tick(60);
+    check('landed now $40.55 (+$8)',     /\$40\.55/.test(cell(2).textContent), cell(2).textContent.trim());
+    const saved = DB.prepare("SELECT buyer_fee FROM bot_sku_prices WHERE sku LIKE '#p%' AND buyer_fee>0").get();
+    check('fee saved',                   saved && saved.buyer_fee === 8);
+    cell(2).querySelector('span').click(); await tick();
+    const pop = d.getElementById('landed-popover');
+    check('breakdown shows Finder fee $8.00', pop && /Finder fee\s*\$8\.00/.test(pop.textContent.replace(/\s+/g, ' ')), pop && pop.textContent.replace(/\s+/g, ' ').trim());
+    pop && pop.remove();
+
+    const ask = cell(4).querySelector('input');
+    ask.value = '50'; ask.dispatchEvent(new w.Event('change')); await tick(60);
+    check('profit/unit = asking − landed (fee not taken twice)', /\+\$9\.45/.test(cell(6).textContent), cell(6).textContent.trim());
+    // Reload from the server: same numbers, not just the optimistic update.
+    await w.loadBotItemView('Pokemon'); await tick();
+    check('after reload: landed still $40.55', /\$40\.55/.test(cell(2).textContent));
+
+    console.log('\n── Record sales in parts (real clicks) ──');
+    const ov   = d.getElementById('bot-sale-overlay');
+    check('sale dialog hidden before click', !isVisible(ov));
+    check('SOLD starts at 0/4',              cell(5).textContent.trim() === '0/4', cell(5).textContent.trim());
+    sy().querySelector('button[title="Record a sale"]').click(); await tick();
+    check('$ opens a VISIBLE dialog',         isVisible(ov));
+    check('qty defaults to 1',                d.getElementById('bs-qty').value === '1');
+    check('price defaults to asking',         d.getElementById('bs-price').value === '50');
+    check('date defaults to today',           d.getElementById('bs-date').value === w.botLocalToday());
+    check('history empty',                    /None yet/.test(d.getElementById('bs-history').textContent));
+
+    const bsSave = d.getElementById('bs-save');
+    const set = (id, v) => { const el = d.getElementById(id); el.value = v; el.dispatchEvent(new w.Event('input')); };
+
+    // Guard: 0 is rejected client-side, nothing sent.
+    const nBefore = calls.filter(c => c.path === '/api/admin/bot-sales').length;
+    set('bs-qty', '0'); bsSave.click(); await tick(40);
+    check('qty 0 → error, nothing saved',     d.getElementById('bs-error').style.display !== 'none' && calls.filter(c => c.path === '/api/admin/bot-sales').length === nBefore);
+
+    set('bs-qty', '2');
+    check('preview shows the profit',         /\+\$18\.90/.test(d.getElementById('bs-preview').textContent), d.getElementById('bs-preview').textContent.replace(/\s+/g, ' ').trim());
+    bsSave.click(); await tick(120);
+    check('sale 1 stored',                    DB.prepare('SELECT COUNT(*) n FROM bot_sales').get().n === 1);
+    check('SOLD 2/4 on the row',              cell(5).textContent.trim() === '2/4', cell(5).textContent.trim());
+    check('dialog stays open for the next',   isVisible(ov));
+    check('history lists it',                 d.querySelectorAll('#bs-history .bs-sale').length === 1);
+
+    set('bs-qty', '1'); set('bs-price', '55'); set('bs-fees', '4');
+    d.getElementById('bs-channel').value = 'eBay';
+    bsSave.click(); await tick(120);
+    const r2 = DB.prepare('SELECT * FROM bot_sales ORDER BY id DESC').get();
+    check('sale 2 stored as typed',           r2.qty === 1 && r2.unit_price === 55 && r2.fees === 4 && r2.channel === 'eBay');
+    check('SOLD 3/4',                         cell(5).textContent.trim() === '3/4', cell(5).textContent.trim());
+    // 2×50 + 55 − 4 − 3 × 40.55
+    check('realized profit +$29.35 shown',    /\+\$29\.35 made/.test(cell(6).textContent), cell(6).textContent.replace(/\s+/g, ' ').trim());
+    check('history lists both',               d.querySelectorAll('#bs-history .bs-sale').length === 2);
+
+    set('bs-qty', '5');
+    check('overselling warns (1 left)',       /Only 1 left/.test(d.getElementById('bs-preview').textContent));
+
+    // Delete the newest (qty 1) from history.
+    d.querySelector('#bs-history .bs-sale .bs-del').click(); await tick(120);
+    check('deleted from the database',        DB.prepare('SELECT COUNT(*) n FROM bot_sales').get().n === 1);
+    check('SOLD back to 2/4',                 cell(5).textContent.trim() === '2/4', cell(5).textContent.trim());
+
+    w.closeBotSale(); await tick();
+    check('dialog closes',                    !isVisible(ov));
+    cell(5).querySelector('button').click(); await tick();
+    check('clicking SOLD opens it too',       isVisible(ov));
+    w.closeBotSale(); await tick();
+
+    // Server-side validation, straight at the real handler.
+    const bad = await fakeFetch('/api/admin/bot-sales', { method: 'POST', body: JSON.stringify({ sku_key: 'x', qty: 1.5, unit_price: 10 }) });
+    check('server rejects fractional qty',    bad.status === 400);
+    const bad2 = await fakeFetch('/api/admin/bot-sales', { method: 'POST', body: JSON.stringify({ qty: 1, unit_price: 10 }) });
+    check('server rejects missing product',   bad2.status === 400);
+  }
+
   console.log('\n── Orders table tracking links use the right carrier too ──');
   {
     d.getElementById('bot-cat-tabs').dataset.active = 'All';
     w.botSetCat('All'); await w.loadBotOrders(); await tick(40);
-    const a = [...d.querySelectorAll('#bot-orders-body a[href]')].find(x => /1ZWY06570304019606/.test(x.textContent));
+    const a = [...d.querySelectorAll('#bot-orders-body a[href]')].find(x => /1ZAA11110000000001/.test(x.textContent));
     check('orders table: UPS link goes to UPS', a && a.getAttribute('href').startsWith('https://www.ups.com/track'), a && a.getAttribute('href'));
   }
 
   console.log('\n── Page and carriers.js agree on every carrier ──');
   {
     const C = require(path.join(__dirname, '..', 'carriers.js'));
-    const samples = ['1ZWY06570304019606', '1zh9146g0308841629', '876543210987', '9400111899223856925683',
+    const samples = ['1ZAA11110000000001', '1zaa11110000000006', '876543210987', '9400111899223856925683',
                      '9261290100130623456789', 'EA123456789US', '123456789012', '961234567890123456789012',
                      'TBA123456789012', 'C12345678901234', 'garbage', ''];
     const mismatch = samples.filter(t =>

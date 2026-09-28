@@ -119,6 +119,75 @@ console.log('\n── Saved buyer fee / sale price survive the spelling change �
   eq('buyer fee still found',  rows[0].buyer_fee, 3);
 }
 
+console.log('\n── Per-unit finder fee is part of landed cost ──');
+{
+  // Reported: typed $8 in FINDER FEE and landed cost didn't move.
+  const orders = [1, 2, 3].map(i => ({
+    id: i, retailer: 'Target', status: 'Delivered',
+    items: '["2x Pokémon 30th Anniversary EX Box 1 @ $29.99"]', order_total: 65.09,
+  }));
+  const [base] = computeItemGroups(orders, []);
+  const [g]    = computeItemGroups(orders, [{ sku: 'Pokémon 30th Anniversary EX Box 1', buyer_fee: 8, sale_price: 50 }]);
+  eq('landed without fee',          base.perUnitTotal, 32.55);
+  eq('landed rises by exactly $8',  g.perUnitTotal, 40.55);
+  eq('finder line shows the $8',    g.perUnitFinder, 8);
+  eq('other lines unchanged',       [g.perUnitItem, g.perUnitTax, g.perUnitShip].join(), [base.perUnitItem, base.perUnitTax, base.perUnitShip].join());
+  eq('breakdown still adds up',     Math.round((g.perUnitItem + g.perUnitTax + g.perUnitShip + g.perUnitFinder) * 100) / 100, g.perUnitTotal);
+}
+
+console.log('\n── Sales recorded in parts ──');
+{
+  const TITLE = 'Pokémon 30th Anniversary EX Box 1';
+  const orders = [1, 2, 3].map(i => ({
+    id: i, retailer: 'Target', status: 'Delivered', items: `["2x ${TITLE} @ $29.99"]`, order_total: 65.09,
+  }));
+  const pricing = [{ sku: TITLE, buyer_fee: 8, sale_price: 50 }];
+
+  const [none] = computeItemGroups(orders, pricing, undefined, []);
+  eq('nothing sold yet',             none.soldQty, 0);
+  eq('no realized profit yet',       none.realizedProfit, null);
+  eq('all 6 left',                   none.unitsLeft, 6);
+  eq('expected on all 6 at asking',  none.expectedProfitLeft, 56.7);   // 6 × (50 − 40.55)
+
+  const sales = [
+    { id: 1, sku_key: TITLE, qty: 2, unit_price: 50, fees: 0, channel: 'Local', sold_at: '2026-09-20' },
+    { id: 2, sku_key: TITLE, qty: 1, unit_price: 55, fees: 4, channel: 'eBay',  sold_at: '2026-09-25' },
+  ];
+  const [g] = computeItemGroups(orders, pricing, undefined, sales);
+  eq('sold 3',                       g.soldQty, 3);
+  eq('gross',                        g.soldGross, 155);
+  eq('fees',                         g.soldFees, 4);
+  eq('average price',                g.avgSalePrice, 51.67);
+  // 155 − 4 − 3 × 40.55 (landed already includes the $8 fee — not taken twice)
+  eq('realized profit exact',        g.realizedProfit, 29.35);
+  eq('3 left',                       g.unitsLeft, 3);
+  eq('expected on the 3 left',       g.expectedProfitLeft, 28.35);
+  eq('history newest first',         g.sales.map(x => x.id).join(), '2,1');
+
+  // Deleting a sale = it's just gone from the rows.
+  const [after] = computeItemGroups(orders, pricing, undefined, sales.slice(0, 1));
+  eq('after deleting one: sold 2',   after.soldQty, 2);
+  eq('after deleting one: 4 left',   after.unitsLeft, 4);
+
+  // Sale recorded under the store title, product linked later: still counted,
+  // and a row reachable by two keys is counted once.
+  const catalog = { products: new Map([[7, { id: 7, name: 'EX Box 1' }]]),
+                    aliases:  new Map([[require('../itemNames').itemKey(TITLE), 7]]) };
+  const mixed = [
+    { id: 10, sku_key: '#p7', qty: 1, unit_price: 50, fees: 0, sold_at: '2026-09-26' },
+    { id: 11, sku_key: TITLE, qty: 1, unit_price: 50, fees: 0, sold_at: '2026-09-21' },
+  ];
+  const [linked] = computeItemGroups(orders, pricing, catalog, mixed);
+  eq('sales under both keys found',  linked.soldQty, 2);
+  const [dup] = computeItemGroups(orders, pricing, catalog, [mixed[0], mixed[0]]);
+  eq('same sale never counted twice', dup.soldQty, 1);
+
+  // Oversold (units bought elsewhere): left never goes negative.
+  const [over] = computeItemGroups(orders, pricing, undefined, [{ id: 20, sku_key: TITLE, qty: 9, unit_price: 50 }]);
+  eq('units left floors at 0',       over.unitsLeft, 0);
+  eq('no expected profit when none left', over.expectedProfitLeft, null);
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

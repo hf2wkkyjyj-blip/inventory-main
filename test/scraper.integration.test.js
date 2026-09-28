@@ -117,7 +117,7 @@ const check = (name, cond, detail) => {
 
   const byNum = n => db._botOrders.find(o => o.order_number === n);
 
-  const tgt = byNum('902003676318858');
+  const tgt = byNum('902000000000021');
   check('Target order created', !!tgt);
   if (tgt) {
     const items = JSON.parse(tgt.items || '[]');
@@ -130,7 +130,7 @@ const check = (name, cond, detail) => {
     check('Target: category Pokemon', tgt.category === 'Pokemon', tgt.category);
   }
 
-  const pkc = byNum('P0040756156');
+  const pkc = byNum('P0099000004');
   check('PKC order created', !!pkc);
   if (pkc) {
     const items = JSON.parse(pkc.items || '[]');

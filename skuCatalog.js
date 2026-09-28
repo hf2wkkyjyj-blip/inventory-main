@@ -91,6 +91,21 @@ function copyPricingIfMissing(db, fromSkus, toSku) {
   } catch (_) { /* pricing table optional */ }
 }
 
+// Sales are recorded against the item view's skuKey — "#p<id>" for a product,
+// the store title for an unlinked one. When links change, carry the sales along
+// so a sale is never orphaned by a rename, merge, link or delete.
+function moveSales(db, fromKeys, toKey) {
+  try {
+    const wanted = new Set(fromKeys.map(itemKey));
+    const rows = db.prepare('SELECT id, sku_key FROM bot_sales').all();
+    for (const r of rows) {
+      if (r.sku_key !== toKey && wanted.has(itemKey(r.sku_key))) {
+        db.prepare('UPDATE bot_sales SET sku_key=? WHERE id=?').run([toKey, r.id]);
+      }
+    }
+  } catch (_) { /* sales table optional */ }
+}
+
 // Point these store titles at a product (moving them from any other product).
 function linkTitles(db, productId, rawNames) {
   const titles = [...new Set((rawNames || []).map(parseItemName).filter(Boolean))];
@@ -100,6 +115,7 @@ function linkTitles(db, productId, rawNames) {
   }
   // Prices typed in before the product existed were saved under the title.
   copyPricingIfMissing(db, titles, productSkuKey(productId));
+  moveSales(db, titles, productSkuKey(productId));
   return titles.length;
 }
 
@@ -111,6 +127,7 @@ function mergeProducts(db, fromId, intoId) {
   if (fromId === intoId) return intoId;
   db.prepare('UPDATE sku_aliases SET product_id=? WHERE product_id=?').run([intoId, fromId]);
   copyPricingIfMissing(db, [productSkuKey(fromId)], productSkuKey(intoId));
+  moveSales(db, [productSkuKey(fromId)], productSkuKey(intoId));
   deleteProduct(db, fromId);
   return intoId;
 }
@@ -118,6 +135,9 @@ function mergeProducts(db, fromId, intoId) {
 // Removes the product and its links. Orders are untouched — their titles simply
 // show up as unlinked again.
 function deleteProduct(db, id) {
+  // Its titles go back to being unlinked rows; hand the sales to the first one.
+  const first = db.prepare('SELECT raw_name FROM sku_aliases WHERE product_id=? ORDER BY raw_name LIMIT 1').get([id]);
+  if (first) moveSales(db, [productSkuKey(id)], first.raw_name);
   db.prepare('DELETE FROM sku_aliases WHERE product_id=?').run([id]);
   db.prepare('DELETE FROM sku_products WHERE id=?').run([id]);
   try { db.prepare('DELETE FROM bot_sku_prices WHERE sku=?').run([productSkuKey(id)]); } catch (_) {}

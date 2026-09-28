@@ -32,13 +32,13 @@ const toText = html => html
 
 (async () => {
 
-  // ── 1. Target: the email that produced "Mastercard *5562" and "Based on 55445" ──
+  // ── 1. Target: the email that produced "Mastercard *5562" and "Based on 55003" ──
   console.log('\n── Target confirmation (the $43.39-appears-3-times case) ──');
   {
     const html = fixture('target-confirmation.html');
     const r = await parseOrderEmail({ html, text: toText(html), subject: 'Thanks for your order', from: 'orders@target.com' });
 
-    eq('order number', r.orderNumber, '902003676318858');
+    eq('order number', r.orderNumber, '902000000000021');
     eq('exactly one item', r.items.length, 1);
 
     const names = r.items.map(i => i.name);
@@ -66,7 +66,7 @@ const toText = html => html
     const html = fixture('pkc-confirmation.html');
     const r = await parseOrderEmail({ html, text: toText(html), subject: 'Order Confirmation', from: 'orders@pokemoncenter.com' });
 
-    eq('order number', r.orderNumber, 'P0040756156');
+    eq('order number', r.orderNumber, 'P0099000004');
 
     const names = r.items.map(i => i.name);
     check('no bare "Pokemon TCG:" name', !names.some(n => /^pokemon tcg:?$/i.test(n.trim())), names.join(' | '));
@@ -99,8 +99,8 @@ const toText = html => html
     eq('tracking',        r.trackingNumber, '1Z999AA10123456784');
     eq('carrier',         r.carrier,        'UPS');
     eq('expected date',   r.expectedDate,   '2026-07-29');
-    eq('ship name',       r.shippingName,   'Sang Nguyen');
-    check('address captured', /Brooklyn Park/.test(r.shippingAddress || ''), r.shippingAddress);
+    eq('ship name',       r.shippingName,   'Sam Carter');
+    check('address captured', /Springfield/.test(r.shippingAddress || ''), r.shippingAddress);
     check('high confidence',  r.confidence >= 0.9, String(r.confidence));
   }
 
@@ -110,7 +110,7 @@ const toText = html => html
   console.log('\n── Flat-text order summary (tax/ship must still be found) ──');
   {
     const html = `<html><body>
-      <p>Order #112-9988776-5544332</p>
+      <p>Order #112-9988776-5500132</p>
       <table><tr>
         <td>Mega Evolution Booster Bundle</td><td>Qty: 2</td><td>$32.55</td>
       </tr></table>
@@ -146,8 +146,8 @@ const toText = html => html
   console.log('\n── Shipping notice (derived total must be flagged) ──');
   {
     const html = `<html><body>
-      <p>Your order #902003677072140 has shipped</p>
-      <p>Tracking: 1ZWY06570304019606</p>
+      <p>Your order #902000000000023 has shipped</p>
+      <p>Tracking: 1ZAA11110000000001</p>
       <table>
         <tr><td>Pokemon TCG Scarlet &amp; Violet Bundle</td><td>Qty: 1</td><td>$219.99</td></tr>
         <tr><td>Pokemon TCG 30th Anniversary Pack</td><td>Qty: 1</td><td>$39.99</td></tr>
@@ -175,8 +175,8 @@ const toText = html => html
   {
     const cases = [
       ['Order Number CHP10033780',     'CHP10033780'],
-      ['Order Number: P0040756156',    'P0040756156'],
-      ['Order #902003676318858',       '902003676318858'],
+      ['Order Number: P0099000004',    'P0099000004'],
+      ['Order #902000000000021',       '902000000000021'],
       ['Order No. 25293',              '25293'],
       ['Confirmation # ABC-99812',     'ABC-99812'],
     ];

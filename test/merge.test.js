@@ -52,15 +52,15 @@ console.log('\n── The real duplicates from the screenshot ──');
 {
   const db = makeDb([
     // Email scraper's row: the good one.
-    { id: 10, order_number: '902003715669815', retailer: 'Target', category: 'Pokemon', status: 'Delivered',
+    { id: 10, order_number: '902000000000024', retailer: 'Target', category: 'Pokemon', status: 'Delivered',
       items: '["2x Pokemon Trading Card Game: 30th Celebration Booster Bundle @ $29.99"]',
-      order_total: 65.09, tax_amount: 5.11, ship_cost: 0, tracking: '1ZWY0657YW04307471',
+      order_total: 65.09, tax_amount: 5.11, ship_cost: 0, tracking: '1ZAA11110000000003',
       shipping_name: null, shipping_address: null, account_email: null },
     // Bot API's duplicate: buyer only.
-    { id: 11, order_number: '902003715669815', retailer: 'Target', category: 'Pokemon', status: 'Delivered',
+    { id: 11, order_number: '902000000000024', retailer: 'Target', category: 'Pokemon', status: 'Delivered',
       items: '["Pokemon TCG: 30th Celebration Booster Bundle"]',
       order_total: 0, tax_amount: 0, ship_cost: 0, tracking: null,
-      shipping_name: 'Sang', shipping_address: '7964 Brooklyn Blvd', account_email: 'sang@example.com' },
+      shipping_name: 'Sam', shipping_address: '4200 Example Blvd', account_email: 'sam@example.com' },
   ]);
 
   const r = M.mergeDuplicateOrders(db, silent);
@@ -72,23 +72,23 @@ console.log('\n── The real duplicates from the screenshot ──');
   eq('kept the scraper row', row.id, 10);
   eq('kept priced items', /@ \$29\.99/.test(row.items), true);
   eq('kept real total', row.order_total, 65.09);
-  eq('kept tracking', row.tracking, '1ZWY0657YW04307471');
-  eq('gained buyer from bot row', row.shipping_name, 'Sang');
-  eq('gained address from bot row', row.shipping_address, '7964 Brooklyn Blvd');
-  eq('gained account from bot row', row.account_email, 'sang@example.com');
+  eq('kept tracking', row.tracking, '1ZAA11110000000003');
+  eq('gained buyer from bot row', row.shipping_name, 'Sam');
+  eq('gained address from bot row', row.shipping_address, '4200 Example Blvd');
+  eq('gained account from bot row', row.account_email, 'sam@example.com');
 }
 
 console.log('\n── Richest row wins even if it was inserted second ──');
 {
   const db = makeDb([
-    { id: 1, order_number: 'P0040756156', retailer: 'Pokemon Center', status: 'Confirmed',
-      items: '["Booster Bundle"]', order_total: 0, tracking: null, shipping_name: 'Sang' },
-    { id: 2, order_number: 'P0040756156', retailer: 'Pokemon Center', status: 'Shipped',
+    { id: 1, order_number: 'P0099000004', retailer: 'Pokemon Center', status: 'Confirmed',
+      items: '["Booster Bundle"]', order_total: 0, tracking: null, shipping_name: 'Sam' },
+    { id: 2, order_number: 'P0099000004', retailer: 'Pokemon Center', status: 'Shipped',
       items: '["3x Booster Bundle @ $35.14"]', order_total: 112.84, tracking: '876543210987', shipping_name: null },
   ]);
   M.mergeDuplicateOrders(db, silent);
   eq('kept id 2 (priced, tracked)', db.table[0].id, 2);
-  eq('buyer filled in', db.table[0].shipping_name, 'Sang');
+  eq('buyer filled in', db.table[0].shipping_name, 'Sam');
 }
 
 console.log('\n── Same number, DIFFERENT retailers must not merge ──');
@@ -107,7 +107,7 @@ console.log('\n── Idempotent ──');
 {
   const db = makeDb([
     { id: 1, order_number: 'X1', retailer: 'Target', order_total: 10, items: '["A @ $10.00"]' },
-    { id: 2, order_number: 'X1', retailer: 'Target', order_total: 0,  items: '[]', shipping_name: 'Sang' },
+    { id: 2, order_number: 'X1', retailer: 'Target', order_total: 0,  items: '[]', shipping_name: 'Sam' },
   ]);
   M.mergeDuplicateOrders(db, silent);
   const second = M.mergeDuplicateOrders(db, silent);
@@ -118,15 +118,15 @@ console.log('\n── Idempotent ──');
 console.log('\n── Bot API: findExisting + fillExisting ──');
 {
   const db = makeDb([
-    { id: 5, order_number: '912003760648863', retailer: 'Target', order_total: 65.09,
-      items: '["2x Pokemon TCG @ $29.99"]', tracking: '1ZWY0657YW04307994', shipping_name: null },
+    { id: 5, order_number: '912000000000034', retailer: 'Target', order_total: 65.09,
+      items: '["2x Pokemon TCG @ $29.99"]', tracking: '1ZAA11110000000002', shipping_name: null },
   ]);
-  const hit = M.findExisting(db, '912003760648863', 'Target');
+  const hit = M.findExisting(db, '912000000000034', 'Target');
   eq('finds the scraper row', hit && hit.id, 5);
-  eq('matches when bot omits retailer', (M.findExisting(db, '912003760648863', null) || {}).id, 5);
-  eq('no match for another store', M.findExisting(db, '912003760648863', 'Walmart'), null);
+  eq('matches when bot omits retailer', (M.findExisting(db, '912000000000034', null) || {}).id, 5);
+  eq('no match for another store', M.findExisting(db, '912000000000034', 'Walmart'), null);
 
-  const filled = M.fillExisting(db, hit, { shipping_name: 'Sang', order_total: 0, items: '["Pokemon TCG"]' });
+  const filled = M.fillExisting(db, hit, { shipping_name: 'Sam', order_total: 0, items: '["Pokemon TCG"]' });
   eq('only empty field filled', filled.join(','), 'shipping_name');
   eq('total not clobbered by bot 0', db.table[0].order_total, 65.09);
   eq('priced items not clobbered', /@ \$29\.99/.test(db.table[0].items), true);

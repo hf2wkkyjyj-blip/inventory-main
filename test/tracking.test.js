@@ -20,8 +20,8 @@ Module._load = function (r, ...a) {
 const { DatabaseSync } = require('node:sqlite');
 const { reparseStoredEmails, ensureRawEmailTable } = require('../emailScraper');
 
-const A = { num: 'P0000000101', trk: '876000000101', name: 'Customer A', addr: '1 Test St apt 3f Minneapolis, MN 55443' };
-const B = { num: 'P0000000202', trk: '876000000202', name: 'Customer B', addr: '2 Sample Ave rm 5 Minneapolis, MN 55428' };
+const A = { num: 'P0000000101', trk: '876000000101', name: 'Customer A', addr: '1 Test St apt 3f Springfield, MN 55001' };
+const B = { num: 'P0000000202', trk: '876000000202', name: 'Customer B', addr: '2 Sample Ave rm 5 Springfield, MN 55002' };
 
 const shipEmail = (c, trk = c.trk) => [
   'Pokémon Center', 'Hooray! Find out when your order will arrive.',

@@ -86,8 +86,8 @@ function email(id, date, subject, body, orderNo, tracking) {
   console.log('\n── Falsely-cancelled order, emails say Confirmed only ──');
   {
     // No tracking anywhere, so correctingBadCancel cannot fire.
-    const orders = [{ id: 1, order_number: '902003676318858', status: 'Cancelled', category: 'Pokemon', retailer: 'Target', tracking: null, items: null, order_total: null }];
-    const emails = [email('<a1>', '2026-08-14T10:00:00Z', 'Thanks for your order', 'Your order has been placed.', '902003676318858', null)];
+    const orders = [{ id: 1, order_number: '902000000000021', status: 'Cancelled', category: 'Pokemon', retailer: 'Target', tracking: null, items: null, order_total: null }];
+    const emails = [email('<a1>', '2026-08-14T10:00:00Z', 'Thanks for your order', 'Your order has been placed.', '902000000000021', null)];
 
     const plain = await reparseStoredEmails(makeDb(JSON.parse(JSON.stringify(orders)), emails));
     eq('plain reparse leaves it Cancelled', plain.after.Cancelled, 1);
@@ -100,24 +100,24 @@ function email(id, date, subject, body, orderNo, tracking) {
 
   console.log('\n── Timeline replays in order: Confirmed → Shipped → Delivered ──');
   {
-    const orders = [{ id: 1, order_number: '102003676904439', status: 'Cancelled', category: 'Pokemon', retailer: 'Target', tracking: null, items: null, order_total: null }];
+    const orders = [{ id: 1, order_number: '102000000000011', status: 'Cancelled', category: 'Pokemon', retailer: 'Target', tracking: null, items: null, order_total: null }];
     const emails = [
-      email('<c>', '2026-09-10T10:00:00Z', 'Thanks for your order',   'Your order has been placed.',    '102003676904439', null),
-      email('<s>', '2026-09-12T10:00:00Z', 'Your order has shipped',  'Your package is on its way.',    '102003676904439', '1ZWY06570304019606'),
-      email('<d>', '2026-09-14T10:00:00Z', 'Your order was delivered','Your package was delivered.',    '102003676904439', '1ZWY06570304019606'),
+      email('<c>', '2026-09-10T10:00:00Z', 'Thanks for your order',   'Your order has been placed.',    '102000000000011', null),
+      email('<s>', '2026-09-12T10:00:00Z', 'Your order has shipped',  'Your package is on its way.',    '102000000000011', '1ZAA11110000000001'),
+      email('<d>', '2026-09-14T10:00:00Z', 'Your order was delivered','Your package was delivered.',    '102000000000011', '1ZAA11110000000001'),
     ];
     const db = makeDb(orders, emails);
     await reparseStoredEmails(db, { rebuildStatus: true });
     eq('ends Delivered, not stuck', db._orders[0].status, 'Delivered');
-    eq('tracking captured', db._orders[0].tracking, '1ZWY06570304019606');
+    eq('tracking captured', db._orders[0].tracking, '1ZAA11110000000001');
   }
 
   console.log('\n── A genuine cancellation must survive the rebuild ──');
   {
-    const orders = [{ id: 1, order_number: '912003440498135', status: 'Confirmed', category: 'Pokemon', retailer: 'Target', tracking: null, items: null, order_total: null }];
+    const orders = [{ id: 1, order_number: '912000000000031', status: 'Confirmed', category: 'Pokemon', retailer: 'Target', tracking: null, items: null, order_total: null }];
     const emails = [
-      email('<c>', '2026-08-01T10:00:00Z', 'Thanks for your order',        'Your order has been placed.',                   '912003440498135', null),
-      email('<x>', '2026-08-03T10:00:00Z', 'Your order was cancelled',     'Your order has been cancelled and refunded.',   '912003440498135', null),
+      email('<c>', '2026-08-01T10:00:00Z', 'Thanks for your order',        'Your order has been placed.',                   '912000000000031', null),
+      email('<x>', '2026-08-03T10:00:00Z', 'Your order was cancelled',     'Your order has been cancelled and refunded.',   '912000000000031', null),
     ];
     const db = makeDb(orders, emails);
     await reparseStoredEmails(db, { rebuildStatus: true });
@@ -125,37 +125,37 @@ function email(id, date, subject, body, orderNo, tracking) {
   }
 
   // ── Regression: real failure seen in production logs ────────────────────
-  // Order #902003676888420 was correctly stored as ONE item from its
+  // Order #902000000000022 was correctly stored as ONE item from its
   // confirmation, then a Target "Items have arrived" email — which carries a
   // recommendation carousel of truncated product tiles — overwrote it with four
   // products that were never purchased.
   console.log('\n── Delivery-email carousel must not overwrite confirmed items ──');
   {
-    const orders = [{ id: 1, order_number: '902003676888420', status: 'Confirmed', category: 'Pokemon',
+    const orders = [{ id: 1, order_number: '902000000000022', status: 'Confirmed', category: 'Pokemon',
                       retailer: 'Target', tracking: null, items: null, order_total: null, tax_amount: null, ship_cost: null }];
 
     const confirmation = {
       message_id: '<conf>', subject: 'Thanks for your order', from_email: 'orders@oe.target.com',
       email_date: '2026-09-14T10:00:00Z',
-      html: `<html><body><p>Order #902003676888420</p>
+      html: `<html><body><p>Order #902000000000022</p>
         <table><tr><td>Pok&eacute;mon 30th Anniversary Poster Collection</td><td>Qty: 2</td><td>$19.99 / ea</td></tr></table>
         <table><tr><td>Subtotal</td><td>$39.98</td></tr><tr><td>Total</td><td>$43.39</td></tr></table>
         </body></html>`,
-      text: 'Order #902003676888420 has been placed.',
+      text: 'Order #902000000000022 has been placed.',
     };
 
     // The carousel tiles use UI-truncated names, exactly as in the logs.
     const arrival = {
-      message_id: '<arrived>', subject: 'Items have arrived from order #902003676888420!',
+      message_id: '<arrived>', subject: 'Items have arrived from order #902000000000022!',
       from_email: 'orders@oe.target.com', email_date: '2026-09-18T15:00:00Z',
-      html: `<html><body><p>Order #902003676888420</p><p>Tracking: 1ZWY06570304159616</p>
+      html: `<html><body><p>Order #902000000000022</p><p>Tracking: 1ZAA11110000000004</p>
         <p>Your package was delivered.</p>
         <table>
           <tr><td>Pokemon Pokémon TCG 30th Ann...</td><td>Qty: 1</td><td>$39.99</td></tr>
           <tr><td>Pokemon Card Game MEGA High...</td><td>Qty: 1</td><td>$24.99</td></tr>
           <tr><td>Pokemon TCG: Collectors Bund...</td><td>Qty: 1</td><td>$229.00</td></tr>
         </table></body></html>`,
-      text: 'Items have arrived. Your package was delivered. Tracking 1ZWY06570304159616',
+      text: 'Items have arrived. Your package was delivered. Tracking 1ZAA11110000000004',
     };
 
     const db = makeDb(orders, [confirmation, arrival]);
@@ -169,7 +169,7 @@ function email(id, date, subject, body, orderNo, tracking) {
     eq('no truncated carousel names', items.some(i => /\.\.\.|…/.test(i)), false);
     eq('real total preserved', row.order_total, 43.39);
     eq('status advanced to Delivered', row.status, 'Delivered');
-    eq('tracking captured from arrival email', row.tracking, '1ZWY06570304159616');
+    eq('tracking captured from arrival email', row.tracking, '1ZAA11110000000004');
   }
 
   // ── delivered_date must come from the email, not the clock ────────────────
@@ -178,15 +178,15 @@ function email(id, date, subject, body, orderNo, tracking) {
   // weeks earlier all showed today's date.
   console.log('\n── delivered_date comes from the email, not from today ──');
   {
-    const orders = [{ id: 1, order_number: '912003454777043', status: 'Shipped', category: 'Pokemon',
-                      retailer: 'Target', tracking: '1ZWY0657YW00426318', items: null,
+    const orders = [{ id: 1, order_number: '912000000000032', status: 'Shipped', category: 'Pokemon',
+                      retailer: 'Target', tracking: '1ZAA11110000000005', items: null,
                       order_total: null, delivered_date: null }];
     const delivery = {
       message_id: '<d1>', subject: 'Your order was delivered',
       from_email: 'orders@oe.target.com',
       email_date: '2026-08-28T18:30:00Z',            // weeks before "today"
-      html: '<html><body><p>Order #912003454777043</p><p>Tracking: 1ZWY0657YW00426318</p><p>Your package was delivered.</p></body></html>',
-      text: 'Order #912003454777043 was delivered. Tracking 1ZWY0657YW00426318',
+      html: '<html><body><p>Order #912000000000032</p><p>Tracking: 1ZAA11110000000005</p><p>Your package was delivered.</p></body></html>',
+      text: 'Order #912000000000032 was delivered. Tracking 1ZAA11110000000005',
     };
 
     const db = makeDb(orders, [delivery]);

@@ -24,20 +24,20 @@ const box = (id, num, trk, name, addr, extra = {}) => ({
 
 console.log('\n── One box = one row ──');
 {
-  const pk = computePackages([box(1, 'P0038241809', '876893093507', 'Jason Yang', '8410 Yates Ave North Fl 6, Minneapolis, MN 55443')]);
+  const pk = computePackages([box(1, 'P0099000001', '870000000301', 'Chris Moss', '1000 Test Ave North Fl 6, Springfield, MN 55001')]);
   eq('one package', pk.length, 1);
-  eq('tracking', pk[0].tracking, '876893093507');
+  eq('tracking', pk[0].tracking, '870000000301');
   eq('4 products inside', pk[0].contents.length, 4);
   eq('5 units total', pk[0].units, 5);
   eq('ETB listed first with qty 2', [pk[0].contents[0].name, pk[0].contents[0].qty], ['30th Celebration PC ETB', 2]);
-  eq('ship-to', pk[0].shipTo[0].name, 'Jason Yang');
+  eq('ship-to', pk[0].shipTo[0].name, 'Chris Moss');
   eq('not flagged', pk[0].conflict, false);
   eq('order ids carried for bulk actions', pk[0].orderIds, [1]);
 }
 
 console.log('\n── 16 boxes → 16 rows (the product view showed 64) ──');
 {
-  const orders = Array.from({ length: 16 }, (_, i) => box(i + 1, `P00383${i}`, `8769${String(i).padStart(8, '0')}`, `Buyer ${i}`, `${i} Main St, City, MN 55000`));
+  const orders = Array.from({ length: 16 }, (_, i) => box(i + 1, `P00990${i}`, `8769${String(i).padStart(8, '0')}`, `Buyer ${i}`, `${i} Main St, City, MN 55000`));
   const pk = computePackages(orders);
   eq('16 packages', pk.length, 16);
   eq('64 product lines collapsed', pk.reduce((s, p) => s + p.contents.length, 0), 64);
@@ -45,14 +45,14 @@ console.log('\n── 16 boxes → 16 rows (the product view showed 64) ──')
 
 console.log('\n── Same tracking, two different addresses → flagged ──');
 {
-  // Real case from the screenshot: 876928855241 on two orders, two buildings.
+  // Real case from the screenshot: 870000000302 on two orders, two buildings.
   const pk = computePackages([
-    box(5, 'P0038311805', '876928855241', 'Jenny Xiong', '8410 Yates Ave N Apt 3f, Minneapolis, MN 55443'),
-    box(6, 'P0038320540', '876928855241', 'Kien Lai',    '08805 E Research Center Dr Rm 5, Minneapolis, MN 55428'),
+    box(5, 'P0099000002', '870000000302', 'Alex Rivera', '1000 Test Ave N Apt 3f, Springfield, MN 55001'),
+    box(6, 'P0099000003', '870000000302', 'Bea Tran',    '05000 E Sample Park Dr Rm 5, Springfield, MN 55002'),
   ]);
   eq('one package row', pk.length, 1);
   eq('flagged as conflict', pk[0].conflict, true);
-  eq('both destinations shown', pk[0].shipTo.map(s => s.name).sort(), ['Jenny Xiong', 'Kien Lai']);
+  eq('both destinations shown', pk[0].shipTo.map(s => s.name).sort(), ['Alex Rivera', 'Bea Tran']);
   eq('both order ids included', pk[0].orderIds.sort(), [5, 6]);
   eq('contents summed across both orders', pk[0].units, 10);
 }
@@ -60,8 +60,8 @@ console.log('\n── Same tracking, two different addresses → flagged ──'
 console.log('\n── Same tracking, same address spelled differently → NOT flagged ──');
 {
   const pk = computePackages([
-    box(7, 'A', '1ZWY06570304019606', 'Sang', '8410 Yates Ave N Rm 4, Minneapolis, MN 55443'),
-    box(8, 'B', '1ZWY06570304019606', 'Sang', '8410 Yates Avenue North Room 4, Minneapolis, MN 55443'),
+    box(7, 'A', '1ZAA11110000000001', 'Sam', '1000 Test Ave N Rm 4, Springfield, MN 55001'),
+    box(8, 'B', '1ZAA11110000000001', 'Sam', '1000 Test Avenue North Room 4, Springfield, MN 55001'),
   ]);
   eq('not a conflict', pk[0].conflict, false);
   eq('UPS detected', pk[0].carrierLabel, 'UPS');
@@ -100,7 +100,7 @@ console.log('\n── Catalog names are used for contents ──');
 {
   const catalog = { products: new Map([[7, { id: 7, name: 'PC ETB' }]]),
                     aliases:  new Map([['pokemon tcg: 30th celebration pokemon center elite trainer box', 7]]) };
-  const pk = computePackages([box(1, 'P1', '876893093507', 'J', '1 A St, X, MN 55000')], catalog);
+  const pk = computePackages([box(1, 'P1', '870000000301', 'J', '1 A St, X, MN 55000')], catalog);
   eq('linked product shows its short name', pk[0].contents[0].name, 'PC ETB');
 }
 

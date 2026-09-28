@@ -147,6 +147,13 @@ try { db.exec("ALTER TABLE bot_orders ADD COLUMN status_changed_at DATETIME"); }
 // Backfill so existing rows aren't invisible to date filters.
 try { db.exec("UPDATE bot_orders SET status_changed_at=COALESCE(delivered_date, received_at, order_date) WHERE status_changed_at IS NULL"); } catch(e) {}
 try { db.exec("CREATE TABLE IF NOT EXISTS bot_sku_prices (sku TEXT PRIMARY KEY, buyer_fee REAL DEFAULT 0, sale_price REAL DEFAULT 0)"); } catch(e) {}
+// Individual sales of bot-bought products — you rarely sell a whole lot at once.
+// sku_key matches the item view's skuKey ("#p<id>" for a linked product, else the
+// store title). unit_price is per unit; fees is the total for this sale.
+try { db.exec(`CREATE TABLE IF NOT EXISTS bot_sales (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, sku_key TEXT NOT NULL, product_name TEXT,
+  qty INTEGER NOT NULL, unit_price REAL NOT NULL, fees REAL DEFAULT 0, channel TEXT,
+  sold_at TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='ordered'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE status='delivered' OR status='out_for_delivery'"); } catch(e) {}
@@ -1054,7 +1061,9 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
 
   let pricingRows = [];
   try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch(_) {}
-  res.json(computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db)));
+  let salesRows = [];
+  try { salesRows = db.prepare('SELECT * FROM bot_sales ORDER BY sold_at DESC, id DESC').all(); } catch(_) {}
+  res.json(computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db), salesRows));
 });
 
 // ── Product catalog (see skuCatalog.js) ─────────────────────────────────────
@@ -1113,6 +1122,32 @@ app.delete('/api/admin/sku-aliases', auth, adminOnly, (req, res) => {
 // Remove a product. Its orders are untouched; their titles become unlinked.
 app.delete('/api/admin/sku-products/:id', auth, adminOnly, (req, res) => {
   SkuCatalog.deleteProduct(db, Number(req.params.id));
+  res.json({ ok: true });
+});
+
+// ── Sales of bot products (recorded in parts) ───────────────────────────────
+app.post('/api/admin/bot-sales', auth, adminOnly, (req, res) => {
+  const b = req.body || {};
+  const qty   = Number(b.qty);
+  const price = Number(b.unit_price);
+  const fees  = b.fees === undefined || b.fees === '' ? 0 : Number(b.fees);
+  const date  = b.sold_at || new Date().toISOString().slice(0, 10);
+  if (!b.sku_key || typeof b.sku_key !== 'string')      return res.status(400).json({ error: 'sku_key required' });
+  if (!Number.isInteger(qty) || qty < 1)                return res.status(400).json({ error: 'Quantity must be a whole number of at least 1' });
+  if (!Number.isFinite(price) || price < 0)             return res.status(400).json({ error: 'Price must be a number' });
+  if (!Number.isFinite(fees) || fees < 0)               return res.status(400).json({ error: 'Fees must be a number' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date))                 return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  const r = db.prepare(`INSERT INTO bot_sales (sku_key, product_name, qty, unit_price, fees, channel, sold_at)
+                        VALUES (?,?,?,?,?,?,?)`)
+    .run([b.sku_key, b.product_name || null, qty, Math.round(price * 100) / 100, Math.round(fees * 100) / 100,
+          (b.channel || '').trim() || null, date]);
+  res.json({ id: r && r.lastInsertRowid != null ? Number(r.lastInsertRowid) : null });
+});
+
+app.delete('/api/admin/bot-sales/:id', auth, adminOnly, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'bad id' });
+  db.prepare('DELETE FROM bot_sales WHERE id=?').run([id]);
   res.json({ ok: true });
 });
 

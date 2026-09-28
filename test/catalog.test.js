@@ -174,6 +174,39 @@ console.log('\n── 10. Removing a product never deletes orders ──');
   eq('its titles are unconfirmed again', view(db).some(r => r.unlinked), true);
 }
 
+console.log('\n── 11. Recorded sales follow the product through link / merge / delete ──');
+{
+  const d = makeDb();
+  d.exec(`CREATE TABLE bot_sales (id INTEGER PRIMARY KEY AUTOINCREMENT, sku_key TEXT NOT NULL, product_name TEXT,
+          qty INTEGER NOT NULL, unit_price REAL NOT NULL, fees REAL DEFAULT 0, channel TEXT, sold_at TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  const sell = (key, qty) => d.prepare('INSERT INTO bot_sales (sku_key, qty, unit_price, sold_at) VALUES (?,?,?,?)').run([key, qty, 40, '2026-09-20']);
+  const v = () => computeItemGroups(ORDERS, [], Sku.loadCatalog(d), d.prepare('SELECT * FROM bot_sales').all());
+  const tech = rows => rows.filter(r => /Tech Sticker/i.test(r.rawNames.join(' ')));
+
+  // Sold before confirming: recorded under the store title.
+  sell(TARGET_TECH, 1);
+  eq('unlinked row shows the sale', tech(v()).reduce((n, r) => n + r.soldQty, 0), 1);
+
+  const a = Sku.createProduct(d, 'Tech Sticker');
+  Sku.linkTitles(d, a, [TARGET_TECH]);
+  eq('linking moves the sale to the product key', d.prepare('SELECT sku_key FROM bot_sales').get().sku_key, `#p${a}`);
+  sell(`#p${a}`, 2);
+
+  const b = Sku.createProduct(d, 'Tech Sticker PC');
+  Sku.linkTitles(d, b, [PKC_LUCARIO]);
+  sell(`#p${b}`, 1);
+
+  Sku.mergeProducts(d, b, a);
+  const merged = v().find(r => r.productId === a);
+  eq('merge: all 4 sales on the survivor', merged && merged.soldQty, 4);
+  eq('merge: no sale left on the old key', d.prepare('SELECT COUNT(*) n FROM bot_sales WHERE sku_key=?').get([`#p${b}`]).n, 0);
+
+  Sku.deleteProduct(d, a);
+  eq('delete: sales not lost',        d.prepare('SELECT SUM(qty) n FROM bot_sales').get().n, 4);
+  eq('delete: still shown on the unlinked rows', tech(v()).reduce((n, r) => n + r.soldQty, 0), 4);
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

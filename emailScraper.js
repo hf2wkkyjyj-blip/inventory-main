@@ -587,8 +587,8 @@ async function processEmail(parsed, db, opts = {}) {
       // different order, it's provably wrong: one box can't belong to two
       // orders. This email names this order explicitly, so its number wins.
       //
-      // Real case: Jenny Xiong's P0038311805 held Kien Lai's 876928855241 while
-      // her own shipping email said 876937209516. With "never replace", every
+      // Real case: one PKC order held ANOTHER order's tracking number while its
+      // own shipping email carried the right one. With "never replace", every
       // rescan kept the wrong one.
       const sharedWith = db.prepare('SELECT order_number FROM bot_orders WHERE tracking=? AND id<>? LIMIT 1')
         .get([existing.tracking, existing.id]);

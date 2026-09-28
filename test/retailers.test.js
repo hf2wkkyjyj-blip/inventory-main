@@ -92,10 +92,10 @@ console.log('\n── Order-number formats (from real history) ──');
 {
   const P = n => R.BUILT_IN.find(p => p.name === n);
   const cases = [
-    ['Target',           'Order #902003677072140 placed',      '902003677072140'],
-    ['Target',           'order 912003499321226 shipped',      '912003499321226'],
-    ['Pokemon Center',   'Order Number: P0040756156',          'P0040756156'],
-    ['Pokemon Center',   'your order P0040889108 shipped',     'P0040889108'],
+    ['Target',           'Order #902000000000023 placed',      '902000000000023'],
+    ['Target',           'order 912000000000033 shipped',      '912000000000033'],
+    ['Pokemon Center',   'Order Number: P0099000004',          'P0099000004'],
+    ['Pokemon Center',   'your order P0099000005 shipped',     'P0099000005'],
     ['Mattel Creations', 'Order Number CHP10033780',           'CHP10033780'],
     ['Mattel Creations', 'order CHP9993463 confirmed',         'CHP9993463'],
     ["Sam's Club",       'Receipt TC9915585140381162319628',   'TC9915585140381162319628'],
@@ -104,7 +104,7 @@ console.log('\n── Order-number formats (from real history) ──');
     ['Bear Walker',      'Order #25293 is on its way',         '25293'],
     ['Bear Walker',      'Thanks! #24662 ships soon',          '24662'],
     ['Bear Walker',      'Order 25164 confirmed',              '25164'],
-    ['Amazon',           'Order 112-9988776-5544332',          '112-9988776-5544332'],
+    ['Amazon',           'Order 112-9988776-5500132',          '112-9988776-5500132'],
   ];
   for (const [retailer, text, expect] of cases) {
     eq(`${retailer}: "${text.slice(0, 34)}…"`, R.orderNumberFor(P(retailer), text), expect);
@@ -116,8 +116,8 @@ console.log('\n── Short order numbers must not match loose digit runs ──
   const bw = R.BUILT_IN.find(p => p.name === 'Bear Walker');
   // A bare 5-digit run is a zip code, a price or a date — not an order number.
   const noise = [
-    'Delivers to Brooklyn Park, MN 55445',
-    'Estimated taxes based on 55445',
+    'Delivers to Springfield, MN 55003',
+    'Estimated taxes based on 55003',
     'Your package weighs 12345 grams',
   ];
   for (const t of noise) {

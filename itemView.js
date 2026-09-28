@@ -26,8 +26,9 @@ const round2 = n => Math.round(n * 100) / 100;
  * @param {object[]} orders       bot_orders rows
  * @param {object[]} pricingRows  bot_sku_prices rows
  * @param {{products: Map, aliases: Map}} [catalog]  from skuCatalog.loadCatalog()
+ * @param {object[]} [salesRows]  bot_sales rows (partial sales, keyed by skuKey)
  */
-function computeItemGroups(orders, pricingRows, catalog) {
+function computeItemGroups(orders, pricingRows, catalog, salesRows) {
   const products = (catalog && catalog.products) || new Map();
   const aliases  = (catalog && catalog.aliases)  || new Map();
 
@@ -164,6 +165,15 @@ function computeItemGroups(orders, pricingRows, catalog) {
   const pricing = {};
   (pricingRows || []).forEach(r => { if (r && r.sku) pricing[itemKey(r.sku)] = r; });
 
+  // Sales, bucketed by the key they were recorded under.
+  const salesByKey = new Map();
+  for (const r of salesRows || []) {
+    if (!r || !r.sku_key) continue;
+    const k = itemKey(r.sku_key);
+    if (!salesByKey.has(k)) salesByKey.set(k, []);
+    salesByKey.get(k).push(r);
+  }
+
   return Object.values(groups).map(g => {
     const rawNames = [...g._rawNames.values()];
     const skuKey   = g.productId ? productSkuKey(g.productId) : rawNames[0];
@@ -186,17 +196,56 @@ function computeItemGroups(orders, pricingRows, catalog) {
           || String(a.order_number || '').localeCompare(String(b.order_number || ''));
     });
 
+    const perUnitTotal = round2(_sumTotal / qty + (Number(p.buyer_fee) || 0));
+
+    // ── Sales ────────────────────────────────────────────────────────────────
+    // Recorded under the product key, or under a store title before it was
+    // linked. Each sale is counted once even if several keys point at it.
+    const seenSale = new Set();
+    const sales = [skuKey, ...rawNames].flatMap(k => salesByKey.get(itemKey(k)) || [])
+      .filter(r => {
+        if (r.id == null) return true;
+        if (seenSale.has(r.id)) return false;
+        seenSale.add(r.id); return true;
+      })
+      .map(r => ({
+        id: r.id ?? null, qty: Number(r.qty) || 0, unit_price: Number(r.unit_price) || 0,
+        fees: Number(r.fees) || 0, channel: r.channel || null, sold_at: r.sold_at || null,
+      }))
+      .sort((a, b) => String(b.sold_at || '').localeCompare(String(a.sold_at || '')) || (b.id || 0) - (a.id || 0));
+    const soldQty    = sales.reduce((s, r) => s + r.qty, 0);
+    const soldGross  = sales.reduce((s, r) => s + r.qty * r.unit_price, 0);
+    const soldFees   = sales.reduce((s, r) => s + r.fees, 0);
+    const unitsLeft  = Math.max(0, g.qty - soldQty);
+    const asking     = Number(p.sale_price) || 0;
+
     return {
       ...rest,
       rawNames, skuKey,
+      sales,
+      soldQty,
+      soldGross:      round2(soldGross),
+      soldFees:       round2(soldFees),
+      avgSalePrice:   soldQty ? round2(soldGross / soldQty) : null,
+      // What the sold units actually made after their fees and their landed cost.
+      realizedProfit: soldQty ? round2(soldGross - soldFees - soldQty * perUnitTotal) : null,
+      unitsLeft,
+      // What the rest would make at the asking price (before any selling fees).
+      expectedProfitLeft: asking > 0 && unitsLeft > 0 ? round2(unitsLeft * (asking - perUnitTotal)) : null,
       orders:        _orderIds.size,
       orderLines,
       trackingCount: orderLines.filter(l => l.tracking).length,
       perUnitItem:   round2(_sumItem   / qty),
       perUnitTax:    round2(_sumTax    / qty),
       perUnitShip:   round2(_sumShip   / qty),
-      perUnitFinder: round2(_sumFinder / qty),
-      perUnitTotal:  round2(_sumTotal  / qty),
+      // The per-unit fee typed in the product row (stored as buyer_fee) is a
+      // real cost of each unit — it belongs IN landed cost. It used to be
+      // subtracted only when showing profit, so typing $8 changed nothing in
+      // the landed figure or its breakdown. It's folded into the Finder line,
+      // alongside any per-order finder fee spread across the units.
+      perUnitFinder: round2(_sumFinder / qty + (Number(p.buyer_fee) || 0)),
+      perUnitTotal,
+      perUnitFeeTyped: Number(p.buyer_fee) || 0,
       taxEstimated:  _taxEstUnits > 0,
       costUnknown:   _unknownCostUnits === g.qty,
       buyer_fee:     p.buyer_fee  || 0,

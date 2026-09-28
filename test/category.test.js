@@ -68,13 +68,13 @@ const targetConfirm = (num, item, price, qty = 2) => ({
   console.log('\n── Real scraper: Topps email whose links contain "tcg" ──');
   {
     const db = makeDb();
-    const e = targetConfirm('102003773075258', '2026 Topps MLB Bowman Chrome Trading Card Mega Box', '49.99');
+    const e = targetConfirm('102000000000012', '2026 Topps MLB Bowman Chrome Trading Card Mega Box', '49.99');
     const html = e.html;
     db.prepare('INSERT INTO raw_emails (message_id,subject,from_email,email_date,html,text) VALUES (?,?,?,?,?,?)')
       .run(['<topps>', e.subject, 'orders@oe1.target.com', '2026-09-23T07:20:27Z', html, e.text]);
     eq('links really contain "tcg" (the trap is armed)', /tcg/i.test(e.text), true);
     await quiet(() => reparseStoredEmails(db));
-    const row = db.prepare("SELECT category, retailer FROM bot_orders WHERE order_number='102003773075258'").get();
+    const row = db.prepare("SELECT category, retailer FROM bot_orders WHERE order_number='102000000000012'").get();
     eq('order created', !!row, true);
     eq('filed under Other, not Pokemon', row && row.category, 'Other');
     eq('retailer Target', row && row.retailer, 'Target');
@@ -83,24 +83,24 @@ const targetConfirm = (num, item, price, qty = 2) => ({
   console.log('\n── Real scraper: a genuine Pokémon order still lands in Pokemon ──');
   {
     const db = makeDb();
-    const e = targetConfirm('102003676904439', 'Pokémon Trading Card Game: 30th Celebration Tech Sticker Collection', '19.99');
+    const e = targetConfirm('102000000000011', 'Pokémon Trading Card Game: 30th Celebration Tech Sticker Collection', '19.99');
     db.prepare('INSERT INTO raw_emails (message_id,subject,from_email,email_date,html,text) VALUES (?,?,?,?,?,?)')
       .run(['<poke>', e.subject, 'orders@oe.target.com', '2026-09-16T10:00:00Z', e.html, e.text]);
     await quiet(() => reparseStoredEmails(db));
-    eq('Pokemon', db.prepare("SELECT category FROM bot_orders WHERE order_number='102003676904439'").get().category, 'Pokemon');
+    eq('Pokemon', db.prepare("SELECT category FROM bot_orders WHERE order_number='102000000000011'").get().category, 'Pokemon');
   }
 
   console.log('\n── Real scraper: a wrongly-filed order is corrected by its next email ──');
   {
     const db = makeDb();
     db.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items)
-                VALUES ('Pokemon','Target','102003773126600','Confirmed',?)`)
+                VALUES ('Pokemon','Target','102000000000013','Confirmed',?)`)
       .run([JSON.stringify(['2x 2026 Topps MLB Bowman Chrome Trading Card Mega Box @ $49.99'])]);
-    const e = targetConfirm('102003773126600', '2026 Topps MLB Bowman Chrome Trading Card Mega Box', '49.99');
+    const e = targetConfirm('102000000000013', '2026 Topps MLB Bowman Chrome Trading Card Mega Box', '49.99');
     db.prepare('INSERT INTO raw_emails (message_id,subject,from_email,email_date,html,text) VALUES (?,?,?,?,?,?)')
-      .run(['<t2>', 'Items from order #102003773126600 are about to ship.', 'orders@oe.target.com', '2026-09-25T19:07:56Z', e.html, e.text]);
+      .run(['<t2>', 'Items from order #102000000000013 are about to ship.', 'orders@oe.target.com', '2026-09-25T19:07:56Z', e.html, e.text]);
     await quiet(() => reparseStoredEmails(db));
-    eq('moved out of Pokemon', db.prepare("SELECT category FROM bot_orders WHERE order_number='102003773126600'").get().category, 'Other');
+    eq('moved out of Pokemon', db.prepare("SELECT category FROM bot_orders WHERE order_number='102000000000013'").get().category, 'Other');
   }
 
   console.log('\n── Startup repair of existing rows ──');
