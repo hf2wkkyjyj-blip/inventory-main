@@ -1144,6 +1144,46 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
   res.json(computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db), salesRows));
 });
 
+// ── Money totals for the dashboard cards ────────────────────────────────────
+// Per order: finder fee paid (box/order fee + typed per-unit fee × its units).
+// Per sale: revenue, fees, landed cost of the units sold, profit. The page sums
+// whichever fall inside the WHEN range. Cancelled/refunded orders are left out
+// (no inventory, no fee).
+app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
+  const orders = db.prepare("SELECT * FROM bot_orders WHERE status NOT IN ('Cancelled','Refunded')").all();
+  let pricingRows = [], salesRows = [];
+  try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch (_) {}
+  try { salesRows = db.prepare('SELECT * FROM bot_sales').all(); } catch (_) {}
+  const groups = computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db), salesRows);
+  const r2 = n => Math.round(n * 100) / 100;
+
+  const unitFees = new Map();
+  for (const g of groups) {
+    if (!g.perUnitFeeTyped) continue;
+    for (const l of g.orderLines) {
+      if (l.id == null) continue;
+      unitFees.set(l.id, (unitFees.get(l.id) || 0) + l.qty * g.perUnitFeeTyped);
+    }
+  }
+  const orderFees = orders
+    .map(o => ({ id: o.id, fee: r2((Number(o.finder_fee) || 0) + (unitFees.get(o.id) || 0)) }))
+    .filter(x => x.fee > 0);
+
+  const seen = new Set();
+  const sales = [];
+  for (const g of groups) {
+    for (const s of g.sales) {
+      if (s.id != null && seen.has(s.id)) continue;
+      if (s.id != null) seen.add(s.id);
+      const revenue = s.qty * s.unit_price;
+      const cost    = s.qty * g.perUnitTotal;
+      sales.push({ id: s.id, product: g.name, sold_at: s.sold_at, qty: s.qty,
+                   revenue: r2(revenue), fees: r2(s.fees), cost: r2(cost), profit: r2(revenue - s.fees - cost) });
+    }
+  }
+  res.json({ orderFees, sales });
+});
+
 // ── Product catalog (see skuCatalog.js) ─────────────────────────────────────
 // Links store titles to short product names. Editing here never rewrites order
 // data — the item view regroups from these links on its next load.

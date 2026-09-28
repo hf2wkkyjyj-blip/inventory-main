@@ -236,6 +236,8 @@ const isVisible = el => {
   return el.classList.contains('open') && cs.opacity === '1' && cs.pointerEvents !== 'none' && cs.display !== 'none';
 };
 const editBtn  = tr => tr.querySelector('button[title="Edit item"]');
+// Dollar figure on a stat card, e.g. "+$1,234.50" → 1234.5
+const cardMoney = id => { const t = d.getElementById(id).textContent.replace(/[,$+\s]/g, '').replace('−', '-'); return parseFloat(t) || 0; };
 // All tab → "Order list" switch, by real clicks (All shows products by default).
 async function openOrderList() {
   if (!d.querySelector('.btab')) { await w.loadBotOrders(); await tick(40); }   // tabs are built by the page's own load
@@ -570,7 +572,9 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('landed before fee is $32.55', /\$32\.55/.test(cell(2).textContent), cell(2).textContent.trim());
 
     const fee = cell(3).querySelector('input');
-    fee.value = '8'; fee.dispatchEvent(new w.Event('change')); await tick(60);
+    const feesBefore = cardMoney('bs-fees');
+    fee.value = '8'; fee.dispatchEvent(new w.Event('change')); await tick(100);
+    check('FINDER FEES card +$32 (4 units × $8)', Math.round((cardMoney('bs-fees') - feesBefore) * 100) / 100 === 32, `${feesBefore} → ${cardMoney('bs-fees')}`);
     check('landed now $40.55 (+$8)',     /\$40\.55/.test(cell(2).textContent), cell(2).textContent.trim());
     const saved = DB.prepare("SELECT buyer_fee FROM bot_sku_prices WHERE sku LIKE '#p%' AND buyer_fee>0").get();
     check('fee saved',                   saved && saved.buyer_fee === 8);
@@ -610,6 +614,20 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     bsSave.click(); await tick(120);
     check('sale 1 stored',                    DB.prepare('SELECT COUNT(*) n FROM bot_sales').get().n === 1);
     check('SOLD 2/4 on the row',              cell(5).textContent.trim() === '2/4', cell(5).textContent.trim());
+    await tick(80);
+    check('SALES PROFIT card +$18.90',        cardMoney('bs-profit') === 18.9, d.getElementById('bs-profit').textContent);
+
+    // WHEN filter: sold today counts under Today; move the sale to an old date → gone.
+    const rangeBtn = t => [...d.querySelectorAll('.drange')].find(b => b.textContent.trim() === t);
+    rangeBtn('Today').click(); await tick(60);
+    check('Today: sale counted',              cardMoney('bs-profit') === 18.9, d.getElementById('bs-profit').textContent);
+    DB.prepare("UPDATE bot_sales SET sold_at='2025-01-01'").run();
+    await w.botLoadMoney(); await tick(40);
+    check('Today: old sale not counted',      cardMoney('bs-profit') === 0 && /no sales yet/.test(d.getElementById('bs-profit-sub').textContent), d.getElementById('bs-profit').textContent);
+    rangeBtn('All time').click(); await tick(60);
+    check('All time: counted again',          cardMoney('bs-profit') === 18.9);
+    DB.prepare('UPDATE bot_sales SET sold_at=?').run([w.botLocalToday()]);
+    await w.botLoadMoney(); await tick(40);
     check('dialog stays open for the next',   isVisible(ov));
     check('history lists it',                 d.querySelectorAll('#bs-history .bs-sale').length === 1);
 
@@ -621,6 +639,11 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('SOLD 3/4',                         cell(5).textContent.trim() === '3/4', cell(5).textContent.trim());
     // 2×50 + 55 − 4 − 3 × 40.55
     check('realized profit +$29.35 shown',    /\+\$29\.35 made/.test(cell(6).textContent), cell(6).textContent.replace(/\s+/g, ' ').trim());
+    check('ROI next to it: 24%',              /29\.35 made · 24% ROI/.test(cell(6).textContent.replace(/\s+/g, ' ')), cell(6).textContent.replace(/\s+/g, ' ').trim());
+    check('ROI at asking price: 23%',         /\+\$9\.45\/u\s*23%/.test(cell(6).textContent.replace(/\s+/g, ' ')), cell(6).textContent.replace(/\s+/g, ' ').trim());
+    await tick(80);
+    check('card: +$29.35 profit',             cardMoney('bs-profit') === 29.35, d.getElementById('bs-profit').textContent);
+    check('card: 3 sold · $155.00 in · ROI 24%', /3 sold · \$155\.00 in · ROI 24%/.test(d.getElementById('bs-profit-sub').textContent), d.getElementById('bs-profit-sub').textContent);
     check('history lists both',               d.querySelectorAll('#bs-history .bs-sale').length === 2);
 
     set('bs-qty', '5');
@@ -630,6 +653,8 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     d.querySelector('#bs-history .bs-sale .bs-del').click(); await tick(120);
     check('deleted from the database',        DB.prepare('SELECT COUNT(*) n FROM bot_sales').get().n === 1);
     check('SOLD back to 2/4',                 cell(5).textContent.trim() === '2/4', cell(5).textContent.trim());
+    await tick(80);
+    check('card back to +$18.90 after delete', cardMoney('bs-profit') === 18.9, d.getElementById('bs-profit').textContent);
 
     w.closeBotSale(); await tick();
     check('dialog closes',                    !isVisible(ov));
@@ -709,7 +734,9 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const ff = n => DB.prepare('SELECT finder_fee FROM bot_orders WHERE order_number=?').get([n]).finder_fee;
     check('preview saved nothing',             !ff('F01') && !ff('F02'));
 
+    const feesBefore = cardMoney('bs-fees');
     d.getElementById('bf-save').click(); await tick(150);
+    check('FINDER FEES card +$100',            Math.round((cardMoney('bs-fees') - feesBefore) * 100) / 100 === 100, `${feesBefore} → ${cardMoney('bs-fees')}`);
     check('saved per order',                   ff('F01') === 53.85 && ff('F02') === 46.15, `${ff('F01')} / ${ff('F02')}`);
     check('dialog closed',                     !isVisible(ov));
     check('box now shows $100.00',             /\$100\.00/.test(feeBtn().textContent), feeBtn().textContent.trim());
@@ -717,6 +744,9 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     [...d.querySelectorAll('#bot-view-switch button')].find(b => /By product/.test(b.textContent)).click(); await tick(80);
     const deck = rowNamed(/Test Deck Box/);
     check('Deck Box landed = $60 + $23.08',    deck && /\$83\.08/.test(deck.querySelectorAll(':scope > td')[2].textContent), deck && deck.querySelectorAll(':scope > td')[2].textContent.trim());
+    const feeCell = deck && deck.querySelectorAll(':scope > td')[3];
+    check('FEE / UNIT shows the box share $23.08', feeCell && /\$23\.08/.test(feeCell.querySelector('.fee-total').textContent) && /box \$23\.08/.test(feeCell.textContent), feeCell && feeCell.textContent.replace(/\s+/g, ' ').trim());
+    check('input left for an extra fee',       feeCell && feeCell.querySelector('input').value === '' && feeCell.querySelector('input').placeholder === '+ extra');
 
     // Change it back to nothing.
     [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(80);
@@ -724,6 +754,8 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('dialog prefilled with $100',        d.getElementById('bf-fee').value === '100');
     d.getElementById('bf-fee').value = ''; d.getElementById('bf-save').click(); await tick(150);
     check('clearing sets both orders to 0',    ff('F01') === 0 && ff('F02') === 0);
+    await tick(60);
+    check('FINDER FEES card back down',        Math.round((cardMoney('bs-fees') - feesBefore) * 100) / 100 === 0, `${feesBefore} → ${cardMoney('bs-fees')}`);
     check('box back to "+ Fee"',               /\+ Fee/.test(feeBtn().textContent));
 
     // A filter can hide part of a box; the fee must still cover the whole box.

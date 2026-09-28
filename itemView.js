@@ -229,6 +229,9 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows) {
       avgSalePrice:   soldQty ? round2(soldGross / soldQty) : null,
       // What the sold units actually made after their fees and their landed cost.
       realizedProfit: soldQty ? round2(soldGross - soldFees - soldQty * perUnitTotal) : null,
+      // Return on what the sold units cost you (landed), e.g. 0.4 = 40%.
+      realizedROI: soldQty && perUnitTotal > 0
+        ? Math.round((soldGross - soldFees - soldQty * perUnitTotal) / (soldQty * perUnitTotal) * 10000) / 10000 : null,
       unitsLeft,
       // What the rest would make at the asking price (before any selling fees).
       expectedProfitLeft: asking > 0 && unitsLeft > 0 ? round2(unitsLeft * (asking - perUnitTotal)) : null,
@@ -246,6 +249,8 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows) {
       perUnitFinder: round2(_sumFinder / qty + (Number(p.buyer_fee) || 0)),
       perUnitTotal,
       perUnitFeeTyped: Number(p.buyer_fee) || 0,
+      // The part of the finder fee that came from order/box fees (not typed per unit).
+      perUnitBoxFee: round2(_sumFinder / qty),
       taxEstimated:  _taxEstUnits > 0,
       costUnknown:   _unknownCostUnits === g.qty,
       buyer_fee:     p.buyer_fee  || 0,

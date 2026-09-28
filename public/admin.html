@@ -415,6 +415,9 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   .bot-stat{border:1px solid var(--border);border-radius:10px;padding:14px 16px;background:var(--surface);}
   .bot-stat .lbl{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.04em;margin-bottom:10px;color:var(--muted);}
   .bot-stat .val{font-size:24px;font-weight:700;}
+  .bot-stat .sub{font-size:10px;color:var(--muted);margin-top:4px;line-height:1.35;}
+  .bot-stat.s-amber{border-color:#7a5a12;} .bot-stat.s-amber .lbl,.bot-stat.s-amber .val{color:#fbbf24;}
+  .bot-stat.s-profit{border-color:#1c5a3f;} .bot-stat.s-profit .lbl{color:#4ade80;}
   .bot-stat.s-green{border-color:#1c5a3f;} .bot-stat.s-green .lbl{color:#34d399;} .bot-stat.s-green .val{color:#34d399;}
   .bot-stat.s-purple{border-color:#4c3f8c;} .bot-stat.s-purple .lbl{color:#a78bfa;} .bot-stat.s-purple .val{color:#a78bfa;}
   .bot-stat.s-amber{border-color:#8a6a10;} .bot-stat.s-amber .lbl{color:#fbbf24;} .bot-stat.s-amber .val{color:#fbbf24;}
@@ -459,7 +462,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 </style>
 
   <!-- Stats Row -->
-  <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:10px;margin-bottom:20px;" id="bot-stats-row">
+  <div style="display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:10px;margin-bottom:20px;" id="bot-stats-row">
     <div class="bot-stat"><div class="lbl">TOTAL</div><div class="val" id="bs-total">0</div></div>
     <div class="bot-stat s-green clickable" onclick="botFilterStatus('Confirmed')" id="bsc-Confirmed"><div class="lbl">CONFIRMED</div><div class="val" id="bs-confirmed">0</div></div>
     <div class="bot-stat s-purple clickable" onclick="botFilterStatus('Shipped')" id="bsc-Shipped"><div class="lbl">SHIPPED</div><div class="val" id="bs-shipped">0</div></div>
@@ -468,6 +471,12 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="bot-stat s-red clickable" onclick="botFilterStatus('Cancelled')" id="bsc-Cancelled"><div class="lbl">CANCELLED</div><div class="val" id="bs-cancelled">0</div></div>
     <div class="bot-stat s-pink clickable" onclick="botFilterStatus('Refunded')" id="bsc-Refunded"><div class="lbl">REFUNDED</div><div class="val" id="bs-refunded">0</div></div>
     <div class="bot-stat s-green"><div class="lbl">SPENT</div><div class="val" style="font-size:18px;" id="bs-spent">$0</div></div>
+    <div class="bot-stat s-amber" id="bsc-fees" data-tip="Finder fees paid: box/order fees + per-unit fees × units. Cancelled and refunded orders not counted.">
+      <div class="lbl">FINDER FEES</div><div class="val" style="font-size:18px;" id="bs-fees">$0</div>
+      <div class="sub" id="bs-fees-sub"></div></div>
+    <div class="bot-stat s-profit" id="bsc-profit" data-tip="From recorded sales: money in − selling fees − landed cost of the units sold. ROI = profit ÷ that landed cost.">
+      <div class="lbl">SALES PROFIT</div><div class="val" style="font-size:18px;" id="bs-profit">$0</div>
+      <div class="sub" id="bs-profit-sub"></div></div>
   </div>
 
   <!-- Date range. Applies to the date an order entered its CURRENT status, so
@@ -2001,8 +2010,42 @@ async function deletePayment(payId, memberId) {
 let _botOrders = [], _botPage = 0, _botPageSize = 25, _botSortKey = '__date', _botSortDir = -1, _botStatusFilter = '';
 const BOT_STATUSES = ['Confirmed','Shipped','Unship','Delivered','Cancelled','Refunded'];
 
+// ── FINDER FEES / SALES PROFIT cards ────────────────────────────────────────
+// The server works out each order's fee and each sale's profit (it knows the
+// landed costs); the cards sum the ones inside the WHEN range — fees by the same
+// orders SPENT counts, sales by the day they sold.
+let _botMoney = { orderFees: [], sales: [] };
+const botMoneyFmt = n => (n < 0 ? '−' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+async function botLoadMoney() {
+  const r = await api('GET', '/admin/bot-money');
+  if (r) { _botMoney = r; botRenderMoneyCards(); }
+}
+
+function botRenderMoneyCards(ordersInRange) {
+  const feesEl = document.getElementById('bs-fees');
+  if (!feesEl) return;
+  const inRange = new Set((ordersInRange || _botOrders.filter(r => botInRange(r, _botRange))).map(o => o.id));
+  const fees = (_botMoney.orderFees || []).filter(f => inRange.has(f.id));
+  const feeTotal = fees.reduce((s, f) => s + f.fee, 0);
+  feesEl.textContent = botMoneyFmt(feeTotal);
+  document.getElementById('bs-fees-sub').textContent = fees.length ? `${fees.length} order${fees.length === 1 ? '' : 's'}` : '';
+
+  const sales   = (_botMoney.sales || []).filter(s => botDateInRange(s.sold_at, _botRange));
+  const profit  = sales.reduce((s, x) => s + x.profit, 0);
+  const revenue = sales.reduce((s, x) => s + x.revenue, 0);
+  const cost    = sales.reduce((s, x) => s + x.cost, 0);
+  const units   = sales.reduce((s, x) => s + x.qty, 0);
+  const pEl = document.getElementById('bs-profit');
+  pEl.textContent = sales.length ? (profit >= 0 ? '+' : '') + botMoneyFmt(profit) : '$0.00';
+  pEl.style.color = !sales.length ? 'var(--muted)' : profit >= 0 ? '#4ade80' : '#f87171';
+  document.getElementById('bs-profit-sub').textContent = sales.length
+    ? `${units} sold · ${botMoneyFmt(revenue)} in${cost > 0 ? ` · ROI ${Math.round(profit / cost * 100)}%` : ''}`
+    : 'no sales yet';
+}
+
 async function loadBotOrders() {
-  const orders = await api('GET', '/admin/bot-orders');
+  const [orders] = await Promise.all([api('GET', '/admin/bot-orders'), botLoadMoney()]);
   if (!orders) return;
   _botOrders = orders;
   _botPage = 0;
@@ -2064,6 +2107,7 @@ function buildBotStats() {
   document.getElementById('bs-cancelled').textContent = counts['Cancelled'];
   document.getElementById('bs-refunded').textContent = counts['Refunded'];
   document.getElementById('bs-spent').textContent = '$' + spent.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  botRenderMoneyCards(o);
   BOT_STATUSES.forEach(s => {
     const el = document.getElementById('bsc-'+s);
     if (el) el.classList.toggle('active-filter', _botStatusFilter === s);
@@ -2295,9 +2339,10 @@ function botParseDate(raw) {
   return new Date(raw);
 }
 
-function botInRange(o, range) {
+function botInRange(o, range) { return botDateInRange(botStatusDate(o), range); }
+
+function botDateInRange(raw, range) {
   if (!range || range === 'all') return true;
-  const raw = botStatusDate(o);
   if (!raw) return false;
   const d = botParseDate(raw);
   if (isNaN(d)) return false;
@@ -2776,6 +2821,7 @@ async function saveBoxFee() {
     // One-order box with a fee: offer the same fee to the rest of the drop.
     if (fee > 0 && _bfPkg.orderIds.length === 1 && await boxFeeOfferSimilar(_bfPkg.orderIds[0], fee)) return;
     closeBoxFee();
+    botLoadMoney();
     await loadBotItemView(botCurCat());
   } finally { btn.disabled = false; }
 }
@@ -2831,6 +2877,7 @@ async function applyBoxFeeSimilar() {
   const r = await api('POST', '/admin/bot-orders/bulk-fee', { orderIds: ids, fee: _bfSimFee });
   if (!r) { b.disabled = false; alert('Could not apply the fee.'); return; }
   closeBoxFee();
+  botLoadMoney();
   await loadBotItemView(botCurCat());
 }
 
@@ -3106,7 +3153,9 @@ function renderBotItemView() {
     const salePrice= item.sale_price  || 0;
     // The per-unit fee is already inside landed cost — don't subtract it twice.
     const profit   = salePrice > 0 ? salePrice - landed : null;
-    const profitStr= profit != null ? (profit >= 0 ? '+' : '−') + '$' + Math.abs(profit).toFixed(2) + '<span style="font-weight:400;font-size:10px;opacity:.7;">/u</span>' : '—';
+    const roiAsk   = profit != null && landed > 0 ? Math.round(profit / landed * 100) : null;
+    const profitStr= profit != null ? (profit >= 0 ? '+' : '−') + '$' + Math.abs(profit).toFixed(2) + '<span style="font-weight:400;font-size:10px;opacity:.7;">/u</span>'
+                   + (roiAsk != null ? `<span class="roi" style="font-weight:600;font-size:10px;margin-left:4px;opacity:.85;" data-tip="ROI at the asking price: profit ÷ landed cost">${roiAsk}%</span>` : '') : '—';
     const profitCol= profit == null ? 'color:var(--muted)' : profit >= 0 ? 'color:#4ade80;font-weight:700' : 'color:#f87171;font-weight:700';
 
     // Recorded sales: SOLD x/y, plus what the sold units actually made.
@@ -3116,7 +3165,7 @@ function renderBotItemView() {
       : 'Nothing sold yet — click to record a sale';
     const rp = item.realizedProfit;
     const realizedHtml = soldQty && rp != null
-      ? `<div data-tip="Actual: sales − their fees − landed cost of the ${soldQty} sold" style="font-size:10px;font-weight:600;margin-top:2px;color:${rp >= 0 ? '#4ade80' : '#f87171'};">${rp >= 0 ? '+' : '−'}$${Math.abs(rp).toFixed(2)} made</div>`
+      ? `<div data-tip="Actual: sales − their fees − landed cost of the ${soldQty} sold. ROI = that ÷ their landed cost." style="font-size:10px;font-weight:600;margin-top:2px;color:${rp >= 0 ? '#4ade80' : '#f87171'};">${rp >= 0 ? '+' : '−'}$${Math.abs(rp).toFixed(2)} made${item.realizedROI != null ? ` <span class="roi">· ${Math.round(item.realizedROI * 100)}% ROI</span>` : ''}</div>`
       : '';
 
     const tip = `Item: $${(item.perUnitItem||0).toFixed(2)} + Tax: $${(item.perUnitTax||0).toFixed(2)} + Ship: $${(item.perUnitShip||0).toFixed(2)} + Finder: $${(item.perUnitFinder||0).toFixed(2)} = $${landed.toFixed(2)}/unit`;
@@ -3129,6 +3178,13 @@ function renderBotItemView() {
     const addrTip = addrs.join('\n');
     const addrLabel = addrs.length === 0 ? '—' : addrs.length === 1 ? addrs[0].split(',')[0] : addrs.length + ' addresses';
 
+    // Fee per unit = share of box/order fees + any extra typed per unit. The
+    // input only holds the extra, so show the full figure above it.
+    const boxFee = item.perUnitBoxFee || 0;
+    const feeTotalHtml = boxFee > 0
+      ? `<div class="fee-total" style="font-size:12px;font-weight:700;color:#fbbf24;font-variant-numeric:tabular-nums;">$${(item.perUnitFinder || 0).toFixed(2)}</div>
+         <div style="font-size:9px;color:var(--muted);margin-bottom:2px;">box $${boxFee.toFixed(2)}${buyerFee ? ` + $${Number(buyerFee).toFixed(2)}` : ''}</div>`
+      : '';
     const inStyle = 'width:68px;text-align:right;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 5px;color:var(--text);font-size:11px;font-variant-numeric:tabular-nums;';
 
     // Which store(s) this product came from — without it there was no way to
@@ -3170,8 +3226,9 @@ function renderBotItemView() {
         ${landedHtml}
       </td>
       <td style="padding:8px;text-align:right;">
-        <input type="number" step="0.01" value="${buyerFee||''}" placeholder="0.00" style="${inStyle}"
-          onchange="saveBotSkuField(${idx},'buyer_fee',this)">
+        ${feeTotalHtml}
+        <input type="number" step="0.01" value="${buyerFee||''}" placeholder="${boxFee > 0 ? '+ extra' : '0.00'}" style="${inStyle}"
+          onchange="saveBotSkuField(${idx},'buyer_fee',this)" data-tip="${boxFee > 0 ? 'Extra fee per unit, on top of the box fee' : 'Fee per unit'}">
       </td>
       <td style="padding:8px;text-align:right;">
         <input type="number" step="0.01" value="${salePrice||''}" placeholder="0.00" style="${inStyle}"
@@ -3250,6 +3307,7 @@ async function saveBotSkuField(idx, field, inputEl) {
   }
   // skuKey is "#p<id>" for a linked product, so prices survive renaming it.
   await api('PATCH', '/admin/bot-items/sku', { sku: item.skuKey || item.name, buyer_fee: item.buyer_fee||0, sale_price: item.sale_price||0 });
+  if (field === 'buyer_fee') botLoadMoney();
   renderBotItemView();
 }
 
@@ -3314,6 +3372,7 @@ function renderBotSaleHistory() {
 // After a change, reload the item view and re-point the dialog at the fresh row.
 async function botSaleRefresh() {
   const key = _bsItem && _bsItem.skuKey;
+  botLoadMoney();
   if (botItemViewActive()) await loadBotItemView(botCurCat());
   const fresh = (_botItems || []).find(i => i.skuKey === key);
   if (fresh && _bsItem) {

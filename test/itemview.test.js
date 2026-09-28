@@ -132,6 +132,7 @@ console.log('\n── Per-unit finder fee is part of landed cost ──');
   eq('landed rises by exactly $8',  g.perUnitTotal, 40.55);
   eq('finder line shows the $8',    g.perUnitFinder, 8);
   eq('other lines unchanged',       [g.perUnitItem, g.perUnitTax, g.perUnitShip].join(), [base.perUnitItem, base.perUnitTax, base.perUnitShip].join());
+  eq('box share 0 when only a typed fee', g.perUnitBoxFee, 0);
   eq('breakdown still adds up',     Math.round((g.perUnitItem + g.perUnitTax + g.perUnitShip + g.perUnitFinder) * 100) / 100, g.perUnitTotal);
 }
 
@@ -163,6 +164,8 @@ console.log('\n── Sales recorded in parts ──');
   eq('3 left',                       g.unitsLeft, 3);
   eq('expected on the 3 left',       g.expectedProfitLeft, 28.35);
   eq('history newest first',         g.sales.map(x => x.id).join(), '2,1');
+  eq('realized ROI = 29.35 / 121.65', g.realizedROI, 0.2413);
+  eq('no ROI before any sale',        none.realizedROI, null);
 
   // Deleting a sale = it's just gone from the rows.
   const [after] = computeItemGroups(orders, pricing, undefined, sales.slice(0, 1));
@@ -186,6 +189,18 @@ console.log('\n── Sales recorded in parts ──');
   const [over] = computeItemGroups(orders, pricing, undefined, [{ id: 20, sku_key: TITLE, qty: 9, unit_price: 50 }]);
   eq('units left floors at 0',       over.unitsLeft, 0);
   eq('no expected profit when none left', over.expectedProfitLeft, null);
+}
+
+console.log('\n── Box/order fee share is reported separately ──');
+{
+  const orders = [{ id: 1, retailer: 'Test', status: 'Delivered', order_total: 125, finder_fee: 75,
+                    items: '["12x Test Knock Out @ $9.99"]' }];
+  const [g]  = computeItemGroups(orders, []);
+  eq('box share per unit',          g.perUnitBoxFee, 6.25);
+  eq('finder line = box share',     g.perUnitFinder, 6.25);
+  const [g2] = computeItemGroups(orders, [{ sku: 'Test Knock Out', buyer_fee: 1 }]);
+  eq('box share unchanged by extra', g2.perUnitBoxFee, 6.25);
+  eq('finder line = box + extra',    g2.perUnitFinder, 7.25);
 }
 
 console.log(`\n${'─'.repeat(60)}`);
