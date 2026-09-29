@@ -209,12 +209,14 @@ const dom = new JSDOM(html, {
     w.localStorage.setItem('inv_admin_token', 't');
     w.localStorage.setItem('inv_admin_role', 'admin');
     w.fetch   = fakeFetch;
-    w.confirm = () => true;
+    w.confirm = m => { confirms.push(String(m)); return confirmAnswer; };
     Object.defineProperty(w.navigator, 'clipboard', { value: { writeText: async t => { copied.push(t); } }, configurable: true });
     w.alert   = m => { alerts.push(String(m)); };
   },
 });
 const alerts = [];
+const confirms = [];
+let confirmAnswer = true;
 const copied = [];
 const w = dom.window, d = w.document;
 const tick = (n = 25) => new Promise(r => realSetTimeout(r, n));
@@ -828,6 +830,100 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     statusSel.value = 'Delivered'; statusSel.dispatchEvent(new w.Event('change')); await tick(80);
     check('listed under Delivered',               !!rowNamed(/Test Stuck Pack/));
     statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
+  }
+
+  console.log('\n── Backup → data check round trip ──');
+  {
+    const r = await fakeFetch('/api/admin/backup', { method: 'GET' });
+    const buf = await r.json();                       // fake res captures what res.send() got
+    check('backup returns a file',             r.status === 200 && Buffer.isBuffer(buf) && buf.length > 1000, r.status);
+    check('it is an SQLite database',          Buffer.isBuffer(buf) && buf.slice(0, 15).toString() === 'SQLite format 3');
+    const f = path.join(require('os').tmpdir(), `ui-backup-${process.pid}.db`);
+    fs.writeFileSync(f, buf);
+    const { checkData, openDb } = require(path.join(__dirname, '..', 'tools', 'check-data.js'));
+    const res = checkData(openDb(f));
+    check('check reads every order',           res.summary.orders === DB.prepare('SELECT COUNT(*) n FROM bot_orders').get().n, res.summary.orders);
+    check('check counts every sale',           res.summary.sales === DB.prepare('SELECT COUNT(*) n FROM bot_sales').get().n);
+    const money = await (await fakeFetch('/api/admin/bot-money', { method: 'GET' })).json();
+    const cardFees = Math.round(money.orderFees.reduce((a, x) => a + x.fee, 0) * 100) / 100;
+    check('fee total = FINDER FEES card (all time)', res.summary.finderFees === cardFees, `${res.summary.finderFees} vs ${cardFees}`);
+    const cardProfit = Math.round(money.sales.reduce((a, x) => a + x.profit, 0) * 100) / 100;
+    check('profit = SALES PROFIT card (all time)',   res.summary.salesProfit === cardProfit, `${res.summary.salesProfit} vs ${cardProfit}`);
+    check('Backup button on the page',         !!d.getElementById('bot-backup-btn'));
+    fs.rmSync(f, { force: true });
+  }
+
+  console.log('\n── Guard: the same fee can\'t silently be entered twice ──');
+  {
+    const statusSel = d.getElementById('bot-filter-status');
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
+    [...d.querySelectorAll('.btab')].find(b => /^Mattel/.test(b.textContent.trim())).click(); await tick(80);
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By product/.test(b.textContent)).click(); await tick(80);
+    const drop = () => rowNamed(/Test Drop Car/);
+    const feeIn = () => drop().querySelectorAll(':scope > td')[3].querySelector('input');
+    const typed = () => { const r = DB.prepare("SELECT buyer_fee FROM bot_sku_prices WHERE sku IN (SELECT '#p'||product_id FROM sku_aliases WHERE raw_name LIKE '%Test Drop Car%') OR sku LIKE '%Test Drop Car%'").all(); return r.reduce((a, x) => a + (x.buyer_fee || 0), 0); };
+    const boxShare = (drop().querySelectorAll(':scope > td')[3].textContent.match(/box \$([\d.]+)/) || [])[1];
+    check('drop product shows its order-fee share', !!boxShare && +boxShare > 0, drop().querySelectorAll(':scope > td')[3].textContent.replace(/\s+/g, ' ').trim());
+    const landedBefore = drop().querySelectorAll(':scope > td')[2].textContent.trim();
+
+    // Typing the same fee again → asked; Cancel → nothing saved.
+    let n = confirms.length; confirmAnswer = false;
+    feeIn().value = boxShare; feeIn().dispatchEvent(new w.Event('change')); await tick(100);
+    check('asked before adding on top',        confirms.length === n + 1 && confirms[n].includes(`already has a fee from its orders: $${boxShare} per unit`), confirms[n]);
+    check('says what the total would be',      (confirms[n] || '').includes(`Total would be $${(2 * boxShare).toFixed(2)} per unit`), confirms[n]);
+    check('Cancel → not saved',                typed() === 0, typed());
+    check('Cancel → input cleared again',      feeIn().value === '');
+    check('landed unchanged',                  drop().querySelectorAll(':scope > td')[2].textContent.trim() === landedBefore, drop().querySelectorAll(':scope > td')[2].textContent.trim());
+
+    // A genuinely separate fee → OK → saved.
+    n = confirms.length; confirmAnswer = true;
+    feeIn().value = '3'; feeIn().dispatchEvent(new w.Event('change')); await tick(100);
+    check('OK → saved as extra',               typed() === 3 && confirms.length === n + 1, typed());
+
+    // Product with no order fee: no question asked.
+    const hw = rowNamed(/Hot Wheels Test Car Set/);
+    n = confirms.length;
+    const hwIn = hw.querySelectorAll(':scope > td')[3].querySelector('input');
+    hwIn.value = '1'; hwIn.dispatchEvent(new w.Event('change')); await tick(100);
+    check('no order fee → no question',        confirms.length === n);
+    hwIn.value = ''; hwIn.dispatchEvent(new w.Event('change')); await tick(100);
+
+    // Product editor dialog has the same guard.
+    editBtn(drop()).click(); await tick(60);
+    d.getElementById('bie-buyer-fee').value = '9';
+    n = confirms.length; confirmAnswer = false;
+    [...overlay().querySelectorAll('button')].find(b => /Save/.test(b.textContent)).click(); await tick(100);
+    check('editor asks too; Cancel keeps $3',  confirms.length === n + 1 && typed() === 3 && isVisible(overlay()), typed());
+    w.closeBotItemEdit(); await tick();
+    confirmAnswer = true;
+
+    // Other direction: box fee on an order whose product has a typed per-unit fee.
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(80);
+    const pkg = num => [...d.querySelectorAll('#bot-pkg-tbody > tr')].find(r => new RegExp(num).test(r.textContent));
+    pkg('D05').querySelector('button.bot-pkg-fee').click(); await tick();
+    const bf = d.getElementById('bf-fee');
+    bf.value = '20'; bf.dispatchEvent(new w.Event('input')); await tick(350);
+    const warn = d.getElementById('bf-double');
+    check('box dialog warns about the typed fee', warn.style.display !== 'none' && /Test Drop Car/.test(warn.textContent) && /\$3\.00\/unit/.test(warn.textContent), warn.textContent.trim());
+    const ffee = num => DB.prepare('SELECT finder_fee FROM bot_orders WHERE order_number=?').get([num]).finder_fee;
+    n = confirms.length; confirmAnswer = false;
+    d.getElementById('bf-save').click(); await tick(150);
+    check('Cancel → box fee not saved',        confirms.length === n + 1 && ffee('D05') === 0, ffee('D05'));
+    confirmAnswer = true;
+    d.getElementById('bf-save').click(); await tick(200);
+    check('OK → box fee saved',                ffee('D05') === 20, ffee('D05'));
+    if (isVisible(d.getElementById('bot-fee-overlay'))) { w.closeBoxFee(); await tick(); }
+
+    // D06 is another store but the SAME product (same typed fee) → warned too.
+    pkg('D06').querySelector('button.bot-pkg-fee').click(); await tick();
+    bf.value = '5'; bf.dispatchEvent(new w.Event('input')); await tick(350);
+    check('same product in another store: warned', d.getElementById('bf-double').style.display !== 'none');
+    w.closeBoxFee(); await tick();
+    // A box whose products have no typed fee: no warning.
+    pkg('M01').querySelector('button.bot-pkg-fee').click(); await tick();
+    bf.value = '5'; bf.dispatchEvent(new w.Event('input')); await tick(350);
+    check('no typed fee in the box → no warning', d.getElementById('bf-double').style.display === 'none');
+    w.closeBoxFee(); await tick();
   }
 
   console.log('\n── Orders table tracking links use the right carrier too ──');

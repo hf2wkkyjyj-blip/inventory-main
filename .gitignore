@@ -1,3 +1,5 @@
 /node_modules
 *.db
 .DS_Store
+# Database backups hold customer names/addresses — never commit
+backups/

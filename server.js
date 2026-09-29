@@ -1047,7 +1047,14 @@ app.post('/api/admin/bot-packages/fee', auth, adminOnly, (req, res) => {
   const orders = [...byId.values()].sort((a, b) => a.id - b.id);
   if (!orders.length) return res.status(404).json({ error: 'No such orders' });
 
-  const split = splitBoxFee(orders, amount, SkuCatalog.loadCatalog(db));
+  const catalog = SkuCatalog.loadCatalog(db);
+  const split = splitBoxFee(orders, amount, catalog);
+  // Products in this box that already carry a typed per-unit fee — a box fee
+  // on top would count the same fee twice if they're one and the same.
+  let pricingRows = [];
+  try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch (_) {}
+  split.unitFeeProducts = computeItemGroups(orders, pricingRows, catalog)
+    .filter(g => g.perUnitFeeTyped > 0).map(g => ({ name: g.name, perUnit: g.perUnitFeeTyped }));
   if (!dryRun) {
     for (const o of split.orders) db.prepare('UPDATE bot_orders SET finder_fee=? WHERE id=?').run([o.fee, o.id]);
   }
@@ -1142,6 +1149,29 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
   let salesRows = [];
   try { salesRows = db.prepare('SELECT * FROM bot_sales ORDER BY sold_at DESC, id DESC').all(); } catch(_) {}
   res.json(computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db), salesRows));
+});
+
+// ── Backup: the whole database as one file ──────────────────────────────────
+// A consistent snapshot (VACUUM INTO), safe while the site is running. It holds
+// customer names and addresses — keep it on your computer, never on GitHub
+// (*.db and backups/ are git-ignored).
+app.get('/api/admin/backup', auth, adminOnly, (req, res) => {
+  const tmp = path.join(require('os').tmpdir(), `inv-backup-${Date.now()}-${process.pid}.db`);
+  try {
+    db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+    const buf = fs.readFileSync(tmp);
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    res.set({
+      'Content-Type': 'application/octet-stream',
+      'Content-Disposition': `attachment; filename="inventory-backup-${stamp}.db"`,
+      'Cache-Control': 'no-store',
+    });
+    res.send(buf);
+  } catch (e) {
+    res.status(500).json({ error: 'Backup failed: ' + e.message });
+  } finally {
+    try { fs.rmSync(tmp, { force: true }); } catch (_) {}
+  }
 });
 
 // ── Money totals for the dashboard cards ────────────────────────────────────

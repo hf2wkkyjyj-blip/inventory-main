@@ -511,6 +511,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <button class="btn btn-ghost btn-sm" id="bot-rescan-btn" onclick="botFullRescan(false)" title="Clear scanner history and re-scan last 180 days of Gmail" style="opacity:.7;"><i class="fa fa-redo"></i> Full Rescan</button>
       <button class="btn btn-ghost btn-sm" id="bot-reparse-btn" onclick="botReparse(false)" title="Re-run the parser over saved emails — no Gmail fetch, takes seconds" style="opacity:.7;"><i class="fa fa-bolt"></i> Reparse</button>
       <button class="btn btn-ghost btn-sm" id="bot-repair-btn" onclick="botReparse(true)" title="Re-derive every status from saved emails — fixes orders wrongly marked Cancelled" style="opacity:.7;color:#fbbf24;"><i class="fa fa-wrench"></i> Repair Statuses</button>
+      <button class="btn btn-ghost btn-sm" id="bot-backup-btn" onclick="botDownloadBackup()" title="Download the whole database (orders, fees, sales, saved emails) as one file. Keep it on your computer — it has customer names and addresses." style="opacity:.7;"><i class="fa fa-download"></i> Backup</button>
       <button class="btn btn-ghost btn-sm" id="bot-restore-btn" onclick="botRestoreBaseline()" title="Re-add baseline orders (Mattel, Sam's Club, Costco, Bear Walker, older history). Safe: skips anything already present." style="opacity:.7;color:#2ecc71;"><i class="fa fa-undo"></i> Restore Baseline</button>
       <button class="btn btn-ghost btn-sm" id="bot-wipe-btn" onclick="botFullRescan(true)" title="Delete ALL orders and rebuild from emails (last 180 days)" style="opacity:.7;color:#e74c3c;"><i class="fa fa-trash"></i> Wipe & Rescan</button>
       <div style="display:flex;gap:4px;align-items:center;">
@@ -946,6 +947,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="form-group" style="margin-bottom:10px;"><label style="font-size:11px;">Fee for the whole box ($)</label>
       <input type="number" id="bf-fee" min="0" step="0.01" placeholder="0.00" style="width:100%;" oninput="boxFeePreviewSoon()"></div>
     <div id="bf-rate" style="font-size:12px;margin-bottom:8px;"></div>
+    <div id="bf-double" style="display:none;font-size:12px;color:#fbbf24;border:1px solid #7a5a12;border-radius:8px;padding:6px 10px;margin-bottom:8px;"></div>
     <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px;">
       <thead><tr style="font-size:10px;letter-spacing:.06em;color:var(--muted);text-align:right;">
         <th style="text-align:left;padding:4px 0;">ITEM</th><th>QTY</th><th>RETAIL</th><th>FEE</th><th>FEE / UNIT</th></tr></thead>
@@ -2044,6 +2046,30 @@ function botRenderMoneyCards(ordersInRange) {
     : 'no sales yet';
 }
 
+// Download the database. The endpoint needs the login token in a header, so a
+// plain link can't fetch it — fetch it here and hand the browser the file.
+async function botDownloadBackup() {
+  const btn = document.getElementById('bot-backup-btn');
+  btn.disabled = true;
+  const label = btn.innerHTML;
+  btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Preparing…';
+  try {
+    const res = await fetch('/api/admin/backup', { headers: { Authorization: 'Bearer ' + TOKEN } });
+    if (res.status === 401) { doLogout(); return; }
+    if (!res.ok) { alert('Backup failed — please try again.'); return; }
+    const blob = await res.blob();
+    const name = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1]
+              || `inventory-backup-${botLocalToday()}.db`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } finally {
+    btn.disabled = false; btn.innerHTML = label;
+  }
+}
+
 async function loadBotOrders() {
   const [orders] = await Promise.all([api('GET', '/admin/bot-orders'), botLoadMoney()]);
   if (!orders) return;
@@ -2766,7 +2792,7 @@ function renderBotPackages() {
 // ── Box fee ─────────────────────────────────────────────────────────────────
 // One fee for the whole box. The server splits it (feeSplit.js) — the preview
 // asks it with dryRun, so what you see is exactly what gets saved.
-let _bfPkg = null, _bfTimer = null;
+let _bfPkg = null, _bfTimer = null, _bfDouble = [];
 
 function openBoxFee(i) {
   const p = _botPkgRows[i];
@@ -2800,6 +2826,13 @@ async function boxFeePreview() {
   document.getElementById('bf-rate').innerHTML = r.basis === 'retail'
     ? `Retail in this box <b>${money(r.retail)}</b> → fee rate <b>${(r.rate * 100).toFixed(1)}%</b> of each item's price`
     : '<span style="color:#fbbf24;">No prices in this box — split evenly per unit.</span>';
+  // Products in this box that ALSO have an extra per-unit fee typed in.
+  const dbl = (r.unitFeeProducts || []);
+  const dEl = document.getElementById('bf-double');
+  _bfDouble = dbl;
+  dEl.style.display = dbl.length && fee > 0 ? '' : 'none';
+  dEl.innerHTML = dbl.length ? `⚠ Already has a per-unit fee typed in FEE / UNIT: ${dbl.map(p => `<b>${esc(p.name)}</b> $${p.perUnit.toFixed(2)}/unit`).join(', ')}.
+     This box fee is added <u>on top</u>. If it's the same fee, clear that FEE / UNIT box after saving.` : '';
   document.getElementById('bf-items').innerHTML = r.items.map(it => `
     <tr class="bf-item" style="border-top:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums;">
       <td style="text-align:left;padding:5px 0;">${esc(it.name)}</td><td>${it.qty}</td><td>${money(it.retail)}</td>
@@ -2814,6 +2847,9 @@ async function saveBoxFee() {
   const raw = document.getElementById('bf-fee').value;
   const fee = raw === '' ? 0 : parseFloat(raw);
   if (!(fee >= 0)) { err.textContent = 'Enter the fee as a number.'; err.style.display = ''; return; }
+  if (fee > 0 && _bfDouble.length && !confirm(
+      `${_bfDouble.map(p => `${p.name} already has $${p.perUnit.toFixed(2)}/unit typed in FEE / UNIT`).join('\n')}\n\n` +
+      `Save this box fee on top of it? (Cancel if it's the same fee.)`)) return;
   const btn = document.getElementById('bf-save'); btn.disabled = true;
   try {
     const r = await api('POST', '/admin/bot-packages/fee', { orderIds: _bfPkg.orderIds, fee });
@@ -3293,9 +3329,26 @@ function showLandedBreakdown(idx, anchorEl) {
   }, 0);
 }
 
+// The same fee can be entered two ways: on the orders (Fee button / ✎) and as
+// an extra per-unit fee here. Both go into landed cost, so entering one fee in
+// both places counted it twice (it happened: $1,100 across 7 products). Ask
+// before adding an extra per-unit fee on top of an order/box fee.
+function botConfirmExtraFee(item, newFee) {
+  const box = Number(item && item.perUnitBoxFee) || 0;
+  const old = Number(item && item.buyer_fee) || 0;
+  if (!(box > 0) || !(newFee > 0) || newFee === old) return true;
+  return confirm(`"${item.name}" already has a fee from its orders: $${box.toFixed(2)} per unit.\n\n` +
+    `Add $${newFee.toFixed(2)} MORE per unit on top? Total would be $${(box + newFee).toFixed(2)} per unit.\n\n` +
+    `OK = it's a second, separate fee.   Cancel = it's the same fee — don't add it.`);
+}
+
 async function saveBotSkuField(idx, field, inputEl) {
   const item = _botItemRows[idx];
   if (!item) { console.warn('saveBotSkuField: no row at index', idx); return; }
+  if (field === 'buyer_fee' && !botConfirmExtraFee(item, parseFloat(inputEl.value) || 0)) {
+    inputEl.value = item.buyer_fee || '';
+    return;
+  }
   const before = Number(item[field]) || 0;
   item[field] = parseFloat(inputEl.value) || 0;
   // The per-unit fee is part of landed cost: move the landed total and its
@@ -3494,6 +3547,7 @@ async function saveBotItemEdit() {
   const name        = document.getElementById('bie-name').value.trim();
   const mergeIntoId = document.getElementById('bie-merge').value || null;
   if (!name && !mergeIntoId) { alert('Give the product a name.'); return; }
+  if (!botConfirmExtraFee(item, parseFloat(document.getElementById('bie-buyer-fee').value) || 0)) return;
 
   const r = await api('POST', '/admin/sku-products/save', {
     productId:   item.productId || null,
