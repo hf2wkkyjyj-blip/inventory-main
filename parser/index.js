@@ -20,6 +20,7 @@ const { extractWithLlm }       = require('./llm');
 const {
   emptyOrder, merge, round2, parseMoney, cleanName, hasAnything,
 } = require('./normalize');
+const { extractShipTo } = require('./shipTo');
 
 // ── Plain-text fallbacks for the few fields regex is genuinely good at ───────
 
@@ -236,6 +237,16 @@ async function parseOrderEmail({ html, text, subject, from, allowLlm = false } =
   const haystack = `${subject || ''}\n${text || ''}`;
   if (!result.orderNumber)    result.orderNumber    = findOrderNumberInText(haystack);
   if (!result.trackingNumber) result.trackingNumber = findTrackingInText(haystack);
+
+  // 4b — Ship-to. Structured data rarely carries it; the text almost always
+  // does ("Delivers to:" / a "Shipping Address" block). See shipTo.js.
+  if (!result.shippingAddress) {
+    const st = extractShipTo(text) || (html ? extractShipTo(htmlToText(html)) : null);
+    if (st) {
+      result.shippingAddress = st.address;
+      if (!result.shippingName && st.name) result.shippingName = st.name;
+    }
+  }
 
   // 5 — AI, only if nothing deterministic produced items
   if (allowLlm && !result.items.length) {

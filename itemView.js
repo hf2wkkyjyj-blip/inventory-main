@@ -179,6 +179,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
         order_date:      order.order_date || null,
         shipping_name:   order.shipping_name || null,
         shipping_address: order.shipping_address || null,
+        jig_address:     order.jig_address || null,      // the exact text on the label, when grouped
         checked_in:      tracked ? (order.id != null && checkedIn.has(order.id)) : null,
       });
 

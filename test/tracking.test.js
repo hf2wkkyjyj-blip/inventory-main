@@ -75,6 +75,17 @@ const eq = (n, a, e) => {
     eq(`[${lbl}] B gets its own number`, trackingOf(db, B), B.trk);
   }
 
+  console.log('\n── Ship-to address read from the email ──');
+  {
+    const db = makeDb([[A], [B]]);
+    db.prepare("UPDATE bot_orders SET shipping_address='99 Hand Fixed Rd, Springfield, MN 55009' WHERE order_number=?").run([B.num]);
+    addEmail(db, '<a>', shipEmail(A)); addEmail(db, '<b>', shipEmail(B));
+    await quiet(() => reparseStoredEmails(db));
+    const addr = c => db.prepare('SELECT shipping_address FROM bot_orders WHERE order_number=?').get([c.num]).shipping_address;
+    eq('missing address filled from the email', addr(A), A.addr);
+    eq('address already on file NOT overwritten', addr(B), '99 Hand Fixed Rd, Springfield, MN 55009');
+  }
+
   console.log("\n── A already holds B's number (the live state) ──");
   for (const order of [[A, B], [B, A]]) {
     const db = makeDb([[A, B.trk], [B, B.trk]]);

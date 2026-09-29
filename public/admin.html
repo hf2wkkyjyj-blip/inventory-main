@@ -2253,20 +2253,27 @@ function toTitleCase(s) {
   return s.replace(/\b([a-z])/g, c => c.toUpperCase());
 }
 
+// Main address of an order: the server groups jigged variations of one place
+// (addresses.js). Older servers don't send it — fall back to the raw text.
+const botMainAddr = o => (o && (o.main_address || o.shipping_address)) || '';
+
 function buildBotAddressFilter() {
-  // Deduplicate by normalized address; count occurrences per norm key
+  // One entry per MAIN address (jig variations already grouped by the server).
   const normMap = {};   // norm → count
+  const labelOf = {};   // norm → the main address as displayed
   _botOrders.forEach(o => {
-    if (!o.shipping_address) return;
-    const norm = normalizeAddr(o.shipping_address);
+    const main = botMainAddr(o);
+    if (!main) return;
+    const norm = normalizeAddr(main);
     if (!norm) return;
     normMap[norm] = (normMap[norm] || 0) + 1;
+    labelOf[norm] = labelOf[norm] || main;
   });
   const sel = document.getElementById('bot-filter-address');
   const cur = sel.value;
-  const opts = Object.entries(normMap).sort((a,b)=>a[0].localeCompare(b[0]));
+  const opts = Object.entries(normMap).sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]));
   sel.innerHTML = '<option value="">All addresses</option>' + opts.map(([norm, count]) => {
-    const label = toTitleCase(norm) + (count > 1 ? ` (${count})` : '');
+    const label = labelOf[norm] + (count > 1 ? ` (${count})` : '');
     const sel_ = norm === cur ? ' selected' : '';
     return `<option value="${esc(norm)}"${sel_}>${esc(label)}</option>`;
   }).join('');
@@ -2462,9 +2469,9 @@ function renderBotOrders() {
     if (retailer && o.retailer !== retailer) return false;
     if (status && o.status !== status) return false;
     if (!botInRange(o, _botRange)) return false;
-    if (addrFilter && normalizeAddr(o.shipping_address) !== addrFilter) return false;
+    if (addrFilter && normalizeAddr(botMainAddr(o)) !== addrFilter) return false;
     if (search) {
-      const hay = [(o.order_number||''),(o.items||''),(o.shipping_name||''),(o.retailer||''),(o.shipping_address||'')].join(' ').toLowerCase();
+      const hay = [(o.order_number||''),(o.items||''),(o.shipping_name||''),(o.retailer||''),(o.shipping_address||''),botMainAddr(o)].join(' ').toLowerCase();
       if (!hay.includes(search)) return false;
     }
     return true;
@@ -2518,7 +2525,7 @@ function renderBotOrders() {
       </td>
       <td>${esc(o.shipping_name||'—')}</td>
       <td style="white-space:nowrap;">${o.tracking ? `<a href="${botTrackingUrl(o.retailer, o.tracking)}" target="_blank" style="color:#60a5fa;font-size:12px;font-weight:600;">${esc(o.tracking)}</a>` : '<span style="color:var(--muted);">—</span>'}</td>
-      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px;" title="${esc(o.shipping_address||'')}">${esc(o.shipping_address||'—')}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px;" title="${esc(o.shipping_address && o.shipping_address !== botMainAddr(o) ? 'On the label: ' + o.shipping_address : (o.shipping_address||''))}">${esc(botMainAddr(o)||'—')}</td>
       <td style="white-space:nowrap;">
         ${o.status==='Shipped'?`<button style="background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.3);color:#60a5fa;padding:2px 7px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:700;margin-right:4px;" onclick="markDelivered(${o.id})" title="Mark Delivered">✓ Del</button>`:''}
         <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:4px;" onclick="botEditRow(${o.id})" title="Edit"><i class="fa fa-pen" style="font-size:11px;"></i></button>
@@ -3314,7 +3321,7 @@ function botOrdersPanel(item, idx) {
       <td style="padding:5px 8px;white-space:nowrap;">${botStatusCell(l)}</td>
       <td style="padding:5px 8px;white-space:nowrap;">${trk}</td>
       <td style="padding:5px 8px;color:var(--muted);white-space:nowrap;">${esc(when)}</td>
-      <td style="padding:5px 8px;color:var(--muted);max-width:220px;"><div class="clip" data-tip="${esc([l.shipping_name, l.shipping_address].filter(Boolean).join('\n'))}">${esc(shipTo || '—')}</div></td>
+      <td style="padding:5px 8px;color:var(--muted);max-width:220px;"><div class="clip" data-tip="${esc([l.shipping_name, l.shipping_address, l.jig_address && l.jig_address !== l.shipping_address ? 'On the label: ' + l.jig_address : ''].filter(Boolean).join('\n'))}">${esc(shipTo || '—')}</div></td>
     </tr>`;
   }).join('');
 

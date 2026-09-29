@@ -17,6 +17,25 @@ const { computeItemGroups, orderLineCosts } = require('./itemView');
 const SkuCatalog = require('./skuCatalog');
 const { computePackages } = require('./packageView');
 const { splitBoxFee, orderSignature } = require('./feeSplit');
+const { buildAddressBook } = require('./addresses');
+
+// Jigged address variations → the one real place they deliver to (addresses.js).
+// The book is built from every address on file so labels are stable whatever
+// filter a request uses. The raw text stays in the database (it's what's on the
+// box label); views get main_address, and the grouped views use it outright.
+function addressBook() {
+  let raws = [];
+  try { raws = db.prepare("SELECT shipping_address FROM bot_orders WHERE shipping_address IS NOT NULL AND shipping_address<>''").all().map(r => r.shipping_address); } catch (_) {}
+  return buildAddressBook(raws);
+}
+function withMainAddress(orders, { replace = false } = {}) {
+  const book = addressBook();
+  return orders.map(o => {
+    const main = book.main(o.shipping_address);
+    return replace ? { ...o, shipping_address: main, jig_address: o.shipping_address || null, main_address: main }
+                   : { ...o, main_address: main };
+  });
+}
 const OrderMerge = require('./orderMerge');
 const { recategorizeOrders } = require('./category');
 const Retailers = require('./retailers');
@@ -1135,7 +1154,7 @@ app.get('/api/admin/bot-packages', auth, adminOnly, (req, res) => {
   if (retailer) { sql += ' AND retailer=?'; params.push(retailer); }
   if (status)   { sql += ' AND status=?';   params.push(status); }
   else          { sql += " AND status NOT IN ('Cancelled','Refunded')"; }
-  res.json(computePackages(db.prepare(sql).all(params), SkuCatalog.loadCatalog(db), loadStock()));
+  res.json(computePackages(withMainAddress(db.prepare(sql).all(params), { replace: true }), SkuCatalog.loadCatalog(db), loadStock()));
 });
 
 const BOT_STATUS_SET = new Set(['Confirmed', 'Unship', 'Shipped', 'OFD', 'Delivered', 'Cancelled', 'Refunded']);
@@ -1269,7 +1288,7 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
   try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch(_) {}
   let salesRows = [];
   try { salesRows = db.prepare('SELECT * FROM bot_sales ORDER BY sold_at DESC, id DESC').all(); } catch(_) {}
-  res.json(computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db), salesRows, loadStock()));
+  res.json(computeItemGroups(withMainAddress(orders, { replace: true }), pricingRows, SkuCatalog.loadCatalog(db), salesRows, loadStock()));
 });
 
 // ── Backup: the whole database as one file ──────────────────────────────────
@@ -1511,7 +1530,7 @@ app.delete('/api/admin/bot-items/by-name', auth, adminOnly, (req, res) => {
 
 app.get('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
   const orders = db.prepare('SELECT * FROM bot_orders ORDER BY order_date DESC, received_at DESC, created_at DESC LIMIT 500').all();
-  res.json(orders);
+  res.json(withMainAddress(orders));
 });
 
 // Manual refresh: fires immediately, runs tracking check in background

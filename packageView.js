@@ -74,6 +74,7 @@ function computePackages(orders, catalog, stock) {
       expected_date: o.expected_date || null, delivered_date: o.delivered_date || null,
       order_date: o.order_date || null, finder_fee: Number(o.finder_fee) || 0,
       shipping_name: o.shipping_name || null, shipping_address: o.shipping_address || null,
+      jig_address: o.jig_address || null,
     });
 
     let arr; try { arr = JSON.parse(o.items || '[]'); } catch (_) { arr = []; }

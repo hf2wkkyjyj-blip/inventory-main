@@ -170,8 +170,11 @@ DB.prepare(`INSERT INTO bot_checkins (order_id, checked_at) SELECT id, '2026-09-
 
 // Pick-up test data: a category of its own so counts are exact (made up).
 for (const [num, status, trk, addr, items, total] of [
-  ['K01', 'Delivered', '870000000701', '10 Pick Rd, Springfield', ['2x Test Pick ETB @ $50.00', '1x Test Pick Tin @ $20.00'], 120],
+  // K01 is a jigged spelling of K02's address and comes first in every list,
+  // so only real main-address grouping can show the clean "10 Pick Rd".
+  ['K01', 'Delivered', '870000000701', '010c Pick Road Unit-2-in, Springfield', ['2x Test Pick ETB @ $50.00', '1x Test Pick Tin @ $20.00'], 120],
   ['K02', 'Delivered', '870000000702', '10 Pick Rd, Springfield', ['1x Test Pick ETB @ $50.00'], 50],
+  ['K05', 'Cancelled', null,           '10 Pick Rd, Springfield', ['1x Test Pick ETB @ $50.00'], 50],
   ['K03', 'Delivered', '870000000703', '20 Other Ln, Springfield', ['2x Test Pick ETB @ $50.00'], 100],
   ['K04', 'Shipped',   '870000000704', '20 Other Ln, Springfield', ['1x Test Pick ETB @ $50.00'], 50],
 ]) {
@@ -965,6 +968,14 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('3 delivered boxes; shipped one not listed', boxes().length === 3 && !boxes().some(b => /870000000704/.test(b.textContent)), boxes().length);
     const addr10 = addrs().find(a => /10 Pick Rd/.test(a.textContent));
     check('address shows 2 boxes · 4 units',    /2 boxes · 4 units/.test(addr10.textContent), addr10.textContent.replace(/\s+/g, ' ').slice(0, 120));
+    check('jig variant grouped under the main address', !/010c|Unit-2-in/i.test(wrap.textContent), wrap.textContent.replace(/\s+/g, ' ').slice(0, 200));
+    // Orders API gives every order its main address; the raw label text is untouched.
+    const ords = await (await fakeFetch('/api/admin/bot-orders', { method: 'GET' })).json();
+    const k02o = ords.find(o => o.order_number === 'K02');
+    check('K02 main address = K01\'s',           k02o.main_address === ords.find(o => o.order_number === 'K01').main_address, k02o.main_address);
+    check('raw jig text kept in the database',    DB.prepare("SELECT shipping_address FROM bot_orders WHERE order_number='K01'").get().shipping_address === '010c Pick Road Unit-2-in, Springfield');
+    const opt = [...d.getElementById('bot-filter-address').options].map(o => o.textContent);
+    check('address filter lists the main address once', opt.filter(t => /Pick Rd/.test(t)).length === 1 && !opt.some(t => /010c/.test(t)), opt.join(' | '));
 
     // Box with a problem: K03, one ETB is the wrong item.
     const box = trk => boxes().find(b => b.textContent.includes(trk));

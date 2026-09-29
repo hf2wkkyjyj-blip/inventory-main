@@ -556,6 +556,10 @@ async function processEmail(parsed, db, opts = {}) {
   }
 
   const itemsJson  = itemStrings.length ? JSON.stringify(itemStrings) : null;
+  // Where it's going. Emails used to be read for everything but this, so every
+  // order created from an email had no address.
+  const shipName   = (P && P.shippingName)    || null;
+  const shipAddr   = (P && P.shippingAddress) || null;
   const orderTotal = financials.total    ?? financials.subtotal ?? null;
   const taxAmount  = financials.tax      ?? null;
   const shipCost   = financials.shipping ?? null;
@@ -598,6 +602,10 @@ async function processEmail(parsed, db, opts = {}) {
       }
     }
     if (expectedDate)                                      { updates.push('expected_date=?');    vals.push(expectedDate); }
+    // Fill a missing ship-to; never overwrite one already on file (it may have
+    // come from the buying bot or been fixed by hand).
+    if (shipAddr && !existing.shipping_address)            { updates.push('shipping_address=?'); vals.push(shipAddr); }
+    if (shipName && !existing.shipping_name)               { updates.push('shipping_name=?');    vals.push(shipName); }
     if (trackingStatus)                                    { updates.push('tracking_status=?');  vals.push(trackingStatus); }
     if (resolvedStatus === 'Delivered') {
       // Use the DELIVERY EMAIL's own date, not today's. Using new Date() meant
@@ -717,13 +725,15 @@ async function processEmail(parsed, db, opts = {}) {
     const orderDate = emailDate.split('T')[0];
     db.prepare(`INSERT OR IGNORE INTO bot_orders
       (category, retailer, order_number, tracking, status, tracking_status, expected_date,
-       order_date, received_at, items, order_total, tax_amount, ship_cost, status_changed_at, created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+       order_date, received_at, items, order_total, tax_amount, ship_cost, status_changed_at,
+       shipping_name, shipping_address, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
       // NOTE: ?? not || for the money fields — a legitimate $0.00 shipping or tax
       // is falsy, and || would silently store it as null.
       .run([category, retailer, orderNumber, tracking||null, dbStatus, trackingStatus||null,
             expectedDate||null, orderDate, emailDate,
-            itemsJson||null, orderTotal ?? null, taxAmount ?? null, shipCost ?? null, emailDate]);
+            itemsJson||null, orderTotal ?? null, taxAmount ?? null, shipCost ?? null, emailDate,
+            shipName, shipAddr]);
     console.log(`   ➕ New: ${orderNumber} (${retailer}) — ${resolvedStatus}${itemStrings.length?' | '+itemStrings.length+' items':''}${expectedDate?' exp '+expectedDate:''}`);
     // This sender produced a real order, so remember it. Future runs can then
     // target it directly by FROM address instead of relying on the broad
