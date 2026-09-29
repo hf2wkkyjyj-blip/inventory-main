@@ -203,6 +203,61 @@ console.log('\n── Box/order fee share is reported separately ──');
   eq('finder line = box + extra',    g2.perUnitFinder, 7.25);
 }
 
+console.log('\n── Stock = what you picked up and checked ──');
+{
+  const { itemKey } = require('../itemNames');
+  const T = 'Test Elite Box';
+  const mk = (id, status, extra = {}) => ({ id, retailer: 'Test', status, order_total: 106, items: `["2x ${T} @ $50.00"]`, ...extra });
+  const orders = [
+    mk(1, 'Delivered'), mk(2, 'Delivered'), mk(3, 'Delivered'),        // 6 units delivered
+    mk(4, 'Shipped'), mk(5, 'Confirmed'),                               // 4 on the way
+    mk(6, 'Shipped', { tracking_status: 'Delivered' }),                 // carrier says delivered
+  ];
+  const K = itemKey(T);
+
+  const [legacy] = computeItemGroups(orders, []);
+  eq('without check-in data: all 12 count', legacy.inHand, 12);
+
+  const none = computeItemGroups(orders, [], undefined, [], { checkedIn: new Set(), issues: [] })[0];
+  eq('nothing picked up: 0 in hand',     none.inHand, 0);
+  eq('8 waiting to be picked up',        none.toPickUp, 8);
+  eq('4 on the way',                     none.onTheWay, 4);
+  eq('ordered qty unchanged',            none.qty, 12);
+  eq('nothing sellable yet',             none.unitsLeft, 0);
+
+  const issues = [
+    { id: 1, order_id: 2, item_key: K, qty: 1, kind: 'missing', status: 'open' },
+    { id: 2, order_id: 3, item_key: K, qty: 1, kind: 'wrong', got_item: 'Test Booster Bundle', status: 'claim_filed' },
+  ];
+  const g = computeItemGroups(orders, [], undefined,
+    [{ id: 9, sku_key: T, qty: 1, unit_price: 70, fees: 0 }], { checkedIn: new Set([1, 2, 3]), issues })[0];
+  eq('3 boxes checked: 6 − 2 in claims = 4 in hand', g.inHand, 4);
+  eq('2 in claim',                        g.inClaim, 2);
+  eq('claim value = 2 × landed',          g.claimValue, Math.round(2 * g.perUnitTotal * 100) / 100);
+  eq('landed per unit unaffected',        g.perUnitTotal, legacy.perUnitTotal);
+  eq('left to sell = 4 in hand − 1 sold', g.unitsLeft, 3);
+  eq('still 2 to pick up (order 6)',      g.toPickUp, 2);
+  eq('order line knows it was checked in', g.orderLines.find(l => l.id === 1).checked_in, true);
+
+  const out = s => computeItemGroups(orders, [], undefined, [], { checkedIn: new Set([2, 3]), issues: issues.map(i => ({ ...i, status: s })) });
+  const ref = out('refunded')[0];
+  eq('refunded: units gone, not in claim', [ref.inHand, ref.inClaim, ref.refundedUnits].join(), '2,0,2');
+  const wo = out('denied_writeoff')[0];
+  eq('written off: units gone',           [wo.inHand, wo.writtenOff].join(), '2,2');
+
+  // Wrong item kept: the Booster Bundle joins stock at what the Elite Box cost.
+  const keep = out('denied_keep');
+  const box = keep.find(x => /Elite/.test(x.name)), bb = keep.find(x => /Bundle/.test(x.name));
+  eq('kept: missing one written off, wrong one moved', [box.inHand, box.writtenOff].join(), '2,1');
+  eq('bundle now in stock',               bb && bb.inHand, 1);
+  eq('bundle carries the cost you paid',  bb && bb.perUnitTotal, box.perUnitTotal);
+
+  // Damaged but kept → back in stock.
+  const dmg = computeItemGroups(orders, [], undefined, [], { checkedIn: new Set([1]),
+    issues: [{ order_id: 1, item_key: K, qty: 1, kind: 'damaged', status: 'denied_keep' }] })[0];
+  eq('damaged + kept → still in hand',    dmg.inHand, 2);
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

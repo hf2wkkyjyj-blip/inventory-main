@@ -41,9 +41,11 @@ function productNameFor(rawTitle, catalog) {
 /**
  * @param {object[]} orders   bot_orders rows
  * @param {{products: Map, aliases: Map}} [catalog]
+ * @param {{checkedIn: Map}} [stock]  pick-up check-ins (order id → date)
  * @returns package rows, soonest-arriving first
  */
-function computePackages(orders, catalog) {
+function computePackages(orders, catalog, stock) {
+  const checkedIn = (stock && stock.checkedIn) || new Map();
   const pkgs = new Map();
 
   for (const o of orders) {
@@ -62,8 +64,12 @@ function computePackages(orders, catalog) {
       pkgs.set(key, p);
     }
 
+    // Each order's item lines, for the pick-up check-in (what should be inside).
+    const lines = [];
     p.orders.push({
       id: o.id, order_number: o.order_number || null, retailer: o.retailer || null,
+      checked_in: checkedIn.has(o.id), checked_at: checkedIn.get ? (checkedIn.get(o.id) || null) : null,
+      lines,
       status: o.status || 'Confirmed', tracking_status: o.tracking_status || null,
       expected_date: o.expected_date || null, delivered_date: o.delivered_date || null,
       order_date: o.order_date || null, finder_fee: Number(o.finder_fee) || 0,
@@ -76,6 +82,10 @@ function computePackages(orders, catalog) {
       if (!raw) continue;
       const name = productNameFor(raw, catalog);
       const k    = itemKey(name);
+      const lk   = itemKey(raw);
+      const ln   = lines.find(l => l.item_key === lk);
+      if (ln) ln.qty += parseQty(part);
+      else lines.push({ item_key: lk, item_name: raw, name, qty: parseQty(part) });
       const c    = p._contents.get(k);
       if (c) c.qty += parseQty(part);
       else p._contents.set(k, { name, qty: parseQty(part) });
@@ -110,6 +120,7 @@ function computePackages(orders, catalog) {
       orderIds:      p.orders.map(o => o.id),
       contents:      [..._contents.values()].sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name)),
       units:         [..._contents.values()].reduce((s, c) => s + c.qty, 0),
+      checkedIn:     p.orders.every(o => o.checked_in),
       // Box fee = what's been put on its orders (see feeSplit.js).
       fee:           Math.round(p.orders.reduce((s, o) => s + o.finder_fee, 0) * 100) / 100,
     };

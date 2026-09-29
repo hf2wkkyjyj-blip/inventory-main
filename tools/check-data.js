@@ -160,6 +160,21 @@ function checkData(db) {
   if (oldShipped.length) add('check', 'Status', 'Still Shipped more than a week after the expected date (delivered? lost?)',
     oldShipped.map(o => `${label(o)} expected ${o.expected_date}`));
 
+  // ── PICK-UP / CLAIMS ──────────────────────────────────────────────────────
+  if (hasTable(db, 'bot_checkins')) {
+    const picked = new Set(db.prepare('SELECT order_id FROM bot_checkins').all().map(r => r.order_id));
+    const waiting = live.filter(o => (o.status === 'Delivered') && !picked.has(o.id) && o.delivered_date &&
+      (Date.now() - new Date(o.delivered_date + 'T00:00:00').getTime()) > 14 * 86400000);
+    if (waiting.length) add('check', 'Pick-up', 'Delivered more than 2 weeks ago, still not picked up / checked',
+      waiting.map(o => `${label(o)} delivered ${o.delivered_date}`));
+  }
+  if (hasTable(db, 'bot_issues')) {
+    const old = db.prepare("SELECT * FROM bot_issues WHERE status IN ('open','claim_filed')").all()
+      .filter(i => i.created_at && (Date.now() - new Date(String(i.created_at).replace(' ', 'T') + 'Z').getTime()) > 30 * 86400000);
+    if (old.length) add('check', 'Pick-up', 'Claim open for more than 30 days (chase the store?)',
+      old.map(i => { const o = all.find(x => x.id === i.order_id); return `${o ? label(o) : 'order ' + i.order_id}: ${i.kind} ${i.item_name || ''} × ${i.qty} (${i.status})`; }));
+  }
+
   // ── COST ──────────────────────────────────────────────────────────────────
   const noItems = live.filter(o => { try { const a = JSON.parse(o.items || '[]'); return !a.length; } catch (_) { return true; } });
   if (noItems.length) add('check', 'Cost', 'Order with no items (not in any product row, so its cost and fee go nowhere)',

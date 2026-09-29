@@ -12,8 +12,8 @@ const puppeteer = require('puppeteer-core');
 // Local modules. Declared up here because startup code further down calls
 // them — a `const` used before its declaration line throws, and inside a
 // try/catch that failure would be silent.
-const { decomposeItem, parseItemName, splitItemParts, itemKey } = require('./itemNames');
-const { computeItemGroups } = require('./itemView');
+const { decomposeItem, parseItemName, splitItemParts, itemKey, shortenName } = require('./itemNames');
+const { computeItemGroups, orderLineCosts } = require('./itemView');
 const SkuCatalog = require('./skuCatalog');
 const { computePackages } = require('./packageView');
 const { splitBoxFee, orderSignature } = require('./feeSplit');
@@ -155,6 +155,16 @@ try { db.exec("CREATE TABLE IF NOT EXISTS bot_sku_prices (sku TEXT PRIMARY KEY, 
 // Individual sales of bot-bought products — you rarely sell a whole lot at once.
 // sku_key matches the item view's skuKey ("#p<id>" for a linked product, else the
 // store title). unit_price is per unit; fees is the total for this sale.
+// Pick-up check-ins: you picked the box up and opened it. One row per order.
+try { db.exec(`CREATE TABLE IF NOT EXISTS bot_checkins (
+  order_id INTEGER PRIMARY KEY, checked_at TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
+// What was wrong in a box: missing / wrong item / damaged, and the refund claim.
+// status: open → claim_filed → refunded | denied_keep | denied_writeoff
+try { db.exec(`CREATE TABLE IF NOT EXISTS bot_issues (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, item_key TEXT NOT NULL, item_name TEXT,
+  qty INTEGER NOT NULL, kind TEXT NOT NULL, got_item TEXT, note TEXT, status TEXT DEFAULT 'open',
+  refund_amount REAL DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, resolved_at TEXT)`); } catch(e) {}
+
 try { db.exec(`CREATE TABLE IF NOT EXISTS bot_sales (
   id INTEGER PRIMARY KEY AUTOINCREMENT, sku_key TEXT NOT NULL, product_name TEXT,
   qty INTEGER NOT NULL, unit_price REAL NOT NULL, fees REAL DEFAULT 0, channel TEXT,
@@ -1005,6 +1015,117 @@ function botCategoryWhere(category) {
   return ['category=?', [category]];
 }
 
+// ── Pick-up check-ins and claims ─────────────────────────────────────────────
+// Stock counts units you've picked up and checked, not what the carrier says.
+function loadStock() {
+  const checkedIn = new Map();
+  let issues = [];
+  try { db.prepare('SELECT order_id, checked_at FROM bot_checkins').all().forEach(r => checkedIn.set(r.order_id, r.checked_at)); } catch (_) {}
+  try { issues = db.prepare('SELECT * FROM bot_issues').all(); } catch (_) {}
+  return { checkedIn, issues };
+}
+
+const ISSUE_KINDS    = new Set(['missing', 'wrong', 'damaged']);
+const ISSUE_STATUSES = new Set(['open', 'claim_filed', 'refunded', 'denied_keep', 'denied_writeoff']);
+const ISSUE_OPEN     = new Set(['open', 'claim_filed']);
+
+// Landed cost of one unit of this issue's item (same math as the product view).
+function issueUnitCost(issue, order) {
+  if (!order) return 0;
+  const line = orderLineCosts(order).find(l => itemKey(l.rawName) === issue.item_key);
+  return line ? line.unitTotal : 0;
+}
+
+// Picked up (and opened) these orders. `issues` lists anything not as ordered.
+app.post('/api/admin/bot-checkin', auth, adminOnly, (req, res) => {
+  const { orderIds, date, issues } = req.body || {};
+  const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
+  const day = date || new Date().toISOString().slice(0, 10);
+  if (!ids.length)       return res.status(400).json({ error: 'orderIds required' });
+  if (!isIsoDate(day))   return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  const list = Array.isArray(issues) ? issues : [];
+
+  const orders = new Map();
+  for (const id of ids) {
+    const o = db.prepare('SELECT * FROM bot_orders WHERE id=?').get([id]);
+    if (!o) return res.status(404).json({ error: `No order ${id}` });
+    orders.set(id, o);
+  }
+  // Validate every issue before writing anything.
+  const clean = [];
+  for (const is of list) {
+    const oid = Number(is && is.order_id), qty = Number(is && is.qty);
+    if (!orders.has(oid))                   return res.status(400).json({ error: 'Issue for an order not in this check-in' });
+    if (!ISSUE_KINDS.has(is.kind))          return res.status(400).json({ error: 'Issue kind must be missing, wrong or damaged' });
+    if (!Number.isInteger(qty) || qty < 1)  return res.status(400).json({ error: 'Issue quantity must be a whole number' });
+    const line = orderLineCosts(orders.get(oid)).filter(l => itemKey(l.rawName) === is.item_key);
+    const have = line.reduce((s2, l) => s2 + l.qty, 0);
+    if (!have)                              return res.status(400).json({ error: 'That item is not in this order' });
+    if (qty > have)                         return res.status(400).json({ error: `Only ${have} of that item in the order` });
+    clean.push({ oid, qty, kind: is.kind, item_key: is.item_key, item_name: is.item_name || line[0].rawName,
+                 got_item: (is.got_item || '').trim() || null, note: (is.note || '').trim() || null });
+  }
+  for (const id of ids) {
+    db.prepare('INSERT OR REPLACE INTO bot_checkins (order_id, checked_at) VALUES (?,?)').run([id, day]);
+    // Checking a box in again replaces its still-open issues (a correction).
+    db.prepare("DELETE FROM bot_issues WHERE order_id=? AND status='open'").run([id]);
+  }
+  for (const c of clean) {
+    db.prepare(`INSERT INTO bot_issues (order_id, item_key, item_name, qty, kind, got_item, note, status)
+                VALUES (?,?,?,?,?,?,?,'open')`).run([c.oid, c.item_key, c.item_name, c.qty, c.kind, c.got_item, c.note]);
+  }
+  res.json({ checkedIn: ids.length, issues: clean.length });
+});
+
+// Undo a check-in (picked the wrong box). Not once a claim has moved on.
+app.delete('/api/admin/bot-checkin/:orderId', auth, adminOnly, (req, res) => {
+  const id = Number(req.params.orderId);
+  const moved = db.prepare("SELECT COUNT(*) n FROM bot_issues WHERE order_id=? AND status<>'open'").get([id]);
+  if (moved && moved.n) return res.status(409).json({ error: 'This box has a claim in progress — resolve it in Claims first' });
+  db.prepare('DELETE FROM bot_issues WHERE order_id=?').run([id]);
+  db.prepare('DELETE FROM bot_checkins WHERE order_id=?').run([id]);
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/bot-issues', auth, adminOnly, (req, res) => {
+  let rows = [];
+  try { rows = db.prepare('SELECT * FROM bot_issues ORDER BY id DESC').all(); } catch (_) {}
+  const catalog = SkuCatalog.loadCatalog(db);
+  const out = rows.map(is => {
+    const o = db.prepare('SELECT * FROM bot_orders WHERE id=?').get([is.order_id]);
+    const unit = issueUnitCost(is, o);
+    const pid = catalog.aliases.get(itemKey(is.item_name || ''));
+    return {
+      ...is,
+      product: pid && catalog.products.has(pid) ? catalog.products.get(pid).name : shortenName(is.item_name || ''),
+      order_number: o ? o.order_number : null, retailer: o ? o.retailer : null, tracking: o ? o.tracking : null,
+      unit_cost: Math.round(unit * 100) / 100, value: Math.round(unit * is.qty * 100) / 100,
+    };
+  });
+  // Open first, then newest.
+  out.sort((a, b) => (ISSUE_OPEN.has(b.status) - ISSUE_OPEN.has(a.status)) || b.id - a.id);
+  res.json(out);
+});
+
+// Move a claim along. A refund is recorded on the order (refunded_amount), so
+// SPENT goes down by it; changing or undoing it adjusts by the difference.
+app.patch('/api/admin/bot-issues/:id', auth, adminOnly, (req, res) => {
+  const is = db.prepare('SELECT * FROM bot_issues WHERE id=?').get([Number(req.params.id)]);
+  if (!is) return res.status(404).json({ error: 'No such issue' });
+  const b = req.body || {};
+  const status = b.status || is.status;
+  if (!ISSUE_STATUSES.has(status)) return res.status(400).json({ error: 'Bad status' });
+  if (status === 'denied_keep' && is.kind === 'missing') return res.status(400).json({ error: 'Nothing to keep — the item never came' });
+  let refund = status === 'refunded' ? Number(b.refund_amount ?? is.refund_amount) : 0;
+  if (!Number.isFinite(refund) || refund < 0) return res.status(400).json({ error: 'Refund must be a number' });
+  refund = Math.round(refund * 100) / 100;
+  const delta = Math.round((refund - (Number(is.refund_amount) || 0)) * 100) / 100;
+  if (delta) db.prepare('UPDATE bot_orders SET refunded_amount=ROUND(COALESCE(refunded_amount,0)+?,2) WHERE id=?').run([delta, is.order_id]);
+  db.prepare('UPDATE bot_issues SET status=?, refund_amount=?, note=COALESCE(?,note), resolved_at=? WHERE id=?')
+    .run([status, refund, b.note ?? null, ISSUE_OPEN.has(status) ? null : new Date().toISOString().slice(0, 10), is.id]);
+  res.json({ ok: true, refundDelta: delta });
+});
+
 // ── Package view: one row per tracking number (see packageView.js) ──────────
 app.get('/api/admin/bot-packages', auth, adminOnly, (req, res) => {
   const { category, retailer, status } = req.query;
@@ -1014,7 +1135,7 @@ app.get('/api/admin/bot-packages', auth, adminOnly, (req, res) => {
   if (retailer) { sql += ' AND retailer=?'; params.push(retailer); }
   if (status)   { sql += ' AND status=?';   params.push(status); }
   else          { sql += " AND status NOT IN ('Cancelled','Refunded')"; }
-  res.json(computePackages(db.prepare(sql).all(params), SkuCatalog.loadCatalog(db)));
+  res.json(computePackages(db.prepare(sql).all(params), SkuCatalog.loadCatalog(db), loadStock()));
 });
 
 const BOT_STATUS_SET = new Set(['Confirmed', 'Unship', 'Shipped', 'OFD', 'Delivered', 'Cancelled', 'Refunded']);
@@ -1148,7 +1269,7 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
   try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch(_) {}
   let salesRows = [];
   try { salesRows = db.prepare('SELECT * FROM bot_sales ORDER BY sold_at DESC, id DESC').all(); } catch(_) {}
-  res.json(computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db), salesRows));
+  res.json(computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db), salesRows, loadStock()));
 });
 
 // ── Backup: the whole database as one file ──────────────────────────────────
@@ -1184,7 +1305,8 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
   let pricingRows = [], salesRows = [];
   try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch (_) {}
   try { salesRows = db.prepare('SELECT * FROM bot_sales').all(); } catch (_) {}
-  const groups = computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db), salesRows);
+  const stock  = loadStock();
+  const groups = computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db), salesRows, stock);
   const r2 = n => Math.round(n * 100) / 100;
 
   const unitFees = new Map();
@@ -1211,7 +1333,18 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
                    revenue: r2(revenue), fees: r2(s.fees), cost: r2(cost), profit: r2(revenue - s.fees - cost) });
     }
   }
-  res.json({ orderFees, sales });
+  // Claims: open ones (money waiting to come back), refunds, write-offs.
+  const claims = { open: 0, openUnits: 0, pending: 0, refunded: 0, writtenOff: 0, toPickUpUnits: 0 };
+  const byId = new Map(orders.map(o => [o.id, o]));
+  for (const is of stock.issues) {
+    const cost = issueUnitCost(is, byId.get(is.order_id)) * is.qty;
+    if (ISSUE_OPEN.has(is.status)) { claims.open++; claims.openUnits += is.qty; claims.pending += cost; }
+    else if (is.status === 'refunded') claims.refunded += Number(is.refund_amount) || 0;
+    else if (is.status === 'denied_writeoff' || (is.status === 'denied_keep' && is.kind === 'missing')) claims.writtenOff += cost;
+  }
+  claims.toPickUpUnits = groups.reduce((a, g) => a + (g.toPickUp || 0), 0);
+  for (const k of ['pending', 'refunded', 'writtenOff']) claims[k] = r2(claims[k]);
+  res.json({ orderFees, sales, claims });
 });
 
 // ── Product catalog (see skuCatalog.js) ─────────────────────────────────────

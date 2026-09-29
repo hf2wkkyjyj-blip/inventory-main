@@ -25,7 +25,10 @@ function build(file, seed) {
     CREATE TABLE bot_sku_prices (sku TEXT PRIMARY KEY, buyer_fee REAL DEFAULT 0, sale_price REAL DEFAULT 0);
     CREATE TABLE bot_sales (id INTEGER PRIMARY KEY, sku_key TEXT, product_name TEXT, qty INTEGER, unit_price REAL, fees REAL DEFAULT 0, channel TEXT, sold_at TEXT);
     CREATE TABLE sku_products (id INTEGER PRIMARY KEY, name TEXT UNIQUE);
-    CREATE TABLE sku_aliases (alias_key TEXT PRIMARY KEY, raw_name TEXT, product_id INTEGER);`);
+    CREATE TABLE sku_aliases (alias_key TEXT PRIMARY KEY, raw_name TEXT, product_id INTEGER);
+    CREATE TABLE bot_checkins (order_id INTEGER PRIMARY KEY, checked_at TEXT);
+    CREATE TABLE bot_issues (id INTEGER PRIMARY KEY, order_id INTEGER, item_key TEXT, item_name TEXT, qty INTEGER, kind TEXT,
+      got_item TEXT, note TEXT, status TEXT, refund_amount REAL DEFAULT 0, created_at TEXT, resolved_at TEXT);`);
   seed(db);
   db.close();
 }
@@ -75,6 +78,9 @@ console.log('\n── Every kind of problem is caught ──');
     // No items; late shipment
     O(db, { id: 14, num: 'N01', items: '[]', total: 30, fee: 4 });
     O(db, { id: 15, num: 'L01', status: 'Shipped', exp: '2026-01-02', items: JSON.stringify(['1x Test Late @ $5.00']), total: 5 });
+    // Delivered long ago, never picked up; an old open claim
+    O(db, { id: 16, num: 'W01', dd: '2026-01-05', items: JSON.stringify(['1x Test Wait @ $5.00']), total: 5 });
+    db.prepare("INSERT INTO bot_issues (order_id, item_key, item_name, qty, kind, status, created_at) VALUES (15,'x','Test Late',1,'missing','claim_filed','2026-01-10 10:00:00')").run();
     // Sales: orphan, oversold, $0
     db.prepare("INSERT INTO bot_sales VALUES (1,'Gone Product','Gone Product',1,40,0,'eBay','2026-09-20')").run();
     db.prepare("INSERT INTO bot_sales VALUES (2,'Test Pack','Test Pack',3,20,0,'eBay','2026-09-20')").run();
@@ -95,13 +101,15 @@ console.log('\n── Every kind of problem is caught ──');
   check('duplicate order number',         /#S01 × 2/.test(rows(/duplicates/)));
   check('order with no items',            /#N01/.test(rows(/no items/)));
   check('late shipment',                  /#L01/.test(rows(/week after/)));
+  check('delivered long ago, not picked up', /#W01/.test(rows(/not picked up/)), rows(/not picked up/));
+  check('old open claim',                   /#L01/.test(rows(/more than 30 days/)), rows(/more than 30 days/));
   check('orphan sale',                    /Gone Product/.test(rows(/matches no current product/)));
   check('oversold',                       /Test Pack: sold 3 of 1/.test(rows(/more than bought/)));
   check('$0 sale',                        /sale 3/.test(rows(/at \$0/)));
   check('no addresses printed',           !/1 Test St\b|99 Other Rd/.test(report(r)));
   // Straight at the SQLite handle, not the wrapper: the FILE must be read-only.
   check('file opened read-only',           (() => { try { openDb(f).raw.exec('DELETE FROM bot_orders'); return false; } catch (_) { return true; } })());
-  check('file still has all its orders',   new DatabaseSync(f, { readOnly: true }).prepare('SELECT COUNT(*) n FROM bot_orders').get().n === 15);
+  check('file still has all its orders',   new DatabaseSync(f, { readOnly: true }).prepare('SELECT COUNT(*) n FROM bot_orders').get().n === 16);
 }
 
 if (!process.env.KEEP) fs.rmSync(tmp, { recursive: true, force: true });

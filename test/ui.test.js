@@ -164,6 +164,21 @@ for (const [num, retailer, items, status, fee] of [
               VALUES ('Mattel',?,?,?,?,65,?,'Test Buyer')`).run([retailer, num, status, JSON.stringify(items), fee]);
 }
 
+// The sections below sell units, so these delivered boxes count as picked up.
+DB.prepare(`INSERT INTO bot_checkins (order_id, checked_at) SELECT id, '2026-09-20' FROM bot_orders
+            WHERE order_number IN ('901','902','903','P04','M01')`).run();
+
+// Pick-up test data: a category of its own so counts are exact (made up).
+for (const [num, status, trk, addr, items, total] of [
+  ['K01', 'Delivered', '870000000701', '10 Pick Rd, Springfield', ['2x Test Pick ETB @ $50.00', '1x Test Pick Tin @ $20.00'], 120],
+  ['K02', 'Delivered', '870000000702', '10 Pick Rd, Springfield', ['1x Test Pick ETB @ $50.00'], 50],
+  ['K03', 'Delivered', '870000000703', '20 Other Ln, Springfield', ['2x Test Pick ETB @ $50.00'], 100],
+  ['K04', 'Shipped',   '870000000704', '20 Other Ln, Springfield', ['1x Test Pick ETB @ $50.00'], 50],
+]) {
+  DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, tracking, shipping_name, shipping_address, items, order_total)
+              VALUES ('Test Cat','Test Store',?,?,?,'Test Buyer',?,?,?)`).run([num, status, trk, addr, JSON.stringify(items), total]);
+}
+
 // ── Route dispatch for the page's fetch() ───────────────────────────────────
 const calls = [];
 function matchRoute(verb, pathname) {
@@ -649,7 +664,7 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('history lists both',               d.querySelectorAll('#bs-history .bs-sale').length === 2);
 
     set('bs-qty', '5');
-    check('overselling warns (1 left)',       /Only 1 left/.test(d.getElementById('bs-preview').textContent));
+    check('overselling warns (1 in hand)',   /Only 1 in hand/.test(d.getElementById('bs-preview').textContent));
 
     // Delete the newest (qty 1) from history.
     d.querySelector('#bs-history .bs-sale .bs-del').click(); await tick(120);
@@ -924,6 +939,129 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     bf.value = '5'; bf.dispatchEvent(new w.Event('input')); await tick(350);
     check('no typed fee in the box → no warning', d.getElementById('bf-double').style.display === 'none');
     w.closeBoxFee(); await tick();
+  }
+
+  console.log('\n── Pick-up: stock is what you picked up and checked (real clicks) ──');
+  {
+    const statusSel = d.getElementById('bot-filter-status');
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
+    const tab = () => [...d.querySelectorAll('.btab')].find(b => /^Test Cat/.test(b.textContent.trim()));
+    tab().click(); await tick(80);
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By product/.test(b.textContent)).click(); await tick(80);
+    const etb  = () => rowNamed(/Test Pick ETB/);
+    const cell = (tr, i) => tr.querySelectorAll(':scope > td')[i];
+    check('nothing picked up: 0 in hand',       cell(etb(), 1).querySelector('.qty-hand').textContent === '0');
+    check('shows +5 to pick up, +1 on the way', /\+5 to pick up/.test(cell(etb(), 1).textContent) && /\+1 on the way/.test(cell(etb(), 1).textContent), cell(etb(), 1).textContent.replace(/\s+/g, ' ').trim());
+    check('SOLD 0/0 (nothing in hand)',         cell(etb(), 5).textContent.trim() === '0/0');
+    check('TO PICK UP card counts delivered units', Number(d.getElementById('bs-pickup').textContent) >= 6, d.getElementById('bs-pickup').textContent);
+
+    // Card → pick-up view
+    d.getElementById('bsc-pickup').click(); await tick(120);
+    const wrap = d.getElementById('bot-pickup-wrap');
+    check('To pick up view shown',              wrap.style.display !== 'none' && d.getElementById('bot-product-table-wrap').style.display === 'none');
+    const addrs = () => [...wrap.querySelectorAll('.bot-pick-addr')];
+    const boxes = () => [...wrap.querySelectorAll('.bot-pick-box')];
+    check('grouped by address (2)',             addrs().length === 2, addrs().length);
+    check('3 delivered boxes; shipped one not listed', boxes().length === 3 && !boxes().some(b => /870000000704/.test(b.textContent)), boxes().length);
+    const addr10 = addrs().find(a => /10 Pick Rd/.test(a.textContent));
+    check('address shows 2 boxes · 4 units',    /2 boxes · 4 units/.test(addr10.textContent), addr10.textContent.replace(/\s+/g, ' ').slice(0, 120));
+
+    // Box with a problem: K03, one ETB is the wrong item.
+    const box = trk => boxes().find(b => b.textContent.includes(trk));
+    box('870000000703').querySelector('.bot-pick-checkin').click(); await tick(60);
+    const ov = d.getElementById('bot-checkin-overlay');
+    check('check-in dialog opens visibly',      isVisible(ov));
+    const line = [...d.querySelectorAll('#ci-lines tr.ci-line')][0];
+    check('shows what should be inside',        /Test Pick ETB/.test(line.textContent) && line.dataset.qty === '2');
+    const good = line.querySelector('.ci-good');
+    good.value = '1'; good.dispatchEvent(new w.Event('input')); await tick();
+    check('fewer than ordered → asks why',      line.querySelector('.ci-why').style.display !== 'none');
+    const kind = line.querySelector('.ci-kind'); kind.value = 'wrong'; kind.dispatchEvent(new w.Event('change')); await tick();
+    check('wrong item → asks what came',        line.querySelector('.ci-got').style.display !== 'none');
+    d.getElementById('ci-save').click(); await tick(80);
+    check('must say what came instead',         d.getElementById('ci-error').style.display !== 'none' && isVisible(ov));
+    line.querySelector('.ci-got').value = 'Test Pick Bundle';
+    d.getElementById('ci-save').click(); await tick(200);
+    const k03 = DB.prepare("SELECT id FROM bot_orders WHERE order_number='K03'").get().id;
+    const iss = DB.prepare('SELECT * FROM bot_issues WHERE order_id=?').all([k03]);
+    check('K03 checked in',                     !!DB.prepare('SELECT 1 FROM bot_checkins WHERE order_id=?').get([k03]));
+    check('claim opened: 1 wrong, got Bundle',  iss.length === 1 && iss[0].kind === 'wrong' && iss[0].qty === 1 && iss[0].got_item === 'Test Pick Bundle' && iss[0].status === 'open', JSON.stringify(iss));
+    check('dialog closed, box left the list',   !isVisible(ov) && !box('870000000703'));
+
+    // Bulk: K01 all good.
+    box('870000000701').querySelector('input[type=checkbox]').click(); await tick(60);
+    check('bar: 1 box selected',                /1<\/b> box selected/.test(d.getElementById('bot-pick-bar').innerHTML));
+    d.getElementById('bot-pick-allgood').click(); await tick(200);
+    check('K01 checked in, no claims',          !!DB.prepare("SELECT 1 FROM bot_checkins WHERE order_id=(SELECT id FROM bot_orders WHERE order_number='K01')").get() &&
+                                                DB.prepare("SELECT COUNT(*) n FROM bot_issues WHERE order_id=(SELECT id FROM bot_orders WHERE order_number='K01')").get().n === 0);
+    check('only K02 left to pick up',           boxes().length === 1 && !!box('870000000702'));
+
+    // Product view now
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By product/.test(b.textContent)).click(); await tick(100);
+    check('ETB in hand = 2 (K01) + 1 good (K03)', cell(etb(), 1).querySelector('.qty-hand').textContent === '3', cell(etb(), 1).textContent.replace(/\s+/g, ' ').trim());
+    check('+1 to pick up, 1 in claim',          /\+1 to pick up/.test(cell(etb(), 1).textContent) && /1 in claim/.test(cell(etb(), 1).textContent));
+    check('Tin in hand 1',                      cell(rowNamed(/Test Pick Tin/), 1).querySelector('.qty-hand').textContent === '1');
+    check('no Bundle row yet (claim open)',     !rowNamed(/Test Pick Bundle/));
+    await tick(80);
+    check('CLAIMS card: $50.00, 1 open',        /\$50\.00/.test(d.getElementById('bs-claims').textContent) && /1 open/.test(d.getElementById('bs-claims-sub').textContent), d.getElementById('bs-claims').textContent + ' / ' + d.getElementById('bs-claims-sub').textContent);
+
+    // Selling more than in hand warns.
+    etb().querySelector('button[title="Record a sale"]').click(); await tick();
+    const q = d.getElementById('bs-qty'); q.value = '4'; q.dispatchEvent(new w.Event('input'));
+    check('sale warns: only 3 in hand',         /Only 3 in hand/.test(d.getElementById('bs-preview').textContent), d.getElementById('bs-preview').textContent.trim());
+    w.closeBotSale(); await tick();
+
+    // Claims: refund it.
+    const spentBefore = cardMoney('bs-spent');
+    d.getElementById('bsc-claims').click(); await tick(120);
+    const cov = d.getElementById('bot-claims-overlay');
+    check('claims list opens visibly',          isVisible(cov));
+    const row = () => [...d.querySelectorAll('#cl-rows tr.cl-row')].find(r => /Test Pick ETB/.test(r.textContent) && /K03/.test(r.textContent));
+    check('claim listed with cost $50.00',      row() && /\$50\.00/.test(row().textContent) && /Wrong item/.test(row().textContent) && /got: Test Pick Bundle/.test(row().textContent));
+    const st = row().querySelector('.cl-status'); st.value = 'refunded'; st.dispatchEvent(new w.Event('change')); await tick();
+    check('refund box appears, prefilled $50',  row().querySelector('.cl-refund').style.display !== 'none' && row().querySelector('.cl-refund').value === '50');
+    row().querySelector('.cl-save').click(); await tick(250);
+    check('refund recorded on the order',       DB.prepare("SELECT refunded_amount FROM bot_orders WHERE order_number='K03'").get().refunded_amount === 50);
+    check('SPENT down by $50',                  Math.round((spentBefore - cardMoney('bs-spent')) * 100) / 100 === 50, `${spentBefore} → ${cardMoney('bs-spent')}`);
+    check('CLAIMS card: $0 pending, $50 refunded', cardMoney('bs-claims') === 0 && /\$50\.00 refunded/.test(d.getElementById('bs-claims-sub').textContent), d.getElementById('bs-claims-sub').textContent);
+
+    // Changed mind: the store denied it and you keep the Bundle → refund reverses, Bundle joins stock at $50.
+    const st2 = row().querySelector('.cl-status'); st2.value = 'denied_keep'; st2.dispatchEvent(new w.Event('change')); await tick();
+    row().querySelector('.cl-save').click(); await tick(250);
+    check('refund reversed',                    DB.prepare("SELECT refunded_amount FROM bot_orders WHERE order_number='K03'").get().refunded_amount === 0);
+    check('wrong item offers "Denied — kept it"', [...row().querySelector('.cl-status').options].some(o => o.value === 'denied_keep'));
+    w.closeClaims(); await tick();
+    tab().click(); await tick(100);
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By product/.test(b.textContent)).click(); await tick(100);
+    const bundle = rowNamed(/Test Pick Bundle/);
+    check('kept Bundle now in stock (1)',       bundle && cell(bundle, 1).querySelector('.qty-hand').textContent === '1');
+    check('…at what you paid ($50.00)',         bundle && /\$50\.00/.test(cell(bundle, 2).textContent), bundle && cell(bundle, 2).textContent.trim());
+    check('ETB claim gone, still 3 in hand',    cell(etb(), 1).querySelector('.qty-hand').textContent === '3' && !/in claim/.test(cell(etb(), 1).textContent));
+
+    // Undo a pick-up from the package view; blocked once a claim moved on.
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(100);
+    const pkRow = trk => [...d.querySelectorAll('#bot-pkg-tbody > tr')].find(r => r.textContent.includes(trk));
+    check('package view: picked-up mark',       /picked up/.test(pkRow('870000000701').textContent));
+    check('package view: not-picked-up mark',   /not picked up/.test(pkRow('870000000702').textContent));
+    const nAlerts = alerts.length;
+    pkRow('870000000703').querySelector('.bot-picked button').click(); await tick(150);
+    check('undo blocked while a claim is resolved', alerts.length === nAlerts + 1 && /claim/.test(alerts[alerts.length - 1]) &&
+                                                !!DB.prepare('SELECT 1 FROM bot_checkins WHERE order_id=?').get([k03]));
+    pkRow('870000000701').querySelector('.bot-picked button').click(); await tick(150);
+    check('undo K01 → back to pick up',         !DB.prepare("SELECT 1 FROM bot_checkins WHERE order_id=(SELECT id FROM bot_orders WHERE order_number='K01')").get());
+
+    // Server-side validation
+    const post = b => fakeFetch('/api/admin/bot-checkin', { method: 'POST', body: JSON.stringify(b) });
+    const k02 = DB.prepare("SELECT id FROM bot_orders WHERE order_number='K02'").get().id;
+    const { itemKey } = require(path.join(__dirname, '..', 'itemNames.js'));
+    check('rejects more than ordered',          (await post({ orderIds: [k02], issues: [{ order_id: k02, item_key: itemKey('Test Pick ETB'), qty: 2, kind: 'missing' }] })).status === 400);
+    check('rejects an item not in the order',   (await post({ orderIds: [k02], issues: [{ order_id: k02, item_key: 'nope', qty: 1, kind: 'missing' }] })).status === 400);
+    check('rejects an unknown problem type',    (await post({ orderIds: [k02], issues: [{ order_id: k02, item_key: itemKey('Test Pick ETB'), qty: 1, kind: 'lost' }] })).status === 400);
+    check('nothing written by rejected calls',  !DB.prepare('SELECT 1 FROM bot_checkins WHERE order_id=?').get([k02]));
+    const miss = await post({ orderIds: [k02], issues: [{ order_id: k02, item_key: itemKey('Test Pick ETB'), qty: 1, kind: 'missing' }] });
+    const mid = DB.prepare('SELECT id FROM bot_issues WHERE order_id=?').get([k02]).id;
+    const keepMissing = await fakeFetch('/api/admin/bot-issues/' + mid, { method: 'PATCH', body: JSON.stringify({ status: 'denied_keep' }) });
+    check('a missing item can\'t be "kept"',    miss.status === 200 && keepMissing.status === 400);
   }
 
   console.log('\n── Orders table tracking links use the right carrier too ──');

@@ -462,7 +462,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 </style>
 
   <!-- Stats Row -->
-  <div style="display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:10px;margin-bottom:20px;" id="bot-stats-row">
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px;margin-bottom:20px;" id="bot-stats-row">
     <div class="bot-stat"><div class="lbl">TOTAL</div><div class="val" id="bs-total">0</div></div>
     <div class="bot-stat s-green clickable" onclick="botFilterStatus('Confirmed')" id="bsc-Confirmed"><div class="lbl">CONFIRMED</div><div class="val" id="bs-confirmed">0</div></div>
     <div class="bot-stat s-purple clickable" onclick="botFilterStatus('Shipped')" id="bsc-Shipped"><div class="lbl">SHIPPED</div><div class="val" id="bs-shipped">0</div></div>
@@ -477,6 +477,12 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="bot-stat s-profit" id="bsc-profit" data-tip="From recorded sales: money in − selling fees − landed cost of the units sold. ROI = profit ÷ that landed cost.">
       <div class="lbl">SALES PROFIT</div><div class="val" style="font-size:18px;" id="bs-profit">$0</div>
       <div class="sub" id="bs-profit-sub"></div></div>
+    <div class="bot-stat s-amber clickable" id="bsc-pickup" onclick="botOpenPickup()" data-tip="Delivered boxes you haven't picked up and checked yet. Click to see them by address.">
+      <div class="lbl">TO PICK UP</div><div class="val" style="font-size:18px;" id="bs-pickup">0</div>
+      <div class="sub" id="bs-pickup-sub"></div></div>
+    <div class="bot-stat s-red clickable" id="bsc-claims" onclick="openClaims()" data-tip="Missing, wrong or damaged items waiting on a refund. Click to manage claims.">
+      <div class="lbl">CLAIMS</div><div class="val" style="font-size:18px;" id="bs-claims">$0</div>
+      <div class="sub" id="bs-claims-sub"></div></div>
   </div>
 
   <!-- Date range. Applies to the date an order entered its CURRENT status, so
@@ -578,6 +584,8 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <tbody id="bot-pkg-tbody"></tbody>
       </table>
     </div>
+    <!-- To pick up: delivered boxes not yet checked in, grouped by address -->
+    <div id="bot-pickup-wrap" style="display:none;"></div>
     <div id="bot-product-table-wrap" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
         <thead>
@@ -936,6 +944,40 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <button class="btn btn-ghost btn-sm" onclick="closeBotItemEdit()">Cancel</button>
       <button class="btn btn-primary btn-sm" onclick="saveBotItemEdit()"><i class="fa fa-save"></i> Save</button>
     </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: CHECK IN A BOX (pick-up) ═══════════════════════════════════════ -->
+<div class="overlay" id="bot-checkin-overlay" onclick="if(event.target.id==='bot-checkin-overlay')closeCheckin()">
+  <div class="modal" style="width:620px;max-height:88vh;overflow:auto;">
+    <h2 style="margin-bottom:4px;"><i class="fa fa-box-open" style="color:var(--accent)"></i> Check in box</h2>
+    <div id="ci-sub" style="font-size:12px;color:var(--muted);margin-bottom:12px;"></div>
+    <div style="font-size:12px;margin-bottom:8px;">Picked up on <input type="date" id="ci-date" style="font-size:12px;padding:3px 6px;"></div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px;">
+      <thead><tr style="font-size:10px;letter-spacing:.06em;color:var(--muted);text-align:left;">
+        <th style="padding:4px 0;">SHOULD BE INSIDE</th><th style="text-align:center;">ORDERED</th><th style="text-align:center;">GOOD</th><th>IF NOT — WHY</th></tr></thead>
+      <tbody id="ci-lines"></tbody>
+    </table>
+    <div id="ci-error" style="font-size:12px;color:#f87171;margin-bottom:8px;display:none;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-ghost btn-sm" onclick="closeCheckin()">Cancel</button>
+      <button class="btn btn-ghost btn-sm" id="ci-allgood" onclick="saveCheckin(true)" style="color:#4ade80;"><i class="fa fa-check-double"></i> All good</button>
+      <button class="btn btn-primary btn-sm" id="ci-save" onclick="saveCheckin(false)"><i class="fa fa-save"></i> Save check-in</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: CLAIMS ══════════════════════════════════════════════════════════ -->
+<div class="overlay" id="bot-claims-overlay" onclick="if(event.target.id==='bot-claims-overlay')closeClaims()">
+  <div class="modal" style="width:860px;max-width:96vw;max-height:88vh;overflow:auto;">
+    <h2 style="margin-bottom:4px;"><i class="fa fa-file-invoice-dollar" style="color:var(--accent)"></i> Claims</h2>
+    <div id="cl-sub" style="font-size:12px;color:var(--muted);margin-bottom:12px;"></div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr style="font-size:10px;letter-spacing:.06em;color:var(--muted);text-align:left;">
+        <th style="padding:4px 0;">ITEM</th><th>PROBLEM</th><th>ORDER</th><th style="text-align:right;">COST</th><th>STATUS</th><th style="text-align:right;">REFUND</th><th></th></tr></thead>
+      <tbody id="cl-rows"></tbody>
+    </table>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px;"><button class="btn btn-ghost btn-sm" onclick="closeClaims()">Close</button></div>
   </div>
 </div>
 
@@ -2041,6 +2083,15 @@ function botRenderMoneyCards(ordersInRange) {
   const pEl = document.getElementById('bs-profit');
   pEl.textContent = sales.length ? (profit >= 0 ? '+' : '') + botMoneyFmt(profit) : '$0.00';
   pEl.style.color = !sales.length ? 'var(--muted)' : profit >= 0 ? '#4ade80' : '#f87171';
+  const cl = _botMoney.claims || {};
+  document.getElementById('bs-pickup').textContent = cl.toPickUpUnits || 0;
+  document.getElementById('bs-pickup-sub').textContent = cl.toPickUpUnits ? 'units delivered, not checked' : 'all picked up';
+  const ce = document.getElementById('bs-claims');
+  ce.textContent = botMoneyFmt(cl.pending || 0);
+  ce.style.color = cl.open ? '#f87171' : 'var(--muted)';
+  document.getElementById('bs-claims-sub').textContent = cl.open || cl.refunded || cl.writtenOff
+    ? `${cl.open || 0} open${cl.refunded ? ` · ${botMoneyFmt(cl.refunded)} refunded` : ''}${cl.writtenOff ? ` · ${botMoneyFmt(cl.writtenOff)} lost` : ''}`
+    : 'none';
   document.getElementById('bs-profit-sub').textContent = sales.length
     ? `${units} sold · ${botMoneyFmt(revenue)} in${cost > 0 ? ` · ROI ${Math.round(profit / cost * 100)}%` : ''}`
     : 'no sales yet';
@@ -2714,12 +2765,226 @@ function botSetView(mode) {
 
 function botApplyView(view) {
   document.getElementById('bot-pkg-wrap').style.display           = view === 'package' ? '' : 'none';
-  document.getElementById('bot-product-table-wrap').style.display = view === 'package' ? 'none' : '';
+  document.getElementById('bot-pickup-wrap').style.display        = view === 'pickup'  ? '' : 'none';
+  document.getElementById('bot-product-table-wrap').style.display = view === 'product' ? '' : 'none';
   document.getElementById('bot-view-switch').innerHTML =
+    `<button class="bot-vs-btn${view === 'pickup' ? ' active' : ''}" onclick="botSetView('pickup')"><i class="fa fa-map-marker-alt"></i> To pick up</button>` +
     `<button class="bot-vs-btn${view === 'package' ? ' active' : ''}" onclick="botSetView('package')"><i class="fa fa-box"></i> By package</button>` +
     `<button class="bot-vs-btn${view === 'product' ? ' active' : ''}" onclick="botSetView('product')"><i class="fa fa-layer-group"></i> By product</button>` +
     (botCurCat() === 'All' ? `<button class="bot-vs-btn" onclick="botShowOrderList(true)"><i class="fa fa-list"></i> Order list</button>` : '');
   if (view !== 'package') { _botPkgSelected.clear(); botRenderActionBar(); }
+}
+
+// ── To pick up ──────────────────────────────────────────────────────────────
+// Delivered ≠ in your hands. Boxes wait here, grouped by address, until you
+// pick them up and check what's inside. Only checked-in units count as stock.
+let _botPickup = [];
+let _botPickRows = [];
+const _botPickSel = new Set();
+
+function botOpenPickup() {
+  _botViewMode = 'pickup';
+  if (botCurCat() === 'All' && _botAllOrders) { _botAllOrders = false; botSetCat('All'); }
+  else loadBotItemView(botCurCat());
+}
+
+function renderBotPickup() {
+  const wrap = document.getElementById('bot-pickup-wrap');
+  const q = (document.getElementById('bot-item-search').value || '').toLowerCase();
+  let rows = _botPickup;
+  if (q) rows = rows.filter(p => [p.tracking, ...p.orders.map(o => o.order_number), ...p.shipTo.map(s => s.name), ...p.shipTo.map(s => s.address),
+    ...p.contents.map(c => c.name)].filter(Boolean).join(' ').toLowerCase().includes(q));
+  _botPickRows = rows;
+  const units = rows.reduce((a, p) => a + p.units, 0);
+  document.getElementById('bot-item-count').textContent = `${rows.length} box${rows.length === 1 ? '' : 'es'} · ${units} unit${units === 1 ? '' : 's'} to pick up`;
+  document.getElementById('bot-unlinked-banner').innerHTML = '';
+  if (!rows.length) {
+    wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">Nothing waiting — every delivered box is checked in.</div>`;
+    return;
+  }
+  // Group by address (first ship-to of the box).
+  const groups = new Map();
+  rows.forEach((p, i) => {
+    const s0 = p.shipTo[0] || {};
+    const k = normalizeAddr(s0.address || '') || '—';
+    if (!groups.has(k)) groups.set(k, { address: s0.address || 'No address', names: new Set(), items: [] });
+    const g = groups.get(k);
+    p.shipTo.forEach(s => s.name && g.names.add(s.name));
+    g.items.push({ p, i });
+  });
+  const selN = rows.filter(p => _botPickSel.has(p.key)).length;
+  const date = (document.getElementById('bot-pick-date') || {}).value || botLocalToday();
+  wrap.innerHTML = `
+    <div id="bot-pick-bar" style="display:${selN ? 'flex' : 'none'};gap:10px;align-items:center;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:8px 12px;margin-bottom:10px;font-size:12px;">
+      <b>${selN}</b> box${selN === 1 ? '' : 'es'} selected → picked up on
+      <input type="date" id="bot-pick-date" value="${date}" max="${botLocalToday()}" style="font-size:12px;padding:3px 6px;">
+      <button class="btn btn-primary btn-sm" id="bot-pick-allgood" onclick="botPickupAllGood([..._botPickSel])"><i class="fa fa-check-double"></i> All good — check in</button>
+      <button class="btn btn-ghost btn-sm" onclick="_botPickSel.clear();renderBotPickup()">Clear</button>
+      <span style="color:var(--muted);">Anything wrong in a box? Use its <b>Check in</b> button instead.</span>
+    </div>` +
+    [...groups.values()].map(g => {
+      const gUnits = g.items.reduce((a, x) => a + x.p.units, 0);
+      const allSel = g.items.every(x => _botPickSel.has(x.p.key));
+      return `<div class="bot-pick-addr" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:10px;overflow:hidden;">
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);">
+          <input type="checkbox" ${allSel ? 'checked' : ''} onchange="botPickToggleAddr('${esc(normalizeAddr(g.address) || '—')}', this.checked)" data-tip="Select every box at this address">
+          <i class="fa fa-map-marker-alt" style="color:#fbbf24;"></i>
+          <div style="flex:1;min-width:0;"><b class="clip">${esc(g.address)}</b>
+            <div style="font-size:11px;color:var(--muted);">${esc([...g.names].join(', '))}</div></div>
+          <span style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.items.length} box${g.items.length === 1 ? '' : 'es'} · ${gUnits} unit${gUnits === 1 ? '' : 's'}</span>
+        </div>
+        ${g.items.map(({ p, i }) => `
+          <div class="bot-pick-box" style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;">
+            <input type="checkbox" ${_botPickSel.has(p.key) ? 'checked' : ''} onchange="botPickToggle(${i}, this.checked)" style="margin-top:3px;">
+            <div style="width:170px;white-space:nowrap;">${p.tracking ? `<a href="${esc(p.trackUrl)}" target="_blank" rel="noopener" style="color:#60a5fa;">${esc(p.tracking)}</a>` : '<span style="color:var(--muted);">no tracking</span>'}
+              <div style="font-size:10px;color:var(--muted);">${esc(p.retailers.join(' · '))}${p.delivered_date ? ' · delivered ' + botShortDate(p.delivered_date) : ''}</div></div>
+            <div style="flex:1;">${p.contents.map(c => `<span class="bot-pkg-tag">${esc(c.name)} ×${c.qty}</span>`).join('')}
+              <div style="font-size:10px;color:var(--muted);margin-top:2px;">${p.orders.map(o => esc(o.order_number || '')).join(', ')}</div></div>
+            <button class="btn btn-ghost btn-sm bot-pick-checkin" onclick="openCheckin(${i})"><i class="fa fa-box-open"></i> Check in</button>
+          </div>`).join('')}
+      </div>`;
+    }).join('');
+}
+
+function botPickToggle(i, on) {
+  const p = _botPickRows[i]; if (!p) return;
+  on ? _botPickSel.add(p.key) : _botPickSel.delete(p.key);
+  renderBotPickup();
+}
+function botPickToggleAddr(addrKey, on) {
+  _botPickRows.filter(p => (normalizeAddr((p.shipTo[0] || {}).address || '') || '—') === addrKey)
+    .forEach(p => on ? _botPickSel.add(p.key) : _botPickSel.delete(p.key));
+  renderBotPickup();
+}
+
+async function botAfterStockChange() {
+  botLoadMoney();
+  await loadBotItemView(botCurCat());
+}
+
+async function botPickupAllGood(keys) {
+  const pk = _botPickup.filter(p => keys.includes(p.key));
+  const ids = pk.flatMap(p => p.orders.filter(o => !o.checked_in).map(o => o.id));
+  if (!ids.length) return;
+  const date = (document.getElementById('bot-pick-date') || {}).value || botLocalToday();
+  const r = await api('POST', '/admin/bot-checkin', { orderIds: ids, date, issues: [] });
+  if (!r) { alert('Could not check in.'); return; }
+  keys.forEach(k => _botPickSel.delete(k));
+  await botAfterStockChange();
+}
+
+// ── Check-in dialog: what should be in the box vs what's actually there ─────
+let _ciPkg = null;
+function openCheckin(i) {
+  const p = _botPickRows[i]; if (!p) return;
+  _ciPkg = p;
+  const s0 = p.shipTo[0] || {};
+  document.getElementById('ci-sub').textContent = `${p.tracking || 'No tracking'} · ${p.retailers.join(', ')} · ${s0.address || ''}`;
+  document.getElementById('ci-date').value = botLocalToday();
+  document.getElementById('ci-error').style.display = 'none';
+  const orders = p.orders.filter(o => !o.checked_in);
+  document.getElementById('ci-lines').innerHTML = orders.flatMap(o => (o.lines || []).map(l => `
+    <tr class="ci-line" data-order="${Number(o.id)}" data-key="${esc(l.item_key)}" data-name="${esc(l.item_name)}" data-qty="${l.qty}" style="border-top:1px solid var(--border);vertical-align:top;">
+      <td style="padding:6px 0;">${esc(l.name)}${orders.length > 1 ? `<div style="font-size:10px;color:var(--muted);">${esc(o.order_number || '')}</div>` : ''}</td>
+      <td style="text-align:center;padding-top:6px;">${l.qty}</td>
+      <td style="text-align:center;"><input type="number" class="ci-good" min="0" max="${l.qty}" step="1" value="${l.qty}" oninput="ciLineChanged(this)" style="width:54px;text-align:center;"></td>
+      <td><div class="ci-why" style="display:none;">
+        <select class="ci-kind" onchange="ciLineChanged(this)" style="font-size:12px;">
+          <option value="missing">Missing</option><option value="wrong">Wrong item</option><option value="damaged">Damaged</option></select>
+        <input type="text" class="ci-got" placeholder="What came instead?" style="display:none;font-size:12px;width:160px;margin-top:3px;">
+      </div></td>
+    </tr>`)).join('');
+  document.getElementById('bot-checkin-overlay').classList.add('open');
+}
+function closeCheckin() { document.getElementById('bot-checkin-overlay').classList.remove('open'); _ciPkg = null; }
+function ciLineChanged(el) {
+  const tr = el.closest('tr');
+  const short = (parseInt(tr.querySelector('.ci-good').value, 10) || 0) < Number(tr.dataset.qty);
+  tr.querySelector('.ci-why').style.display = short ? '' : 'none';
+  tr.querySelector('.ci-got').style.display = short && tr.querySelector('.ci-kind').value === 'wrong' ? '' : 'none';
+}
+async function saveCheckin(allGood) {
+  if (!_ciPkg) return;
+  const err = document.getElementById('ci-error');
+  const issues = [];
+  if (!allGood) {
+    for (const tr of document.querySelectorAll('#ci-lines tr.ci-line')) {
+      const qty = Number(tr.dataset.qty);
+      const good = parseInt(tr.querySelector('.ci-good').value, 10);
+      if (!(good >= 0 && good <= qty)) { err.textContent = `"Good" must be between 0 and ${qty}.`; err.style.display = ''; return; }
+      if (good < qty) {
+        const kind = tr.querySelector('.ci-kind').value;
+        const got  = tr.querySelector('.ci-got').value.trim();
+        if (kind === 'wrong' && !got) { err.textContent = 'Say what came instead of the wrong item.'; err.style.display = ''; return; }
+        issues.push({ order_id: Number(tr.dataset.order), item_key: tr.dataset.key, item_name: tr.dataset.name, qty: qty - good, kind, got_item: got || null });
+      }
+    }
+  }
+  const ids = _ciPkg.orders.filter(o => !o.checked_in).map(o => o.id);
+  const r = await api('POST', '/admin/bot-checkin', { orderIds: ids, date: document.getElementById('ci-date').value || botLocalToday(), issues });
+  if (!r) { err.textContent = 'Could not save the check-in.'; err.style.display = ''; return; }
+  _botPickSel.delete(_ciPkg.key);
+  closeCheckin();
+  await botAfterStockChange();
+}
+
+async function botUndoCheckin(orderId) {
+  if (!confirm('Undo this pick-up? The box goes back to "To pick up" and its open claims are removed.')) return;
+  const res = await fetch('/api/admin/bot-checkin/' + orderId, { method: 'DELETE', headers: { Authorization: 'Bearer ' + TOKEN } });
+  if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Could not undo.'); return; }
+  await botAfterStockChange();
+}
+
+// ── Claims ──────────────────────────────────────────────────────────────────
+const CLAIM_STATUS = { open: 'Open', claim_filed: 'Claim filed', refunded: 'Refunded', denied_keep: 'Denied — kept it', denied_writeoff: 'Denied — write off' };
+const CLAIM_KIND   = { missing: 'Missing', wrong: 'Wrong item', damaged: 'Damaged' };
+let _claims = [];
+async function openClaims() {
+  document.getElementById('bot-claims-overlay').classList.add('open');
+  await loadClaims();
+}
+function closeClaims() { document.getElementById('bot-claims-overlay').classList.remove('open'); }
+async function loadClaims() {
+  _claims = (await api('GET', '/admin/bot-issues')) || [];
+  const open = _claims.filter(c => c.status === 'open' || c.status === 'claim_filed');
+  document.getElementById('cl-sub').textContent = _claims.length
+    ? `${open.length} open · $${open.reduce((a, c) => a + c.value, 0).toFixed(2)} waiting on refunds`
+    : 'No claims — nothing missing, wrong or damaged so far.';
+  document.getElementById('cl-rows').innerHTML = _claims.map((c, i) => {
+    const opts = Object.entries(CLAIM_STATUS).filter(([k]) => !(k === 'denied_keep' && c.kind === 'missing'))
+      .map(([k, v]) => `<option value="${k}" ${k === c.status ? 'selected' : ''}>${v}</option>`).join('');
+    const done = !(c.status === 'open' || c.status === 'claim_filed');
+    return `<tr class="cl-row" style="border-top:1px solid var(--border);${done ? 'opacity:.6;' : ''}">
+      <td style="padding:6px 0;">${esc(c.product)} ×${c.qty}</td>
+      <td>${CLAIM_KIND[c.kind] || c.kind}${c.got_item ? `<div style="font-size:10px;color:var(--muted);">got: ${esc(c.got_item)}</div>` : ''}</td>
+      <td>${esc(c.order_number || '')}<div style="font-size:10px;color:var(--muted);">${esc(c.retailer || '')}</div></td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;">$${c.value.toFixed(2)}</td>
+      <td><select class="cl-status" onchange="claimStatusChanged(${i}, this)" style="font-size:12px;">${opts}</select></td>
+      <td style="text-align:right;"><input type="number" class="cl-refund" step="0.01" min="0" value="${c.refund_amount || (c.status === 'refunded' ? '' : c.value)}"
+          style="width:80px;text-align:right;display:${c.status === 'refunded' ? '' : 'none'};"></td>
+      <td><button class="btn btn-ghost btn-sm cl-save" onclick="saveClaim(${i}, this)">Save</button></td>
+    </tr>`;
+  }).join('');
+}
+function claimStatusChanged(i, sel) {
+  const tr = sel.closest('tr');
+  tr.querySelector('.cl-refund').style.display = sel.value === 'refunded' ? '' : 'none';
+}
+async function saveClaim(i, btn) {
+  const c = _claims[i]; if (!c) return;
+  const tr = btn.closest('tr');
+  const status = tr.querySelector('.cl-status').value;
+  const body = { status };
+  if (status === 'refunded') {
+    const v = parseFloat(tr.querySelector('.cl-refund').value);
+    if (!(v >= 0)) { alert('Enter the refund amount.'); return; }
+    body.refund_amount = v;
+  }
+  btn.disabled = true;
+  const res = await fetch('/api/admin/bot-issues/' + c.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN }, body: JSON.stringify(body) });
+  if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || 'Could not save.'); btn.disabled = false; return; }
+  await loadClaims();
+  await loadBotOrders();          // SPENT moves with refunds
 }
 
 // Delivered packages and flagged ones (one tracking, two addresses) are never
@@ -2765,7 +3030,10 @@ function renderBotPackages() {
       return `<tr class="${sel ? 'sel' : ''}" style="border-bottom:1px solid var(--border);vertical-align:top;">
         <td style="padding:9px 8px 9px 12px;"><input type="checkbox" ${sel ? 'checked' : ''} ${botPkgSelectable(p) ? '' : 'disabled'} onchange="botPkgToggle(${i}, this.checked)"></td>
         <td style="padding:9px 8px;white-space:nowrap;">${trk}<div style="font-size:10px;color:var(--muted);margin-top:2px;">${esc(p.retailers.join(' · '))}</div></td>
-        <td style="padding:9px 8px;white-space:nowrap;"><span class="bpill bpill-${esc(p.status)}">${esc(p.status)}</span>${p.mixedStatus ? '<span style="font-size:10px;color:var(--muted);"> (mixed)</span>' : ''}<div style="font-size:11px;color:var(--muted);margin-top:3px;">${esc(when)}</div></td>
+        <td style="padding:9px 8px;white-space:nowrap;"><span class="bpill bpill-${esc(p.status)}">${esc(p.status)}</span>${p.mixedStatus ? '<span style="font-size:10px;color:var(--muted);"> (mixed)</span>' : ''}<div style="font-size:11px;color:var(--muted);margin-top:3px;">${esc(when)}</div>${
+          p.orders.some(o => o.checked_in) ? `<div class="bot-picked" style="font-size:11px;color:#4ade80;margin-top:2px;">✓ picked up ${esc(botShortDate((p.orders.find(o => o.checked_in) || {}).checked_at || ''))}
+            <button onclick="botUndoCheckin(${Number((p.orders.find(o => o.checked_in) || {}).id)})" data-tip="Undo pick-up" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:10px;">✕</button></div>`
+          : p.status === 'Delivered' ? `<div style="font-size:11px;color:#fbbf24;margin-top:2px;">not picked up</div>` : ''}</td>
         <td style="padding:9px 8px;max-width:260px;">${shipTo || '<span style="color:var(--muted);">—</span>'}</td>
         <td style="padding:9px 8px;max-width:360px;">${tags}</td>
         <td style="padding:9px 8px;text-align:right;white-space:nowrap;">
@@ -3113,6 +3381,18 @@ async function loadBotItemView(cat) {
   if (status !== _botViewStatus) { _botViewMode = 'auto'; _botViewStatus = status; }
   const view = botEffectiveView();
   botApplyView(view);
+  if (view === 'pickup') {
+    // Every delivered box not yet checked in — whatever the status filter says.
+    const q2 = new URLSearchParams({ category: cat });
+    if (retailer) q2.set('retailer', retailer);
+    const pk = await api('GET', '/admin/bot-packages?' + q2.toString());
+    if (!pk) return;
+    _botPickup = pk.filter(p => p.status === 'Delivered' && p.orders.some(o => !o.checked_in));
+    const present = new Set(_botPickup.map(p => p.key));
+    [..._botPickSel].forEach(k => { if (!present.has(k)) _botPickSel.delete(k); });
+    renderBotPickup();
+    return;
+  }
   if (view === 'package') {
     const pk = await api('GET', '/admin/bot-packages?' + qs.toString());
     if (!pk) return;
@@ -3151,6 +3431,7 @@ function botFilterChanged() {
 
 function renderBotItemView() {
   if (botEffectiveView() === 'package') return renderBotPackages();
+  if (botEffectiveView() === 'pickup')  return renderBotPickup();
   const search = (document.getElementById('bot-item-search').value || '').toLowerCase();
   const addr   = document.getElementById('bot-filter-address').value;
   let rows = _botItems;
@@ -3197,7 +3478,7 @@ function renderBotItemView() {
     // Recorded sales: SOLD x/y, plus what the sold units actually made.
     const soldQty  = item.soldQty || 0;
     const soldTip  = soldQty
-      ? `${soldQty} sold · avg $${(item.avgSalePrice||0).toFixed(2)} · ${item.unitsLeft} left — click to record another`
+      ? `${soldQty} sold · avg $${(item.avgSalePrice||0).toFixed(2)} · ${item.unitsLeft} in hand left — click to record another`
       : 'Nothing sold yet — click to record a sale';
     const rp = item.realizedProfit;
     const realizedHtml = soldQty && rp != null
@@ -3216,6 +3497,16 @@ function renderBotItemView() {
 
     // Fee per unit = share of box/order fees + any extra typed per unit. The
     // input only holds the extra, so show the full figure above it.
+    // Stock = checked-in units. The rest are shown under it, not counted.
+    const inHand = item.stockTracked ? (item.inHand || 0) : item.qty;
+    const qtySub = item.stockTracked ? [
+      item.toPickUp ? `<div style="font-size:10px;color:#fbbf24;white-space:nowrap;">+${item.toPickUp} to pick up</div>` : '',
+      item.onTheWay ? `<div style="font-size:10px;color:var(--muted);white-space:nowrap;">+${item.onTheWay} on the way</div>` : '',
+      item.inClaim  ? `<div style="font-size:10px;color:#f87171;white-space:nowrap;">${item.inClaim} in claim</div>` : '',
+    ].join('') : '';
+    const qtyTip = item.stockTracked
+      ? `${inHand} in hand (picked up & checked) · ${item.toPickUp || 0} to pick up · ${item.onTheWay || 0} on the way · ${item.inClaim || 0} in claim · ${item.qty} ordered`
+      : `${item.qty} ordered`;
     const boxFee = item.perUnitBoxFee || 0;
     const feeTotalHtml = boxFee > 0
       ? `<div class="fee-total" style="font-size:12px;font-weight:700;color:#fbbf24;font-variant-numeric:tabular-nums;">$${(item.perUnitFinder || 0).toFixed(2)}</div>
@@ -3257,7 +3548,7 @@ function renderBotItemView() {
         </div>
         ${retailerLine}
       </td>
-      <td style="padding:8px;text-align:center;font-weight:700;">${item.qty}</td>
+      <td style="padding:8px;text-align:center;" data-tip="${esc(qtyTip)}"><div class="qty-hand" style="font-weight:700;">${inHand}</div>${qtySub}</td>
       <td style="padding:8px;text-align:right;font-variant-numeric:tabular-nums;">
         ${landedHtml}
       </td>
@@ -3272,7 +3563,7 @@ function renderBotItemView() {
       </td>
       <td style="padding:8px;text-align:center;white-space:nowrap;">
         <button class="bot-sold" onclick="openBotSale(${idx})" data-tip="${soldTip}"
-          style="background:none;border:none;cursor:pointer;font-size:12px;font-variant-numeric:tabular-nums;padding:0;${soldQty ? 'color:var(--text);font-weight:700;border-bottom:1px dotted var(--muted);' : 'color:var(--muted);'}">${soldQty}/${item.qty}</button>
+          style="background:none;border:none;cursor:pointer;font-size:12px;font-variant-numeric:tabular-nums;padding:0;${soldQty ? 'color:var(--text);font-weight:700;border-bottom:1px dotted var(--muted);' : 'color:var(--muted);'}">${soldQty}/${inHand}</button>
       </td>
       <td style="padding:8px;text-align:right;${profitCol}">${profitStr}${realizedHtml}</td>
       <td style="padding:8px;">${statusPills}</td>
@@ -3376,7 +3667,7 @@ function openBotSale(idx) {
   _bsItem = item;
   const left = item.unitsLeft != null ? item.unitsLeft : item.qty;
   document.getElementById('bs-sub').textContent =
-    `${item.name} · ${item.soldQty || 0} of ${item.qty} sold · ${left} left · landed $${(item.perUnitTotal||0).toFixed(2)}/unit`;
+    `${item.name} · ${item.soldQty || 0} sold · ${left} in hand${item.toPickUp ? ` (+${item.toPickUp} to pick up)` : ''} · landed $${(item.perUnitTotal||0).toFixed(2)}/unit`;
   document.getElementById('bs-qty').value     = left > 0 ? 1 : '';
   document.getElementById('bs-price').value   = item.sale_price || '';
   document.getElementById('bs-fees').value    = '';
@@ -3403,7 +3694,7 @@ function botSalePreview() {
   const landed = _bsItem.perUnitTotal || 0;
   const profit = qty * price - fees - qty * landed;
   const warn = qty > left
-    ? `<div style="color:#fbbf24;margin-top:4px;">⚠ Only ${left} left on record — you can still save (e.g. units bought elsewhere).</div>` : '';
+    ? `<div style="color:#fbbf24;margin-top:4px;">⚠ Only ${left} in hand (picked up) — check in the rest first, or save anyway.</div>` : '';
   el.innerHTML = qty > 0
     ? `${qty} × $${price.toFixed(2)} − $${fees.toFixed(2)} fees − ${qty} × $${landed.toFixed(2)} landed =
        <b style="color:${profit >= 0 ? '#4ade80' : '#f87171'};">${profit >= 0 ? '+' : '−'}$${Math.abs(profit).toFixed(2)}</b>${warn}`
@@ -3431,7 +3722,7 @@ async function botSaleRefresh() {
   if (fresh && _bsItem) {
     _bsItem = fresh;
     document.getElementById('bs-sub').textContent =
-      `${fresh.name} · ${fresh.soldQty || 0} of ${fresh.qty} sold · ${fresh.unitsLeft} left · landed $${(fresh.perUnitTotal||0).toFixed(2)}/unit`;
+      `${fresh.name} · ${fresh.soldQty || 0} sold · ${fresh.unitsLeft} in hand${fresh.toPickUp ? ` (+${fresh.toPickUp} to pick up)` : ''} · landed $${(fresh.perUnitTotal||0).toFixed(2)}/unit`;
     renderBotSaleHistory();
     botSalePreview();
   }
