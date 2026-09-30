@@ -603,9 +603,10 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('breakdown shows Finder fee $8.00', pop && /Finder fee\s*\$8\.00/.test(pop.textContent.replace(/\s+/g, ' ')), pop && pop.textContent.replace(/\s+/g, ' ').trim());
     pop && pop.remove();
 
-    const ask = cell(4).querySelector('input');
-    ask.value = '50'; ask.dispatchEvent(new w.Event('change')); await tick(60);
-    check('profit/unit = asking − landed (fee not taken twice)', /\+\$9\.45/.test(cell(6).textContent), cell(6).textContent.trim());
+    // No asking-price column any more: profit only ever shows real sales.
+    check('no ASKING column',                 ![...d.querySelectorAll('#bot-product-table-wrap thead th')].some(th => /ASKING/.test(th.textContent)));
+    check('PROFIT shows — until something sells', cell(5).textContent.trim() === '—', cell(5).textContent.trim());
+    check('9 columns per product row',        sy().querySelectorAll(':scope > td').length === 9, sy().querySelectorAll(':scope > td').length);
     // Reload from the server: same numbers, not just the optimistic update.
     await w.loadBotItemView('Pokemon'); await tick();
     check('after reload: landed still $40.55', /\$40\.55/.test(cell(2).textContent));
@@ -613,11 +614,11 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     console.log('\n── Record sales in parts (real clicks) ──');
     const ov   = d.getElementById('bot-sale-overlay');
     check('sale dialog hidden before click', !isVisible(ov));
-    check('SOLD starts at 0/4',              cell(5).textContent.trim() === '0/4', cell(5).textContent.trim());
+    check('SOLD starts at 0/4',              cell(4).textContent.trim() === '0/4', cell(4).textContent.trim());
     sy().querySelector('button[title="Record a sale"]').click(); await tick();
     check('$ opens a VISIBLE dialog',         isVisible(ov));
     check('qty defaults to 1',                d.getElementById('bs-qty').value === '1');
-    check('price defaults to asking',         d.getElementById('bs-price').value === '50');
+    check('price starts empty (type the real price)', d.getElementById('bs-price').value === '');
     check('date defaults to today',           d.getElementById('bs-date').value === w.botLocalToday());
     check('history empty',                    /None yet/.test(d.getElementById('bs-history').textContent));
 
@@ -630,10 +631,13 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('qty 0 → error, nothing saved',     d.getElementById('bs-error').style.display !== 'none' && calls.filter(c => c.path === '/api/admin/bot-sales').length === nBefore);
 
     set('bs-qty', '2');
+    bsSave.click(); await tick(40);
+    check('no price → error, nothing saved',  d.getElementById('bs-error').style.display !== 'none' && calls.filter(c => c.path === '/api/admin/bot-sales').length === nBefore);
+    set('bs-price', '50');
     check('preview shows the profit',         /\+\$18\.90/.test(d.getElementById('bs-preview').textContent), d.getElementById('bs-preview').textContent.replace(/\s+/g, ' ').trim());
     bsSave.click(); await tick(120);
     check('sale 1 stored',                    DB.prepare('SELECT COUNT(*) n FROM bot_sales').get().n === 1);
-    check('SOLD 2/4 on the row',              cell(5).textContent.trim() === '2/4', cell(5).textContent.trim());
+    check('SOLD 2/4 on the row',              cell(4).textContent.trim() === '2/4', cell(4).textContent.trim());
     await tick(80);
     check('SALES PROFIT card +$18.90',        cardMoney('bs-profit') === 18.9, d.getElementById('bs-profit').textContent);
 
@@ -656,11 +660,10 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     bsSave.click(); await tick(120);
     const r2 = DB.prepare('SELECT * FROM bot_sales ORDER BY id DESC').get();
     check('sale 2 stored as typed',           r2.qty === 1 && r2.unit_price === 55 && r2.fees === 4 && r2.channel === 'eBay');
-    check('SOLD 3/4',                         cell(5).textContent.trim() === '3/4', cell(5).textContent.trim());
+    check('SOLD 3/4',                         cell(4).textContent.trim() === '3/4', cell(4).textContent.trim());
     // 2×50 + 55 − 4 − 3 × 40.55
-    check('realized profit +$29.35 shown',    /\+\$29\.35 made/.test(cell(6).textContent), cell(6).textContent.replace(/\s+/g, ' ').trim());
-    check('ROI next to it: 24%',              /29\.35 made · 24% ROI/.test(cell(6).textContent.replace(/\s+/g, ' ')), cell(6).textContent.replace(/\s+/g, ' ').trim());
-    check('ROI at asking price: 23%',         /\+\$9\.45\/u\s*23%/.test(cell(6).textContent.replace(/\s+/g, ' ')), cell(6).textContent.replace(/\s+/g, ' ').trim());
+    check('realized profit +$29.35 shown',    /\+\$29\.35 made/.test(cell(5).textContent), cell(5).textContent.replace(/\s+/g, ' ').trim());
+    check('ROI next to it: 24%',              /29\.35 made · 24% ROI/.test(cell(5).textContent.replace(/\s+/g, ' ')), cell(5).textContent.replace(/\s+/g, ' ').trim());
     await tick(80);
     check('card: +$29.35 profit',             cardMoney('bs-profit') === 29.35, d.getElementById('bs-profit').textContent);
     check('card: 3 sold · $155.00 in · ROI 24%', /3 sold · \$155\.00 in · ROI 24%/.test(d.getElementById('bs-profit-sub').textContent), d.getElementById('bs-profit-sub').textContent);
@@ -672,13 +675,13 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     // Delete the newest (qty 1) from history.
     d.querySelector('#bs-history .bs-sale .bs-del').click(); await tick(120);
     check('deleted from the database',        DB.prepare('SELECT COUNT(*) n FROM bot_sales').get().n === 1);
-    check('SOLD back to 2/4',                 cell(5).textContent.trim() === '2/4', cell(5).textContent.trim());
+    check('SOLD back to 2/4',                 cell(4).textContent.trim() === '2/4', cell(4).textContent.trim());
     await tick(80);
     check('card back to +$18.90 after delete', cardMoney('bs-profit') === 18.9, d.getElementById('bs-profit').textContent);
 
     w.closeBotSale(); await tick();
     check('dialog closes',                    !isVisible(ov));
-    cell(5).querySelector('button').click(); await tick();
+    cell(4).querySelector('button').click(); await tick();
     check('clicking SOLD opens it too',       isVisible(ov));
     w.closeBotSale(); await tick();
 
@@ -707,12 +710,12 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     d.getElementById('bs-qty').value = '1'; d.getElementById('bs-price').value = '45';
     d.getElementById('bs-save').click(); await tick(120);
     check('Mattel sale saved',                DB.prepare("SELECT COUNT(*) n FROM bot_sales WHERE product_name LIKE '%Hot Wheels%'").get().n === 1);
-    check('SOLD 1/1 on the All tab',          hw().querySelectorAll(':scope > td')[5].textContent.trim() === '1/1');
+    check('SOLD 1/1 on the All tab',          hw().querySelectorAll(':scope > td')[4].textContent.trim() === '1/1');
     w.closeBotSale(); await tick();
 
     // Same sale shows on the Mattel tab — one set of sales, whichever tab.
     [...d.querySelectorAll('.btab')].find(b => /^Mattel/.test(b.textContent.trim())).click(); await tick(80);
-    check('Mattel tab shows the same sale',   hw() && hw().querySelectorAll(':scope > td')[5].textContent.trim() === '1/1');
+    check('Mattel tab shows the same sale',   hw() && hw().querySelectorAll(':scope > td')[4].textContent.trim() === '1/1');
     check('Mattel tab has no Pokemon rows',   !rowNamed(/Sylveon ex Box/));
     const otherTab = [...d.querySelectorAll('.btab')].find(b => /^Other/.test(b.textContent.trim()));
     check('Other tab exists for the uncategorised order', !!otherTab);
@@ -955,7 +958,7 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const cell = (tr, i) => tr.querySelectorAll(':scope > td')[i];
     check('nothing picked up: 0 in hand',       cell(etb(), 1).querySelector('.qty-hand').textContent === '0');
     check('shows +5 to pick up, +1 on the way', /\+5 to pick up/.test(cell(etb(), 1).textContent) && /\+1 on the way/.test(cell(etb(), 1).textContent), cell(etb(), 1).textContent.replace(/\s+/g, ' ').trim());
-    check('SOLD 0/0 (nothing in hand)',         cell(etb(), 5).textContent.trim() === '0/0');
+    check('SOLD 0/0 (nothing in hand)',         cell(etb(), 4).textContent.trim() === '0/0');
     check('TO PICK UP card counts delivered units', Number(d.getElementById('bs-pickup').textContent) >= 6, d.getElementById('bs-pickup').textContent);
 
     // Card → pick-up view
