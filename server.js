@@ -17,7 +17,7 @@ const { computeItemGroups, orderLineCosts } = require('./itemView');
 const SkuCatalog = require('./skuCatalog');
 const { computePackages } = require('./packageView');
 const { splitBoxFee, orderSignature } = require('./feeSplit');
-const { buildAddressBook } = require('./addresses');
+const { buildAddressBook, addressKey, parseAddress } = require('./addresses');
 
 // Jigged address variations → the one real place they deliver to (addresses.js).
 // The book is built from every address on file so labels are stable whatever
@@ -28,12 +28,23 @@ function addressBook() {
   try { raws = db.prepare("SELECT shipping_address FROM bot_orders WHERE shipping_address IS NOT NULL AND shipping_address<>''").all().map(r => r.shipping_address); } catch (_) {}
   return buildAddressBook(raws);
 }
+// Who lives at each main address (the house owner), keyed like the address
+// book so every jig variation of the address finds them. Stored in the
+// database only — never in code, which goes to GitHub.
+function loadOwners() {
+  const m = new Map();
+  try { db.prepare('SELECT * FROM bot_address_owners').all().forEach(r => m.set(r.addr_key, r)); } catch (_) {}
+  return m;
+}
 function withMainAddress(orders, { replace = false } = {}) {
   const book = addressBook();
+  const owners = loadOwners();
   return orders.map(o => {
-    const main = book.main(o.shipping_address);
-    return replace ? { ...o, shipping_address: main, jig_address: o.shipping_address || null, main_address: main }
-                   : { ...o, main_address: main };
+    const main  = book.main(o.shipping_address);
+    const k     = o.shipping_address ? addressKey(o.shipping_address) : null;
+    const owner = (k && owners.get(k) && owners.get(k).owner) || null;
+    return replace ? { ...o, shipping_address: main, jig_address: o.shipping_address || null, main_address: main, owner }
+                   : { ...o, main_address: main, owner };
   });
 }
 const OrderMerge = require('./orderMerge');
@@ -183,6 +194,10 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS bot_issues (
   id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, item_key TEXT NOT NULL, item_name TEXT,
   qty INTEGER NOT NULL, kind TEXT NOT NULL, got_item TEXT, note TEXT, status TEXT DEFAULT 'open',
   refund_amount REAL DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, resolved_at TEXT)`); } catch(e) {}
+
+// House owners: the person whose house a main address is. One row per place.
+try { db.exec(`CREATE TABLE IF NOT EXISTS bot_address_owners (
+  addr_key TEXT PRIMARY KEY, owner TEXT NOT NULL, address TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
 
 // Stock-count corrections: counted N on the shelf, the site expected M → qty = N − M.
 // unit_cost is the landed cost at the time, so a shortage is a known loss.
@@ -1090,6 +1105,53 @@ app.get('/api/admin/bot-stock-count', auth, adminOnly, (req, res) => {
 // Undo one correction (typed a count wrong).
 app.delete('/api/admin/bot-stock-count/:id', auth, adminOnly, (req, res) => {
   db.prepare('DELETE FROM bot_adjustments WHERE id=?').run([Number(req.params.id)]);
+  res.json({ ok: true });
+});
+
+// ── House owners ────────────────────────────────────────────────────────────
+// List (with how many orders go to each place), bulk import (pasted from a
+// sheet: name + address), and set/clear one.
+app.get('/api/admin/bot-address-owners', auth, adminOnly, (req, res) => {
+  const counts = new Map();
+  try {
+    db.prepare("SELECT shipping_address FROM bot_orders WHERE shipping_address IS NOT NULL AND shipping_address<>''").all()
+      .forEach(r => { const k = addressKey(r.shipping_address); if (k) counts.set(k, (counts.get(k) || 0) + 1); });
+  } catch (_) {}
+  const book = addressBook();
+  let rows = [];
+  try { rows = db.prepare('SELECT * FROM bot_address_owners ORDER BY owner').all(); } catch (_) {}
+  res.json(rows.map(r => ({ ...r, main_address: book.main(r.address) || r.address, orders: counts.get(r.addr_key) || 0 })));
+});
+
+function saveOwner(owner, address) {
+  const k = addressKey(address);
+  if (!k) return false;
+  const name = String(owner || '').trim();
+  if (!name) { db.prepare('DELETE FROM bot_address_owners WHERE addr_key=?').run([k]); return true; }
+  db.prepare(`INSERT INTO bot_address_owners (addr_key, owner, address, updated_at) VALUES (?,?,?,CURRENT_TIMESTAMP)
+              ON CONFLICT(addr_key) DO UPDATE SET owner=excluded.owner, address=excluded.address, updated_at=CURRENT_TIMESTAMP`)
+    .run([k, name.slice(0, 80), String(address).trim().slice(0, 200)]);
+  return true;
+}
+
+// rows: [{ owner, address }]  (address = street, city, state zip — any order the page joined)
+app.post('/api/admin/bot-address-owners', auth, adminOnly, (req, res) => {
+  const rows = Array.isArray(req.body && req.body.rows) ? req.body.rows : [];
+  if (!rows.length) return res.status(400).json({ error: 'rows required' });
+  const skipped = [];
+  let saved = 0;
+  for (const r of rows) {
+    if (!r || !String(r.owner || '').trim() || !parseAddress(r.address)) { skipped.push(r && r.address || ''); continue; }
+    if (saveOwner(r.owner, r.address)) saved++; else skipped.push(r.address);
+  }
+  res.json({ saved, skipped });
+});
+
+// One address: set the owner, or clear it with an empty name.
+app.put('/api/admin/bot-address-owners', auth, adminOnly, (req, res) => {
+  const { address, owner } = req.body || {};
+  if (!address || !addressKey(address)) return res.status(400).json({ error: 'A street address is required' });
+  saveOwner(owner, address);
   res.json({ ok: true });
 });
 

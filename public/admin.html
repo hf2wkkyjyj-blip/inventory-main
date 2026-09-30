@@ -514,14 +514,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <select id="bot-filter-address" onchange="botFilterChanged()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);max-width:180px;">
         <option value="">All addresses</option>
       </select>
-      <input type="text" id="bot-search" oninput="renderBotOrders()" placeholder="Search order #, item, buyer…" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:200px;">
       <button class="btn btn-ghost btn-sm" id="bot-scan-btn" onclick="botScanEmails()"><i class="fa fa-envelope"></i> Scan Emails</button>
-      <button class="btn btn-ghost btn-sm" id="bot-rescan-btn" onclick="botFullRescan(false)" title="Clear scanner history and re-scan last 180 days of Gmail" style="opacity:.7;"><i class="fa fa-redo"></i> Full Rescan</button>
-      <button class="btn btn-ghost btn-sm" id="bot-reparse-btn" onclick="botReparse(false)" title="Re-run the parser over saved emails — no Gmail fetch, takes seconds" style="opacity:.7;"><i class="fa fa-bolt"></i> Reparse</button>
-      <button class="btn btn-ghost btn-sm" id="bot-repair-btn" onclick="botReparse(true)" title="Re-derive every status from saved emails — fixes orders wrongly marked Cancelled" style="opacity:.7;color:#fbbf24;"><i class="fa fa-wrench"></i> Repair Statuses</button>
-      <button class="btn btn-ghost btn-sm" id="bot-backup-btn" onclick="botDownloadBackup()" title="Download the whole database (orders, fees, sales, saved emails) as one file. Keep it on your computer — it has customer names and addresses." style="opacity:.7;"><i class="fa fa-download"></i> Backup</button>
-      <button class="btn btn-ghost btn-sm" id="bot-restore-btn" onclick="botRestoreBaseline()" title="Re-add baseline orders (Mattel, Sam's Club, Costco, Bear Walker, older history). Safe: skips anything already present." style="opacity:.7;color:#2ecc71;"><i class="fa fa-undo"></i> Restore Baseline</button>
-      <button class="btn btn-ghost btn-sm" id="bot-wipe-btn" onclick="botFullRescan(true)" title="Delete ALL orders and rebuild from emails (last 180 days)" style="opacity:.7;color:#e74c3c;"><i class="fa fa-trash"></i> Wipe & Rescan</button>
       <div style="display:flex;gap:4px;align-items:center;">
         <input type="text" id="bot-order-scan-input" placeholder="Order # …" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:130px;" onkeydown="if(event.key==='Enter')botScanOrder()">
         <button class="btn btn-ghost btn-sm" id="bot-order-scan-btn" onclick="botScanOrder()"><i class="fa fa-search"></i> Scan Order</button>
@@ -948,6 +941,22 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <div style="flex:1;"></div>
       <button class="btn btn-ghost btn-sm" onclick="closeBotItemEdit()">Cancel</button>
       <button class="btn btn-primary btn-sm" onclick="saveBotItemEdit()"><i class="fa fa-save"></i> Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: HOUSE OWNERS ═══════════════════════════════════════════════════ -->
+<div class="overlay" id="bot-owners-overlay" onclick="if(event.target.id==='bot-owners-overlay')closeOwners()">
+  <div class="modal" style="width:680px;max-width:96vw;max-height:88vh;overflow:auto;">
+    <h2 style="margin-bottom:4px;"><i class="fa fa-home" style="color:var(--accent)"></i> House owners</h2>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Whose house each address is. Every jig variation of an address finds its owner automatically.</div>
+    <div id="ow-list" style="margin-bottom:14px;"></div>
+    <div class="form-group" style="margin-bottom:8px;"><label style="font-size:11px;">Paste from your sheet — columns: Name · Street Address · City · State · ZIP (header row is fine)</label>
+      <textarea id="ow-paste" rows="5" style="width:100%;font-size:12px;font-family:inherit;" placeholder="Copy the rows in Google Sheets and paste here"></textarea></div>
+    <div id="ow-msg" style="font-size:12px;margin-bottom:8px;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-ghost btn-sm" onclick="closeOwners()">Close</button>
+      <button class="btn btn-primary btn-sm" id="ow-import" onclick="importOwners()"><i class="fa fa-file-import"></i> Save pasted owners</button>
     </div>
   </div>
 </div>
@@ -2112,29 +2121,6 @@ function botRenderMoneyCards(ordersInRange) {
     : 'no sales yet';
 }
 
-// Download the database. The endpoint needs the login token in a header, so a
-// plain link can't fetch it — fetch it here and hand the browser the file.
-async function botDownloadBackup() {
-  const btn = document.getElementById('bot-backup-btn');
-  btn.disabled = true;
-  const label = btn.innerHTML;
-  btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Preparing…';
-  try {
-    const res = await fetch('/api/admin/backup', { headers: { Authorization: 'Bearer ' + TOKEN } });
-    if (res.status === 401) { doLogout(); return; }
-    if (!res.ok) { alert('Backup failed — please try again.'); return; }
-    const blob = await res.blob();
-    const name = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1]
-              || `inventory-backup-${botLocalToday()}.db`;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  } finally {
-    btn.disabled = false; btn.innerHTML = label;
-  }
-}
 
 async function loadBotOrders() {
   const [orders] = await Promise.all([api('GET', '/admin/bot-orders'), botLoadMoney()]);
@@ -2276,6 +2262,7 @@ function buildBotAddressFilter() {
   // One entry per MAIN address (jig variations already grouped by the server).
   const normMap = {};   // norm → count
   const labelOf = {};   // norm → the main address as displayed
+  const ownerOf = {};
   _botOrders.forEach(o => {
     const main = botMainAddr(o);
     if (!main) return;
@@ -2283,12 +2270,13 @@ function buildBotAddressFilter() {
     if (!norm) return;
     normMap[norm] = (normMap[norm] || 0) + 1;
     labelOf[norm] = labelOf[norm] || main;
+    if (o.owner) ownerOf[norm] = o.owner;
   });
   const sel = document.getElementById('bot-filter-address');
   const cur = sel.value;
   const opts = Object.entries(normMap).sort((a,b)=>b[1]-a[1] || a[0].localeCompare(b[0]));
   sel.innerHTML = '<option value="">All addresses</option>' + opts.map(([norm, count]) => {
-    const label = labelOf[norm] + (count > 1 ? ` (${count})` : '');
+    const label = (ownerOf[norm] ? ownerOf[norm] + ' — ' : '') + labelOf[norm] + (count > 1 ? ` (${count})` : '');
     const sel_ = norm === cur ? ' selected' : '';
     return `<option value="${esc(norm)}"${sel_}>${esc(label)}</option>`;
   }).join('');
@@ -2478,7 +2466,7 @@ function renderBotOrders() {
   const retailer = document.getElementById('bot-filter-retailer').value;
   const status = document.getElementById('bot-filter-status').value || _botStatusFilter;
   const addrFilter = document.getElementById('bot-filter-address').value;
-  const search = (document.getElementById('bot-search').value||'').toLowerCase();
+  const search = '';   // the order-list search box was removed (orders are listed per address)
   let rows = _botOrders.filter(o => {
     if (cat !== 'All' && (o.category||'Other') !== cat) return false;
     if (retailer && o.retailer !== retailer) return false;
@@ -2676,82 +2664,8 @@ async function botScanEmails() {
   btn.innerHTML = '<i class="fa fa-envelope"></i> Scan Emails';
 }
 
-// Re-add the baseline orders from bot_orders_import.json. Idempotent: anything
-// already in the DB (matched on order number) is skipped, so it never duplicates.
-async function botRestoreBaseline() {
-  const btn = document.getElementById('bot-restore-btn');
-  btn.disabled = true;
-  btn.innerHTML = '<i class="fa fa-undo fa-spin"></i> Restoring…';
-  try {
-    const r = await api('POST', '/admin/orders/restore-baseline', { force: true });
-    btn.innerHTML = `<i class="fa fa-check"></i> +${r.imported}`;
-    if (r.missing) alert('bot_orders_import.json is not deployed — cannot restore.');
-  } catch (e) {
-    btn.innerHTML = '<i class="fa fa-exclamation-triangle"></i> Failed';
-  }
-  await loadBotOrders();
-  setTimeout(() => { btn.disabled = false; btn.innerHTML = '<i class="fa fa-undo"></i> Restore Baseline'; }, 2500);
-}
 
-// Re-run the parser over emails already saved in the DB. No Gmail fetch, so this
-// finishes in seconds — use it after a parser change instead of a Full Rescan.
-async function botReparse(rebuildStatus = false) {
-  const btn = document.getElementById(rebuildStatus ? 'bot-repair-btn' : 'bot-reparse-btn');
-  if (rebuildStatus && !confirm(
-      'Rebuild every order status from the saved emails?\n\n' +
-      'This re-derives status from scratch, which is how orders wrongly marked ' +
-      'Cancelled get corrected. Items, costs and tracking are untouched.\n\n' +
-      'Only orders that have saved emails are affected.')) return;
 
-  btn.disabled = true;
-  btn.innerHTML = `<i class="fa fa-${rebuildStatus ? 'wrench' : 'bolt'} fa-spin"></i> ${rebuildStatus ? 'Repairing…' : 'Reparsing…'}`;
-  try {
-    const r = await api('POST', '/admin/scrape-emails/reparse', { rebuildStatus });
-    btn.innerHTML = `<i class="fa fa-check"></i> ${r.updated}/${r.total}`;
-    if (rebuildStatus && r.before && r.after) {
-      const changed = [...new Set([...Object.keys(r.before), ...Object.keys(r.after)])]
-        .filter(k => (r.before[k] || 0) !== (r.after[k] || 0))
-        .map(k => `${k}: ${r.before[k] || 0} → ${r.after[k] || 0}`);
-      alert(changed.length
-        ? `Rebuilt ${r.ordersTouched} order(s).\n\n${changed.join('\n')}`
-        : `Rebuilt ${r.ordersTouched} order(s). No status changes needed.`);
-    }
-  } catch (e) {
-    btn.innerHTML = '<i class="fa fa-exclamation-triangle"></i> Failed';
-  }
-  await loadBotOrders();
-  setTimeout(() => {
-    btn.disabled = false;
-    btn.innerHTML = rebuildStatus
-      ? '<i class="fa fa-wrench"></i> Repair Statuses'
-      : '<i class="fa fa-bolt"></i> Reparse';
-  }, 2500);
-}
-
-async function botFullRescan(wipe = false) {
-  const btn = document.getElementById(wipe ? 'bot-wipe-btn' : 'bot-rescan-btn');
-  if (wipe) {
-    const ok = confirm('⚠️ This will DELETE all existing orders and re-import everything from the last 180 days of emails.\n\nSam\'s Club, Mattel, Costco, and Bear Walker orders will NOT come back (no email extractor).\n\nContinue?');
-    if (!ok) return;
-  }
-  btn.disabled = true;
-  btn.innerHTML = `<i class="fa fa-redo fa-spin"></i> ${wipe ? 'Wiping…' : 'Resetting…'}`;
-  await api('POST', '/admin/scrape-emails/reset', { wipe, days: 180 }).catch(()=>{});
-  btn.innerHTML = '<i class="fa fa-envelope fa-spin"></i> Scanning 180 days…';
-  await api('POST', '/admin/scrape-emails').catch(()=>{});
-  const deadline = Date.now() + 120000;
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 2000));
-    const status = await api('GET', '/admin/scrape-emails/status').catch(()=>null);
-    if (!status) break;
-    if (status.updated !== undefined)
-      btn.innerHTML = `<i class="fa fa-envelope fa-spin"></i> Found ${status.updated}…`;
-    if (!status.running) break;
-  }
-  await loadBotOrders();
-  btn.disabled = false;
-  btn.innerHTML = wipe ? '<i class="fa fa-trash"></i> Wipe & Rescan' : '<i class="fa fa-redo"></i> Full Rescan';
-}
 
 // ── Item View (per category tab) ──────────────────────────────────────────────
 let _botItems = [];
@@ -2804,6 +2718,79 @@ function botApplyView(view) {
   if (view !== 'package') { _botPkgSelected.clear(); botRenderActionBar(); }
 }
 
+// ── House owners ────────────────────────────────────────────────────────────
+// Shown next to each main address; click to set/change. Stored on the server
+// (database only), matched by address so jig variations find the same owner.
+function botOwnerChip(address, owner) {
+  if (!address || address === 'No address' || address === 'No address yet') return '';
+  // Address/owner ride in data-* attributes (escaped) — never inside inline JS,
+  // so an apostrophe in "O'Neil St" can't break the click handler.
+  const data = `data-addr="${esc(address)}" data-owner="${esc(owner || '')}" onclick="botSetOwner(this.dataset.addr, this.dataset.owner)"`;
+  return owner
+    ? `<button class="bot-owner-chip" ${data} data-tip="House owner — click to change"
+         style="background:rgba(96,165,250,.12);border:1px solid #265a94;color:#93c5fd;border-radius:999px;padding:1px 9px;font-size:11px;cursor:pointer;margin-left:8px;white-space:nowrap;"><i class="fa fa-home" style="font-size:9px;"></i> ${esc(owner)}</button>`
+    : `<button class="bot-owner-chip bot-owner-add" ${data} data-tip="Add whose house this is"
+         style="background:none;border:1px dashed var(--border);color:var(--muted);border-radius:999px;padding:1px 9px;font-size:11px;cursor:pointer;margin-left:8px;white-space:nowrap;">+ owner</button>`;
+}
+const botOwnersLink = () => `<button class="btn btn-ghost btn-sm" id="bot-owners-btn" onclick="openOwners()" style="font-size:11px;padding:2px 8px;"><i class="fa fa-home"></i> House owners</button>`;
+
+async function botSetOwner(address, current) {
+  const name = window.prompt(`Whose house is this?\n${address}\n\n(Leave empty to remove the name.)`, current || '');
+  if (name === null) return;
+  const r = await api('PUT', '/admin/bot-address-owners', { address, owner: name.trim() });
+  if (!r) { alert('Could not save the owner.'); return; }
+  await loadBotOrders();
+}
+
+function openOwners() {
+  document.getElementById('ow-paste').value = '';
+  document.getElementById('ow-msg').textContent = '';
+  document.getElementById('bot-owners-overlay').classList.add('open');
+  loadOwnersList();
+}
+function closeOwners() { document.getElementById('bot-owners-overlay').classList.remove('open'); }
+
+async function loadOwnersList() {
+  const rows = (await api('GET', '/admin/bot-address-owners')) || [];
+  document.getElementById('ow-list').innerHTML = rows.length
+    ? `<table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="font-size:10px;letter-spacing:.06em;color:var(--muted);text-align:left;"><th style="padding:4px 0;">OWNER</th><th>ADDRESS</th><th style="text-align:center;">ORDERS</th><th></th></tr></thead>
+        <tbody>${rows.map(r => `<tr class="ow-row" style="border-top:1px solid var(--border);">
+          <td style="padding:6px 0;font-weight:600;">${esc(r.owner)}</td>
+          <td style="color:var(--muted);">${esc(r.main_address || r.address || '')}</td>
+          <td style="text-align:center;color:${r.orders ? 'var(--text)' : 'var(--muted)'};">${r.orders}</td>
+          <td style="text-align:right;"><button class="ow-del" data-addr="${esc(r.address || '')}" onclick="removeOwner(this.dataset.addr)" data-tip="Remove this name" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button></td>
+        </tr>`).join('')}</tbody></table>`
+    : '<div style="font-size:12px;color:var(--muted);">No owners saved yet.</div>';
+}
+async function removeOwner(address) {
+  await api('PUT', '/admin/bot-address-owners', { address, owner: '' });
+  await loadOwnersList();
+  loadBotOrders();
+}
+
+// Rows copied from Google Sheets arrive tab-separated. Columns: Name, Street,
+// City, State, ZIP — or just Name + full address. A header row is skipped.
+function parseOwnerPaste(text) {
+  return String(text || '').split(/\r?\n/).map(l => l.split('\t').map(c => c.trim())).filter(c => c.some(Boolean))
+    .filter(c => !/^name$/i.test(c[0]) || !/street|address/i.test(c[1] || ''))
+    .map(c => c.length >= 5 ? { owner: c[0], address: `${c[1]}, ${c[2]}, ${c[3]} ${c[4]}` }
+                            : { owner: c[0], address: c.slice(1).filter(Boolean).join(', ') })
+    .filter(r => r.owner && r.address);
+}
+async function importOwners() {
+  const rows = parseOwnerPaste(document.getElementById('ow-paste').value);
+  const msg = document.getElementById('ow-msg');
+  if (!rows.length) { msg.style.color = '#f87171'; msg.textContent = 'Nothing to save — paste rows with a name and an address.'; return; }
+  const r = await api('POST', '/admin/bot-address-owners', { rows });
+  if (!r) { msg.style.color = '#f87171'; msg.textContent = 'Could not save.'; return; }
+  msg.style.color = '#4ade80';
+  msg.textContent = `Saved ${r.saved} owner${r.saved === 1 ? '' : 's'}.` + (r.skipped.length ? ` Skipped ${r.skipped.length} (no street number): ${r.skipped.join('; ')}` : '');
+  document.getElementById('ow-paste').value = '';
+  await loadOwnersList();
+  loadBotOrders();
+}
+
 // ── Coming: what's arriving where, and when ────────────────────────────────
 // Shipped boxes grouped by main address, then by arrival day (out for
 // delivery first, late ones flagged). Orders not shipped yet are counted per
@@ -2827,8 +2814,9 @@ function botComingModel(pkgs) {
   for (const p of pkgs) {
     const s0 = p.shipTo[0] || {};
     const k = normalizeAddr(s0.address || '') || '—';
-    if (!byAddr.has(k)) byAddr.set(k, { address: s0.address || 'No address yet', names: new Set(), days: new Map(), notShipped: [], boxes: 0, units: 0 });
+    if (!byAddr.has(k)) byAddr.set(k, { address: s0.address || 'No address yet', owner: null, names: new Set(), days: new Map(), notShipped: [], boxes: 0, units: 0 });
     const a = byAddr.get(k);
+    a.owner = a.owner || s0.owner || null;
     p.shipTo.forEach(x => x.name && a.names.add(x.name));
     if (p.status === 'Confirmed' || p.status === 'Unship') { a.notShipped.push(p); continue; }
     a.boxes++; a.units += p.units;
@@ -2859,7 +2847,7 @@ function renderBotComing() {
   const boxes = groups.reduce((a, g) => a + g.boxes, 0), units = groups.reduce((a, g) => a + g.units, 0);
   const shipTo = groups.filter(g => g.boxes).length;
   document.getElementById('bot-item-count').textContent = `${boxes} box${boxes === 1 ? '' : 'es'} · ${units} unit${units === 1 ? '' : 's'} coming to ${shipTo} address${shipTo === 1 ? '' : 'es'}`;
-  document.getElementById('bot-unlinked-banner').innerHTML = '';
+  document.getElementById('bot-unlinked-banner').innerHTML = botOwnersLink();
   if (!groups.length) {
     wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">Nothing on the way.</div>`;
     return;
@@ -2868,8 +2856,8 @@ function renderBotComing() {
     <div class="bot-coming-addr" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:10px;overflow:hidden;">
       <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);">
         <i class="fa fa-map-marker-alt" style="color:#60a5fa;"></i>
-        <div style="flex:1;min-width:0;"><b class="clip">${esc(g.address)}</b>
-          <div style="font-size:11px;color:var(--muted);">${esc([...g.names].join(', '))}</div></div>
+        <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${botOwnerChip(g.address, g.owner)}</div>
+          <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
         <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.boxes} box${g.boxes === 1 ? '' : 'es'} · ${g.units} unit${g.units === 1 ? '' : 's'}${g.notShipped.length ? ` · ${g.notShipped.length} not shipped yet` : ''}</span>
         ${g.boxes ? `<button class="btn btn-ghost btn-sm bot-owner-copy" onclick="botCopyOwnerMsg(${gi}, this)" data-tip="Copy a message for the house owner: how many boxes, which days, which carriers"><i class="fa fa-copy"></i> Copy for house owner</button>` : ''}
       </div>
@@ -2896,7 +2884,8 @@ function botOwnerMessage(g) {
     const when = day.ofd ? 'Today (out for delivery)' : day.late ? 'Any day now (running late)' : botDayLabel(day.date);
     return `• ${when}: ${day.boxes.length} box${day.boxes.length === 1 ? '' : 'es'}${carriers.length ? ` (${carriers.join(', ')})` : ''}`;
   });
-  return `Heads up — packages coming to ${street}:\n${lines.join('\n')}\n${g.boxes} box${g.boxes === 1 ? '' : 'es'} total. Thank you!`;
+  const hi = g.owner ? `Hi ${String(g.owner).split(' ')[0]} — heads up, packages` : 'Heads up — packages';
+  return `${hi} coming to ${street}:\n${lines.join('\n')}\n${g.boxes} box${g.boxes === 1 ? '' : 'es'} total. Thank you!`;
 }
 
 async function botCopyOwnerMsg(gi, btn) {
@@ -3123,7 +3112,7 @@ function renderBotPickup() {
   _botPickRows = rows;
   const units = rows.reduce((a, p) => a + p.units, 0);
   document.getElementById('bot-item-count').textContent = `${rows.length} box${rows.length === 1 ? '' : 'es'} · ${units} unit${units === 1 ? '' : 's'} to pick up`;
-  document.getElementById('bot-unlinked-banner').innerHTML = '';
+  document.getElementById('bot-unlinked-banner').innerHTML = botOwnersLink();
   if (!rows.length) {
     wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">Nothing waiting — every delivered box is checked in.</div>`;
     return;
@@ -3133,8 +3122,9 @@ function renderBotPickup() {
   rows.forEach((p, i) => {
     const s0 = p.shipTo[0] || {};
     const k = normalizeAddr(s0.address || '') || '—';
-    if (!groups.has(k)) groups.set(k, { address: s0.address || 'No address', names: new Set(), items: [] });
+    if (!groups.has(k)) groups.set(k, { address: s0.address || 'No address', owner: null, names: new Set(), items: [] });
     const g = groups.get(k);
+    g.owner = g.owner || s0.owner || null;
     p.shipTo.forEach(s => s.name && g.names.add(s.name));
     g.items.push({ p, i });
   });
@@ -3155,8 +3145,8 @@ function renderBotPickup() {
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);">
           <input type="checkbox" ${allSel ? 'checked' : ''} onchange="botPickToggleAddr('${esc(normalizeAddr(g.address) || '—')}', this.checked)" data-tip="Select every box at this address">
           <i class="fa fa-map-marker-alt" style="color:#fbbf24;"></i>
-          <div style="flex:1;min-width:0;"><b class="clip">${esc(g.address)}</b>
-            <div style="font-size:11px;color:var(--muted);">${esc([...g.names].join(', '))}</div></div>
+          <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${botOwnerChip(g.address, g.owner)}</div>
+            <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
           <span style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.items.length} box${g.items.length === 1 ? '' : 'es'} · ${gUnits} unit${gUnits === 1 ? '' : 's'}</span>
         </div>
         ${g.items.map(({ p, i }) => `

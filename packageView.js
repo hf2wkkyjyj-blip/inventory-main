@@ -75,6 +75,7 @@ function computePackages(orders, catalog, stock) {
       order_date: o.order_date || null, finder_fee: Number(o.finder_fee) || 0,
       shipping_name: o.shipping_name || null, shipping_address: o.shipping_address || null,
       jig_address: o.jig_address || null,
+      owner: o.owner || null,
     });
 
     let arr; try { arr = JSON.parse(o.items || '[]'); } catch (_) { arr = []; }
@@ -115,7 +116,7 @@ function computePackages(orders, catalog, stock) {
       status,
       mixedStatus:   new Set(statuses).size > 1,
       expected_date: exp, delivered_date: dlv, order_date: ord,
-      shipTo:        addrs.map(o => ({ name: o.shipping_name, address: o.shipping_address })),
+      shipTo:        addrs.map(o => ({ name: o.shipping_name, address: o.shipping_address, owner: o.owner || null })),
       conflict:      addrs.length > 1,       // one box, two destinations — suspicious
       retailers:     [...new Set(p.orders.map(o => o.retailer).filter(Boolean))],
       orderIds:      p.orders.map(o => o.id),

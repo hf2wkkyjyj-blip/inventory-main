@@ -260,6 +260,7 @@ const dom = new JSDOM(html, {
     w.confirm = m => { confirms.push(String(m)); return confirmAnswer; };
     Object.defineProperty(w.navigator, 'clipboard', { value: { writeText: async t => { copied.push(t); } }, configurable: true });
     w.alert   = m => { alerts.push(String(m)); };
+    w.prompt  = () => null;
   },
 });
 const alerts = [];
@@ -499,9 +500,8 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
                 VALUES ('Pokemon','Target','NEW1','Delivered',?,21.70)`)
       .run([JSON.stringify(['1x Pokémon Surging Sparks Booster Bundle @ $19.99'])]);
     check('new product not shown before reload',       !has(/Surging Sparks/));
-    d.getElementById('bot-reparse-btn').click();       // ends in loadBotOrders(), like Refresh/Scan/Repair
-    await tick(200);
-    check('appears after Reparse, without switching tabs', has(/Surging Sparks/));
+    await w.loadBotOrders(); await tick(200);         // what Refresh / Scan Emails end with
+    check('appears after a reload, without switching tabs', has(/Surging Sparks/));
   }
 
   console.log('\n── Shipped opens the package view (real click) ──');
@@ -881,7 +881,9 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(80);
     const inShipped = () => [...d.querySelectorAll('#bot-pkg-tbody > tr')].some(r => /870000000601/.test(r.textContent));
     check('stuck order shows in Shipped (the bug)', inShipped());
-    d.getElementById('bot-reparse-btn').click(); await tick(250);
+    // (No Reparse button any more — the server step still exists; run it directly.)
+    await fakeFetch('/api/admin/scrape-emails/reparse', { method: 'POST', body: '{}' });
+    await w.loadBotOrders(); await tick(250);
     check('after Reparse: gone from Shipped',     !inShipped());
     check('status now Delivered',                 DB.prepare("SELECT status FROM bot_orders WHERE order_number='X01'").get().status === 'Delivered');
     statusSel.value = 'Delivered'; statusSel.dispatchEvent(new w.Event('change')); await tick(80);
@@ -906,7 +908,10 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('fee total = FINDER FEES card (all time)', res.summary.finderFees === cardFees, `${res.summary.finderFees} vs ${cardFees}`);
     const cardProfit = Math.round(money.sales.reduce((a, x) => a + x.profit, 0) * 100) / 100;
     check('profit = SALES PROFIT card (all time)',   res.summary.salesProfit === cardProfit, `${res.summary.salesProfit} vs ${cardProfit}`);
-    check('Backup button on the page',         !!d.getElementById('bot-backup-btn'));
+    check('repair/backup buttons gone from the toolbar', ['bot-rescan-btn', 'bot-reparse-btn', 'bot-repair-btn', 'bot-backup-btn', 'bot-restore-btn', 'bot-wipe-btn', 'bot-search']
+      .every(id => !d.getElementById(id)));
+    check('Scan Emails, Scan Order, Refresh, Add Order kept', ['bot-scan-btn', 'bot-order-scan-btn', 'bot-refresh-btn'].every(id => !!d.getElementById(id)) &&
+      [...d.querySelectorAll('button')].some(b => /Add Order/.test(b.textContent)));
     fs.rmSync(f, { force: true });
   }
 
@@ -1226,6 +1231,47 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('owner message: late one',            /• Any day now \(running late\): 1 box/.test(msg));
     check('owner message: total',               /4 boxes total\. Thank you!$/.test(msg));
     check('owner message: no items or tracking', !/Test Coming|1ZAA|8700/.test(msg));
+
+    console.log('\n── House owners (paste from a sheet, chip, greeting) ──');
+    const chip = () => addrs().find(a => /10 Coming Rd/.test(a.textContent)).querySelector('.bot-owner-chip');
+    check('"+ owner" shown before any name',   chip() && /\+ owner/.test(chip().textContent));
+    d.getElementById('bot-owners-btn').click(); await tick(120);
+    const oov = d.getElementById('bot-owners-overlay');
+    check('House owners dialog opens visibly',  isVisible(oov));
+    d.getElementById('ow-paste').value = 'Name\tStreet Address\tCity\tState\tZIP Code\n' +
+      'Test Owner\t10 Coming Rd\tSpringfield\tMN\t55001\n' +
+      'Other Owner\t500 Faraway Ln\tElsewhere\tMN\t55009\n' +
+      'No Street\tsomewhere\tX\tMN\t55000';
+    d.getElementById('ow-import').click(); await tick(250);
+    check('saved 2, skipped the one with no street number', /Saved 2 owners/.test(d.getElementById('ow-msg').textContent) && /Skipped 1/.test(d.getElementById('ow-msg').textContent), d.getElementById('ow-msg').textContent);
+    const owRows = [...oov.querySelectorAll('.ow-row')].map(r => r.textContent.replace(/\s+/g, ' ').trim());
+    check('list shows owner + order count',     owRows.some(t => /Test Owner/.test(t) && /\b6\b/.test(t)) && owRows.some(t => /Other Owner/.test(t) && /\b0\b/.test(t)), owRows.join(' | '));
+    check('stored in the database, not code',   DB.prepare("SELECT owner FROM bot_address_owners WHERE owner='Test Owner'").get() !== undefined);
+    w.closeOwners(); await tick(200);
+    check('chip shows the owner',               chip() && /Test Owner/.test(chip().textContent), chip() && chip().textContent);
+    copied.length = 0;
+    addrs().find(a => /10 Coming Rd/.test(a.textContent)).querySelector('.bot-owner-copy').click(); await tick(60);
+    check('owner message greets by first name', /^Hi Test — heads up, packages coming to 10 Coming Rd:/.test(copied.pop() || ''));
+    const optLabels = [...d.getElementById('bot-filter-address').options].map(o => o.textContent);
+    check('address filter shows the owner',     optLabels.some(t => /^Test Owner — 10 Coming Rd/.test(t)), optLabels.join(' | '));
+
+    // Change it from the chip — a name with an apostrophe must work.
+    w.prompt = () => "Mary O'Brien";
+    chip().click(); await tick(250);
+    check("chip edit saved (O'Brien)",          chip() && /Mary O'Brien/.test(chip().textContent), chip() && chip().textContent);
+    w.prompt = () => 'Test Owner 2';
+    chip().click(); await tick(250);
+    check('apostrophe name still clickable',    chip() && /Test Owner 2/.test(chip().textContent));
+    // A pasted row with an address but no name must NOT wipe the saved owner.
+    await fakeFetch('/api/admin/bot-address-owners', { method: 'POST', body: JSON.stringify({ rows: [{ owner: '', address: '10 Coming Rd, Springfield, MN 55001' }] }) });
+    check('blank-name row leaves the owner alone', DB.prepare("SELECT owner FROM bot_address_owners WHERE owner='Test Owner 2'").get() !== undefined);
+    // Remove from the dialog → back to "+ owner".
+    d.getElementById('bot-owners-btn').click(); await tick(120);
+    [...oov.querySelectorAll('.ow-row')].find(r => /Test Owner 2/.test(r.textContent)).querySelector('.ow-del').click(); await tick(250);
+    w.closeOwners(); await tick(200);
+    check('removed → "+ owner" again',          chip() && /\+ owner/.test(chip().textContent));
+    const bad = await fakeFetch('/api/admin/bot-address-owners', { method: 'PUT', body: JSON.stringify({ address: 'no number here', owner: 'X' }) });
+    check('server rejects an address without a street number', bad.status === 400);
 
     // Other views are one click away; the status filter can be cleared.
     [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(100);
