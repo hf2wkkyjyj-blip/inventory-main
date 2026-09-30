@@ -216,30 +216,11 @@ try {
 try { db.exec("UPDATE bot_orders SET status='Cancelled' WHERE status='cancelled'"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN tracking TEXT"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Unship' WHERE status='Delayed' OR status='delayed'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE order_number IN ('25293','25164','24662') AND status NOT IN ('Delivered','Cancelled','Refunded')"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE order_number='902003606387023'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0309059483' WHERE order_number='25293' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0308841629' WHERE order_number='25164' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET tracking='1ZH9146G0304222055' WHERE order_number='24662' AND (tracking IS NULL OR tracking='')"); } catch(e) {}
 // Fix Pokemon/Mattel orders stuck as Unship — they were waiting to ship, not delayed
 try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='Unship' AND retailer IN ('Pokemon Center','Mattel','Pokémon Center')"); } catch(e) {}
-// Pokemon Center shipped 2026-09-14
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876893093507' WHERE order_number='P0038241809'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876920927416' WHERE order_number='P0038246261'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876921456036' WHERE order_number='P0038308968'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876937213416' WHERE order_number='P0038309993'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876928855241' WHERE order_number='P0038311805'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876928855241' WHERE order_number='P0038320540'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876921445510' WHERE order_number='P0038322055'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876937255320' WHERE order_number='P0038323517'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876911355367' WHERE order_number='P0038323739'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876929344074' WHERE order_number='P0038369919'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876921717791' WHERE order_number='P0038379467'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876937413400' WHERE order_number='P0038408819'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876922922325' WHERE order_number='P0038646655'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876923650600' WHERE order_number='P0038838257'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876940016644' WHERE order_number='P0038964312'"); } catch(e) {}
-try { db.exec("UPDATE bot_orders SET status='Shipped', tracking='876924193616' WHERE order_number='P0039007837'"); } catch(e) {}
+// Hand-written September fixes. These used to OVERWRITE on every start, which
+// kept undoing tracking fixed with ✎ (see legacyFixes.js). Now fill-only.
+try { require('./legacyFixes').applyLegacyFixes(db); } catch (e) { console.error('⚠️  legacy fixes failed:', e.message); }
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS members (

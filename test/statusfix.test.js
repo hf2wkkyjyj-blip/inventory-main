@@ -80,6 +80,42 @@ console.log('\n── Duplicate merge keeps the furthest status ──');
   eq('kept Cancelled stays Cancelled',   get(db, 5).status, 'Cancelled');
 }
 
+console.log('\n── Startup fixes never undo your edits (legacyFixes.js) ──');
+{
+  const { applyLegacyFixes } = require('../legacyFixes');
+  const db = makeDb();
+  // The reported case: tracking fixed by hand with ✎ — must survive a restart.
+  ins(db, { id: 1, num: 'P0038311805', status: 'Shipped', tracking: '870000009999' });
+  // A delivered one must not be forced back to Shipped.
+  ins(db, { id: 2, num: 'P0038241809', status: 'Delivered', tracking: '876893093507', ts: 'Delivered', dd: '2026-09-27' });
+  // Never scraped yet: no tracking, still Confirmed → gets filled + moved on.
+  ins(db, { id: 3, num: 'P0038320540', status: 'Confirmed' });
+  // Status you set by hand: left alone.
+  ins(db, { id: 4, num: 'P0038322055', status: 'Confirmed', src: 'manual' });
+  ins(db, { id: 5, num: 'P0038309993', status: 'Cancelled' });
+
+  applyLegacyFixes(db);
+  eq('hand-fixed tracking kept',            get(db, 1).tracking, '870000009999');
+  eq('delivered stays Delivered',           get(db, 2).status, 'Delivered');
+  eq('empty tracking filled',               get(db, 3).tracking, '876928855241');
+  eq('Confirmed moved to Shipped',          get(db, 3).status, 'Shipped');
+  eq('manual status untouched',             get(db, 4).status, 'Confirmed');
+  eq('manual row still gets a missing tracking', get(db, 4).tracking, '876921445510');
+  eq('cancelled stays Cancelled',           get(db, 5).status, 'Cancelled');
+
+  // A fresh database gets the CORRECT number for P0038311805 now.
+  const fresh = makeDb();
+  ins(fresh, { id: 1, num: 'P0038311805', status: 'Confirmed' });
+  applyLegacyFixes(fresh);
+  eq('fresh db: P0038311805 gets its own number', get(fresh, 1).tracking, '876937209516');
+
+  eq('second start changes nothing',        applyLegacyFixes(db), 0);
+
+  // Guard: server.js must not force tracking/status on startup again.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'server.js'), 'utf8');
+  eq('no forced tracking UPDATEs in server.js', /UPDATE bot_orders SET status='Shipped', tracking=/.test(src), false);
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
