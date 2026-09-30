@@ -42,8 +42,21 @@ function parseAddress(raw) {
   if (si < 0) return null;
   const m = parts[si].match(/^0*(\d+)[a-z]?\s+(.*)$/i);
   let words = m[2].toLowerCase().replace(/[-_.]/g, ' ').split(/\s+/).filter(Boolean);
-  const cut = words.findIndex((w, i) => i > 0 && UNIT.test(w));
+  // A unit starts at a unit word — but a bare number right after a type-only
+  // name is the street itself ("Highway 7", "County Rd 81"), not a unit.
+  const named = i => words.slice(0, i).some(x => !TYPES[x] && !DIRS[x]);
+  const cut = words.findIndex((w, i) => i > 0 && UNIT.test(w) && (named(i) || !/^\d/.test(w)));
   if (cut >= 0) words = words.slice(0, cut);
+  // Once the street TYPE (Ave, St, Dr…) and an optional direction after it have
+  // appeared, whatever follows is a unit or a jig tag — "4th Ave S Hse",
+  // "Maple Ave N Upper" — whatever word gets invented next. (Only when a street
+  // name came before the type, so "Highway 7" keeps its number.)
+  const ti = words.findIndex((w, i) => TYPES[w] && words.slice(0, i).some(x => !TYPES[x] && !DIRS[x]));
+  if (ti >= 0) {
+    let end = ti + 1;
+    if (words[end] && DIRS[words[end]]) end++;
+    words = words.slice(0, end);
+  }
   // Stray 1–2 letter jig tags ("qu", "kl", "nh") that aren't a direction or type.
   words = words.filter(w => w.length > 2 || /\d/.test(w) || DIRS[w] || TYPES[w]);
   const core = words.filter(w => !TYPES[w] && !DIRS[w]);

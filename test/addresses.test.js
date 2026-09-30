@@ -27,6 +27,16 @@ const JIGS = [
 const k0 = addressKey(JIGS[0]);
 JIGS.forEach(a => eq(`same place: ${a.slice(0, 48)}`, addressKey(a), k0));
 
+console.log('\n── Any word after the street type + direction is a jig ──');
+const H = addressKey('13400 4th Ave S, Testville, 55337');
+eq('"Hse" after the street',        addressKey('13400 4th Ave S Hse'), H);
+eq('"Upper" after the street',      addressKey('013400 4th Avenue South Upper, Testville, MN 55337'), H);
+eq('made-up tag after the street',  addressKey('13400c 4th Ave S Zzq, Testville, MN 55337'), H);
+eq('label drops the tag',           buildAddressBook(['13400 4th Ave S Hse', '13400 4th Ave S, Testville, 55337']).main('13400 4th Ave S Hse'), '13400 4th Ave S, Testville, 55337');
+eq('"Highway 7" keeps its number',  addressKey('500 Highway 7, X, MN 55008') === addressKey('500 Highway 8, X, MN 55008'), false);
+eq('two-word street names intact',  addressKey('9 Briar Hill Dr Door 3, X, TX 76207'), addressKey('09 Briar Hill Drive, X, TX 76207'));
+eq('type-less street unaffected',   addressKey('8805 E Test Center Apt-3-out, X, MN 55428'), addressKey('08805 E Test Center, X, MN 55428'));
+
 console.log('\n── Different places stay apart ──');
 eq('different house number',       addressKey('102 Maple Ave N, Springfield, MN 55001') === k0, false);
 eq('different street',             addressKey('100 Birch Ave N, Springfield, MN 55001') === k0, false);
