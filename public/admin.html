@@ -466,7 +466,6 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="bot-stat"><div class="lbl">TOTAL</div><div class="val" id="bs-total">0</div></div>
     <div class="bot-stat s-green clickable" onclick="botFilterStatus('Confirmed')" id="bsc-Confirmed"><div class="lbl">CONFIRMED</div><div class="val" id="bs-confirmed">0</div></div>
     <div class="bot-stat s-purple clickable" onclick="botFilterStatus('Shipped')" id="bsc-Shipped"><div class="lbl">SHIPPED</div><div class="val" id="bs-shipped">0</div></div>
-    <div class="bot-stat s-amber clickable" onclick="botFilterStatus('Unship')" id="bsc-Unship"><div class="lbl">UNSHIP</div><div class="val" id="bs-delayed">0</div></div>
     <div class="bot-stat s-blue clickable" onclick="botFilterStatus('Delivered')" id="bsc-Delivered"><div class="lbl">DELIVERED</div><div class="val" id="bs-delivered">0</div></div>
     <div class="bot-stat s-red clickable" onclick="botFilterStatus('Cancelled')" id="bsc-Cancelled"><div class="lbl">CANCELLED</div><div class="val" id="bs-cancelled">0</div></div>
     <div class="bot-stat s-pink clickable" onclick="botFilterStatus('Refunded')" id="bsc-Refunded"><div class="lbl">REFUNDED</div><div class="val" id="bs-refunded">0</div></div>
@@ -474,9 +473,12 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="bot-stat s-amber" id="bsc-fees" data-tip="Finder fees paid: box/order fees + per-unit fees × units. Cancelled and refunded orders not counted.">
       <div class="lbl">FINDER FEES</div><div class="val" style="font-size:18px;" id="bs-fees">$0</div>
       <div class="sub" id="bs-fees-sub"></div></div>
-    <div class="bot-stat s-profit" id="bsc-profit" data-tip="From recorded sales: money in − selling fees − landed cost of the units sold. ROI = profit ÷ that landed cost.">
+    <div class="bot-stat s-profit clickable" id="bsc-profit" onclick="botOpenView('sold')" data-tip="From recorded sales: money in − selling fees − landed cost of the units sold. ROI = profit ÷ that landed cost. Click to see every sale.">
       <div class="lbl">SALES PROFIT</div><div class="val" style="font-size:18px;" id="bs-profit">$0</div>
       <div class="sub" id="bs-profit-sub"></div></div>
+    <div class="bot-stat s-blue clickable" id="bsc-stock" onclick="botOpenView('stock')" data-tip="What you have on hand and haven't sold, at landed cost. Click to see it and count it.">
+      <div class="lbl">STOCK</div><div class="val" style="font-size:18px;" id="bs-stock">$0</div>
+      <div class="sub" id="bs-stock-sub"></div></div>
     <div class="bot-stat s-amber clickable" id="bsc-pickup" onclick="botOpenPickup()" data-tip="Delivered boxes you haven't picked up and checked yet. Click to see them by address.">
       <div class="lbl">TO PICK UP</div><div class="val" style="font-size:18px;" id="bs-pickup">0</div>
       <div class="sub" id="bs-pickup-sub"></div></div>
@@ -506,7 +508,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       </select>
       <select id="bot-filter-status" onchange="botFilterChanged()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
         <option value="">All statuses</option>
-        <option>Confirmed</option><option>Shipped</option><option>Unship</option>
+        <option>Confirmed</option><option>Shipped</option>
         <option>Delivered</option><option>Cancelled</option><option>Refunded</option>
       </select>
       <select id="bot-filter-address" onchange="botFilterChanged()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);max-width:180px;">
@@ -584,6 +586,10 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <tbody id="bot-pkg-tbody"></tbody>
       </table>
     </div>
+    <!-- In stock: what's on hand now, at cost, with count mode -->
+    <div id="bot-stock-wrap" style="display:none;"></div>
+    <!-- Sold: every recorded sale -->
+    <div id="bot-sold-wrap" style="display:none;"></div>
     <!-- To pick up: delivered boxes not yet checked in, grouped by address -->
     <div id="bot-pickup-wrap" style="display:none;"></div>
     <div id="bot-product-table-wrap" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
@@ -871,7 +877,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <input type="hidden" id="bot-edit-id">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Status</label>
-        <select id="bot-edit-status" style="width:100%;"><option>Confirmed</option><option>Shipped</option><option>Unship</option><option>Delivered</option><option>Cancelled</option><option>Refunded</option></select></div>
+        <select id="bot-edit-status" style="width:100%;"><option>Confirmed</option><option>Shipped</option><option>Delivered</option><option>Cancelled</option><option>Refunded</option></select></div>
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Tracking #</label>
         <input type="text" id="bot-edit-tracking" placeholder="Tracking number" style="width:100%;"></div>
       <div class="form-group" style="margin:0;grid-column:span 2;"><label style="font-size:11px;">Notes</label>
@@ -2049,7 +2055,8 @@ async function deletePayment(payId, memberId) {
 
 // ── BOT ORDER TRACKER ─────────────────────────────────────────────────────────
 let _botOrders = [], _botPage = 0, _botPageSize = 25, _botSortKey = '__date', _botSortDir = -1, _botStatusFilter = '';
-const BOT_STATUSES = ['Confirmed','Shipped','Unship','Delivered','Cancelled','Refunded'];
+// "Unship" was dropped from the UI (never used); any old row with it counts as Confirmed.
+const BOT_STATUSES = ['Confirmed','Shipped','Delivered','Cancelled','Refunded'];
 
 // ── FINDER FEES / SALES PROFIT cards ────────────────────────────────────────
 // The server works out each order's fee and each sale's profit (it knows the
@@ -2080,6 +2087,15 @@ function botRenderMoneyCards(ordersInRange) {
   const pEl = document.getElementById('bs-profit');
   pEl.textContent = sales.length ? (profit >= 0 ? '+' : '') + botMoneyFmt(profit) : '$0.00';
   pEl.style.color = !sales.length ? 'var(--muted)' : profit >= 0 ? '#4ade80' : '#f87171';
+  const st = _botMoney.stock || {};
+  const se = document.getElementById('bs-stock');
+  if (se) {
+    se.textContent = botMoneyFmt(st.inHandCost || 0);
+    document.getElementById('bs-stock-sub').textContent =
+      `${st.unitsInHand || 0} in hand` + (st.toPickUpCost ? ` · ${botMoneyFmt(st.toPickUpCost)} to pick up` : '') +
+      (st.onTheWayCost ? ` · ${botMoneyFmt(st.onTheWayCost)} on the way` : '');
+  }
+  if (botEffectiveView && botEffectiveView() === 'sold' && document.getElementById('bot-sold-wrap').style.display !== 'none') renderBotSold();
   const cl = _botMoney.claims || {};
   document.getElementById('bs-pickup').textContent = cl.toPickUpUnits || 0;
   document.getElementById('bs-pickup-sub').textContent = cl.toPickUpUnits ? 'units delivered, not checked' : 'all picked up';
@@ -2164,7 +2180,8 @@ function buildBotStats() {
   BOT_STATUSES.forEach(s => counts[s] = 0);
   let spent = 0;
   o.forEach(r => {
-    if (counts[r.status] !== undefined) counts[r.status]++;
+    const st = r.status === 'Unship' ? 'Confirmed' : r.status;
+    if (counts[st] !== undefined) counts[st]++;
     if (r.status !== 'Cancelled' && r.status !== 'Refunded') spent += (r.order_total||0) - (r.refunded_amount||0);
   });
 
@@ -2176,7 +2193,6 @@ function buildBotStats() {
   document.getElementById('bs-total').textContent = o.length;
   document.getElementById('bs-confirmed').textContent = counts['Confirmed'];
   document.getElementById('bs-shipped').textContent = counts['Shipped'];
-  document.getElementById('bs-delayed').textContent = counts['Unship'];
   document.getElementById('bs-delivered').textContent = counts['Delivered'];
   document.getElementById('bs-cancelled').textContent = counts['Cancelled'];
   document.getElementById('bs-refunded').textContent = counts['Refunded'];
@@ -2770,13 +2786,209 @@ function botSetView(mode) {
 function botApplyView(view) {
   document.getElementById('bot-pkg-wrap').style.display           = view === 'package' ? '' : 'none';
   document.getElementById('bot-pickup-wrap').style.display        = view === 'pickup'  ? '' : 'none';
+  document.getElementById('bot-stock-wrap').style.display         = view === 'stock'   ? '' : 'none';
+  document.getElementById('bot-sold-wrap').style.display          = view === 'sold'    ? '' : 'none';
   document.getElementById('bot-product-table-wrap').style.display = view === 'product' ? '' : 'none';
   document.getElementById('bot-view-switch').innerHTML =
+    `<button class="bot-vs-btn${view === 'stock' ? ' active' : ''}" onclick="botSetView('stock')"><i class="fa fa-cubes"></i> In stock</button>` +
+    `<button class="bot-vs-btn${view === 'sold' ? ' active' : ''}" onclick="botSetView('sold')"><i class="fa fa-receipt"></i> Sold</button>` +
     `<button class="bot-vs-btn${view === 'pickup' ? ' active' : ''}" onclick="botSetView('pickup')"><i class="fa fa-map-marker-alt"></i> To pick up</button>` +
     `<button class="bot-vs-btn${view === 'package' ? ' active' : ''}" onclick="botSetView('package')"><i class="fa fa-box"></i> By package</button>` +
     `<button class="bot-vs-btn${view === 'product' ? ' active' : ''}" onclick="botSetView('product')"><i class="fa fa-layer-group"></i> By product</button>` +
     (botCurCat() === 'All' ? `<button class="bot-vs-btn" onclick="botShowOrderList(true)"><i class="fa fa-list"></i> Order list</button>` : '');
   if (view !== 'package') { _botPkgSelected.clear(); botRenderActionBar(); }
+}
+
+// ── Cards open their views ──────────────────────────────────────────────────
+function botOpenView(mode) {
+  _botViewMode = mode;
+  if (botCurCat() === 'All' && _botAllOrders) { _botAllOrders = false; botSetCat('All'); }
+  else loadBotItemView(botCurCat());
+  const v = document.getElementById('bot-item-view');
+  if (v && v.scrollIntoView) v.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
+const botDaysSince = d => { const t = botParseDate(d); return isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t.getTime()) / 86400000)); };
+
+// ── In stock (+ count mode) ─────────────────────────────────────────────────
+// What's on hand and unsold, at landed cost, oldest first. Count mode: type
+// what's actually on the shelf; the server works out the difference and keeps
+// it as a correction (short = loss at cost, extra = found).
+let _botStockItems = [];
+let _botCounting = false;
+let _botCountHistory = null;
+
+function renderBotStock() {
+  const wrap = document.getElementById('bot-stock-wrap');
+  const q = (document.getElementById('bot-item-search').value || '').toLowerCase();
+  const keep = {};   // typed counts survive a re-render
+  wrap.querySelectorAll('input.bst-count').forEach(i => { if (i.value !== '') keep[i.dataset.key] = i.value; });
+  let rows = (_botStockItems || []).filter(i => i.unitsLeft > 0);
+  if (q) rows = rows.filter(i => i.name.toLowerCase().includes(q));
+  rows.sort((a, b) => String(a.oldestInStock || '9999').localeCompare(String(b.oldestInStock || '9999')) || a.name.localeCompare(b.name));
+  const units = rows.reduce((a, i) => a + i.unitsLeft, 0);
+  const cost  = rows.reduce((a, i) => a + (i.stockAtCost || 0), 0);
+  document.getElementById('bot-item-count').textContent = `${rows.length} product${rows.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'} · ${botMoneyFmt(cost)} at cost`;
+  document.getElementById('bot-unlinked-banner').innerHTML = '';
+  const th = 'padding:10px 8px;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);';
+  wrap.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+      ${_botCounting
+        ? `<b style="font-size:12px;">Counting</b> <span style="font-size:12px;color:var(--muted);">— type what's on the shelf. Leave blank to skip a product.</span>
+           <span style="flex:1;"></span>
+           <label style="font-size:12px;">Counted on <input type="date" id="bst-date" value="${botLocalToday()}" max="${botLocalToday()}" style="font-size:12px;padding:3px 6px;"></label>
+           <button class="btn btn-ghost btn-sm" onclick="botCountMode(false)">Cancel</button>
+           <button class="btn btn-primary btn-sm" id="bst-save" onclick="botSaveCount()"><i class="fa fa-save"></i> Save count</button>`
+        : `<button class="btn btn-primary btn-sm" id="bst-start" onclick="botCountMode(true)"><i class="fa fa-clipboard-check"></i> Count stock</button>
+           <button class="btn btn-ghost btn-sm" id="bst-history-btn" onclick="botToggleCountHistory()"><i class="fa fa-history"></i> Count history</button>`}
+    </div>
+    <div id="bst-error" style="font-size:12px;color:#f87171;margin-bottom:8px;display:none;"></div>
+    <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr>
+          <th style="${th}text-align:left;padding-left:12px;">ITEM</th>
+          <th style="${th}text-align:center;">IN HAND</th>
+          <th style="${th}text-align:right;">COST / UNIT</th>
+          <th style="${th}text-align:right;">AT COST</th>
+          <th style="${th}text-align:right;" data-tip="Oldest unit still on the shelf (sold ones are taken oldest-first)">OLDEST</th>
+          ${_botCounting ? `<th style="${th}text-align:center;">COUNTED</th><th style="${th}text-align:center;">DIFF</th>` : ''}
+        </tr></thead>
+        <tbody id="bst-body">${rows.length ? rows.map(i => {
+          const days = i.oldestInStock ? botDaysSince(i.oldestInStock) : null;
+          const age  = days == null ? '—' : `${days}d`;
+          const ageC = days == null ? 'var(--muted)' : days >= 90 ? '#f87171' : days >= 60 ? '#fb923c' : days >= 30 ? '#fbbf24' : 'var(--muted)';
+          return `<tr class="bst-row" data-key="${esc(i.skuKey)}" style="border-top:1px solid var(--border);">
+            <td style="padding:8px 12px;"><div class="clip" data-tip="${esc(i.name)}">${esc(i.name)}</div>
+              <div style="font-size:10px;color:var(--muted);">${esc((i.retailers || []).join(' · '))}${i.toPickUp ? ` · +${i.toPickUp} to pick up` : ''}</div></td>
+            <td class="bst-left" style="text-align:center;font-weight:700;">${i.unitsLeft}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;">$${(i.perUnitTotal || 0).toFixed(2)}</td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">${botMoneyFmt(i.stockAtCost || 0)}</td>
+            <td style="text-align:right;color:${ageC};" data-tip="${i.oldestInStock ? 'Picked up ' + esc(i.oldestInStock) : 'Pick-up date unknown'}">${age}</td>
+            ${_botCounting ? `<td style="text-align:center;"><input type="number" class="bst-count" data-key="${esc(i.skuKey)}" data-left="${i.unitsLeft}" min="0" step="1"
+                 value="${keep[i.skuKey] ?? ''}" oninput="botCountDiff(this)" style="width:60px;text-align:center;"></td>
+               <td class="bst-diff" style="text-align:center;font-weight:700;"></td>` : ''}
+          </tr>`; }).join('')
+          : `<tr><td colspan="${_botCounting ? 7 : 5}" style="text-align:center;padding:32px;color:var(--muted);">Nothing in hand here. Check boxes in under <b>To pick up</b> first.</td></tr>`}</tbody>
+        ${rows.length ? `<tfoot><tr style="border-top:1px solid var(--border);font-weight:700;">
+          <td style="padding:8px 12px;">Total</td><td style="text-align:center;">${units}</td><td></td>
+          <td style="text-align:right;">${botMoneyFmt(cost)}</td><td></td>${_botCounting ? '<td></td><td></td>' : ''}</tr></tfoot>` : ''}
+      </table>
+    </div>
+    <div id="bst-history" style="margin-top:12px;${_botCountHistory ? '' : 'display:none;'}"></div>`;
+  wrap.querySelectorAll('input.bst-count').forEach(i => { if (i.value !== '') botCountDiff(i); });
+  if (_botCountHistory) renderBotCountHistory();
+}
+
+function botCountMode(on) { _botCounting = !!on; if (!on) document.querySelectorAll('input.bst-count').forEach(i => { i.value = ''; }); renderBotStock(); }
+
+function botCountDiff(input) {
+  const cell = input.closest('tr').querySelector('.bst-diff');
+  if (input.value === '') { cell.textContent = ''; return; }
+  const d = (parseInt(input.value, 10) || 0) - Number(input.dataset.left);
+  cell.textContent = d === 0 ? '✓' : (d > 0 ? '+' : '−') + Math.abs(d);
+  cell.style.color = d === 0 ? '#4ade80' : d < 0 ? '#f87171' : '#fbbf24';
+}
+
+async function botSaveCount() {
+  const err = document.getElementById('bst-error');
+  const typed = [...document.querySelectorAll('input.bst-count')].filter(i => i.value !== '')
+    .map(i => ({ sku_key: i.dataset.key, counted: Number(i.value), left: Number(i.dataset.left) }));
+  if (!typed.length) { err.textContent = 'Type at least one count.'; err.style.display = ''; return; }
+  if (typed.some(c => !Number.isInteger(c.counted) || c.counted < 0)) { err.textContent = 'Counts must be whole numbers, 0 or more.'; err.style.display = ''; return; }
+  const counts = typed.map(({ sku_key, counted }) => ({ sku_key, counted }));
+  const short = typed.filter(c => c.counted < c.left).length;
+  if (short && !confirm(`${short} product${short === 1 ? ' is' : 's are'} short. Save the count? Missing units come off stock and are recorded as a loss at cost.`)) return;
+  err.style.display = 'none';
+  const r = await api('POST', '/admin/bot-stock-count', { counts, date: document.getElementById('bst-date').value || botLocalToday() });
+  if (!r) { err.textContent = 'Could not save the count.'; err.style.display = ''; return; }
+  _botCounting = false;
+  _botCountHistory = null;
+  botLoadMoney();
+  await loadBotItemView(botCurCat());
+  const changed = r.results.filter(x => x.diff);
+  alert(changed.length ? `Saved. ${changed.length} correction${changed.length === 1 ? '' : 's'}:\n` + changed.map(x => `${x.name}: ${x.diff > 0 ? '+' : ''}${x.diff}`).join('\n') : 'Saved — everything matched.');
+}
+
+async function botToggleCountHistory() {
+  if (_botCountHistory) { _botCountHistory = null; renderBotStock(); return; }
+  _botCountHistory = (await api('GET', '/admin/bot-stock-count')) || [];
+  renderBotStock();
+}
+function renderBotCountHistory() {
+  const box = document.getElementById('bst-history');
+  const h = _botCountHistory || [];
+  box.innerHTML = `<div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted);margin-bottom:6px;">COUNT CORRECTIONS</div>` + (h.length
+    ? h.map(a => `<div class="bst-hist" style="display:flex;gap:10px;align-items:center;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);">
+        <span style="width:84px;color:var(--muted);">${esc(a.counted_at || '')}</span>
+        <span style="flex:1;">${esc(a.product_name || a.sku_key)}</span>
+        <b style="color:${a.qty < 0 ? '#f87171' : '#fbbf24'};">${a.qty > 0 ? '+' : '−'}${Math.abs(a.qty)}</b>
+        <span style="width:90px;text-align:right;color:var(--muted);">${a.qty < 0 ? '−' + botMoneyFmt(-a.qty * (a.unit_cost || 0)) : 'found'}</span>
+        <button class="bst-undo" onclick="botUndoCount(${Number(a.id)})" data-tip="Undo this correction" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button></div>`).join('')
+    : '<div style="font-size:12px;color:var(--muted);">No corrections yet — every count so far matched.</div>');
+}
+async function botUndoCount(id) {
+  if (!confirm('Undo this count correction?')) return;
+  await api('DELETE', '/admin/bot-stock-count/' + id);
+  _botCountHistory = (await api('GET', '/admin/bot-stock-count')) || [];
+  botLoadMoney();
+  await loadBotItemView(botCurCat());
+}
+
+// ── Sold ────────────────────────────────────────────────────────────────────
+// Every recorded sale, newest first. Follows the WHEN range and category tab.
+function renderBotSold() {
+  const wrap = document.getElementById('bot-sold-wrap');
+  if (!wrap) return;
+  const cat = botCurCat();
+  const q = (document.getElementById('bot-item-search').value || '').toLowerCase();
+  let rows = (_botMoney.sales || []).filter(x => botDateInRange(x.sold_at, _botRange));
+  if (cat !== 'All') rows = rows.filter(x => (x.category || 'Other') === cat);
+  if (q) rows = rows.filter(x => (x.product || '').toLowerCase().includes(q) || (x.channel || '').toLowerCase().includes(q));
+  rows = [...rows].sort((a, b) => String(b.sold_at || '').localeCompare(String(a.sold_at || '')) || (b.id || 0) - (a.id || 0));
+  const sum = k => rows.reduce((a, x) => a + (x[k] || 0), 0);
+  const units = sum('qty'), rev = sum('revenue'), fees = sum('fees'), cost = sum('cost'), profit = sum('profit');
+  const roi = cost > 0 ? Math.round(profit / cost * 100) + '%' : '—';
+  const lbl = botRangeLabel();
+  document.getElementById('bot-item-count').textContent = `${rows.length} sale${rows.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'}${lbl ? ' ' + lbl : ''}`;
+  document.getElementById('bot-unlinked-banner').innerHTML = '';
+  const th = 'padding:10px 8px;font-size:10px;letter-spacing:.06em;color:var(--muted);border-bottom:1px solid var(--border);';
+  const pc = v => v >= 0 ? '#4ade80' : '#f87171';
+  wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+      <thead><tr>
+        <th style="${th}text-align:left;padding-left:12px;">DATE</th><th style="${th}text-align:left;">ITEM</th>
+        <th style="${th}text-align:center;">QTY</th><th style="${th}text-align:right;">PRICE / EA</th>
+        <th style="${th}text-align:right;">FEES</th><th style="${th}text-align:right;" data-tip="Landed cost of the units sold">COST</th>
+        <th style="${th}text-align:right;">PROFIT</th><th style="${th}text-align:right;">ROI</th>
+        <th style="${th}text-align:left;">WHERE</th><th style="${th}"></th></tr></thead>
+      <tbody>${rows.length ? rows.map(x => `
+        <tr class="sold-row" style="border-top:1px solid var(--border);">
+          <td style="padding:7px 8px 7px 12px;white-space:nowrap;color:var(--muted);">${esc(botShortDate(x.sold_at || ''))}</td>
+          <td style="max-width:280px;"><div class="clip" data-tip="${esc(x.product)}">${esc(x.product)}</div></td>
+          <td style="text-align:center;">${x.qty}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">$${(x.unit_price || 0).toFixed(2)}</td>
+          <td style="text-align:right;color:var(--muted);">${x.fees ? '$' + x.fees.toFixed(2) : '—'}</td>
+          <td style="text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;">${botMoneyFmt(x.cost)}</td>
+          <td style="text-align:right;font-weight:700;color:${pc(x.profit)};">${x.profit >= 0 ? '+' : ''}${botMoneyFmt(x.profit)}</td>
+          <td style="text-align:right;color:var(--muted);">${x.cost > 0 ? Math.round(x.profit / x.cost * 100) + '%' : '—'}</td>
+          <td style="color:var(--muted);">${esc(x.channel || '')}</td>
+          <td><button class="sold-del" onclick="botDeleteSoldRow(${Number(x.id)})" data-tip="Delete this sale" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button></td>
+        </tr>`).join('')
+        : `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--muted);">No sales${lbl ? ' ' + lbl : ''}. Record one with the <b>$</b> button in By product.</td></tr>`}</tbody>
+      ${rows.length ? `<tfoot><tr class="sold-total" style="border-top:1px solid var(--border);font-weight:700;">
+        <td style="padding:8px 12px;" colspan="2">Total</td><td style="text-align:center;">${units}</td>
+        <td style="text-align:right;">${botMoneyFmt(rev)}</td><td style="text-align:right;">${fees ? botMoneyFmt(fees) : '—'}</td>
+        <td style="text-align:right;">${botMoneyFmt(cost)}</td>
+        <td style="text-align:right;color:${pc(profit)};">${profit >= 0 ? '+' : ''}${botMoneyFmt(profit)}</td>
+        <td style="text-align:right;">${roi}</td><td colspan="2"></td></tr></tfoot>` : ''}
+    </table></div>`;
+}
+
+async function botDeleteSoldRow(id) {
+  if (!confirm('Delete this sale? The units go back into stock.')) return;
+  await api('DELETE', '/admin/bot-sales/' + id);
+  await botLoadMoney();
+  renderBotSold();
 }
 
 // ── To pick up ──────────────────────────────────────────────────────────────
@@ -3385,6 +3597,21 @@ async function loadBotItemView(cat) {
   if (status !== _botViewStatus) { _botViewMode = 'auto'; _botViewStatus = status; }
   const view = botEffectiveView();
   botApplyView(view);
+  if (view === 'stock') {
+    // Everything on hand, whatever the status filter (stock is past "Delivered").
+    const q3 = new URLSearchParams({ category: cat });
+    if (retailer) q3.set('retailer', retailer);
+    const items = await api('GET', '/admin/bot-items?' + q3.toString());
+    if (!items) return;
+    _botStockItems = items;
+    renderBotStock();
+    return;
+  }
+  if (view === 'sold') {
+    await botLoadMoney();
+    renderBotSold();
+    return;
+  }
   if (view === 'pickup') {
     // Every delivered box not yet checked in — whatever the status filter says.
     const q2 = new URLSearchParams({ category: cat });
@@ -3436,6 +3663,8 @@ function botFilterChanged() {
 function renderBotItemView() {
   if (botEffectiveView() === 'package') return renderBotPackages();
   if (botEffectiveView() === 'pickup')  return renderBotPickup();
+  if (botEffectiveView() === 'stock')   return renderBotStock();
+  if (botEffectiveView() === 'sold')    return renderBotSold();
   const search = (document.getElementById('bot-item-search').value || '').toLowerCase();
   const addr   = document.getElementById('bot-filter-address').value;
   let rows = _botItems;
@@ -3938,7 +4167,7 @@ function botEditRow(id) {
   if (!o) { alert('Could not open this order — try Refresh.'); return; }
   document.getElementById('bot-edit-id').value = id;
   document.getElementById('bot-edit-ordnum').textContent = o.order_number ? '#'+o.order_number : '';
-  document.getElementById('bot-edit-status').value = o.status || 'Confirmed';
+  document.getElementById('bot-edit-status').value = (o.status === 'Unship' ? 'Confirmed' : o.status) || 'Confirmed';
   document.getElementById('bot-edit-tracking').value = o.tracking || '';
   document.getElementById('bot-edit-notes').value = o.notes || '';
   document.getElementById('bot-edit-total').value = o.order_total || '';

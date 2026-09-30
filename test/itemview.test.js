@@ -258,6 +258,39 @@ console.log('\n── Stock = what you picked up and checked ──');
   eq('damaged + kept → still in hand',    dmg.inHand, 2);
 }
 
+console.log('\n── Stock counts, oldest-first aging, stock at cost ──');
+{
+  const T = 'Test Count Box';
+  const mk = (id, extra = {}) => ({ id, retailer: 'Test', status: 'Delivered', order_total: 100, items: `["2x ${T} @ $50.00"]`, ...extra });
+  const orders = [mk(1), mk(2), mk(3), mk(4, { status: 'Shipped' })];
+  const checkedIn = new Map([[1, '2026-09-01'], [2, '2026-09-10'], [3, '2026-09-20']]);   // 6 units picked up
+  const sales = [{ id: 1, sku_key: T, qty: 3, unit_price: 70, fees: 0, sold_at: '2026-09-21' }];
+  const run = adj => computeItemGroups(orders, [], undefined, sales, { checkedIn, issues: [], adjustments: adj })[0];
+
+  const g = run([]);
+  eq('in hand 6, sold 3 → 3 left',          [g.inHand, g.unitsLeft].join(), '6,3');
+  eq('stock at cost = 3 × $50',             g.stockAtCost, 150);
+  eq('on the way at cost = 2 × $50',        g.onTheWayCost, 100);
+  // FIFO: the 3 sold came out of Sep 1 (2) and Sep 10 (1) → oldest left is Sep 10.
+  eq('oldest unit still on the shelf',      g.oldestInStock, '2026-09-10');
+
+  const short = run([{ id: 1, sku_key: T, qty: -1, unit_cost: 50, counted_at: '2026-09-25' }]);
+  eq('count 1 short → 2 left',              short.unitsLeft, 2);
+  eq('shortage is a loss at cost',          short.countLoss, 50);
+  eq('in hand drops too',                   short.inHand, 5);
+  eq('short unit taken oldest-first',       short.oldestInStock, '2026-09-20');
+  eq('stock at cost follows',               short.stockAtCost, 100);
+
+  const extra = run([{ id: 2, sku_key: T, qty: 2, unit_cost: 50 }]);
+  eq('count 2 extra → 5 left',              [extra.unitsLeft, extra.extraUnits, extra.countLoss].join(), '5,2,0');
+
+  const all = run([{ id: 3, sku_key: T, qty: -3, unit_cost: 50 }]);
+  eq('everything gone → no oldest date',    [all.unitsLeft, all.oldestInStock].join(), '0,');
+  const dup = run([{ id: 4, sku_key: T, qty: -1, unit_cost: 50 }, { id: 4, sku_key: T, qty: -1, unit_cost: 50 }]);
+  eq('same correction counted once',        dup.shortUnits, 1);
+  eq('category carried for filters',        g.categories.join(), 'Other');
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

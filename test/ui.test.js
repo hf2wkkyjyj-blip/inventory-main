@@ -182,6 +182,21 @@ for (const [num, status, trk, addr, items, total] of [
               VALUES ('Test Cat','Test Store',?,?,?,'Test Buyer',?,?,?)`).run([num, status, trk, addr, JSON.stringify(items), total]);
 }
 
+// Stock / count test data (made up): 5 decks picked up on two dates, 1 tin.
+for (const [num, items, total, day] of [
+  ['C01', ['2x Test Count Deck @ $40.00'], 80, '2026-08-01'],
+  ['C02', ['3x Test Count Deck @ $40.00'], 120, '2026-09-20'],
+  ['C03', ['1x Test Count Tin @ $10.00'], 10, '2026-09-25'],
+  ['C04', ['1x Test Count Mat @ $5.00'], 5, '2026-09-25'],     // counted gone below → none left
+]) {
+  const r = DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total)
+                        VALUES ('Count Cat','Test Store',?, 'Delivered', ?, ?)`).run([num, JSON.stringify(items), total]);
+  DB.prepare('INSERT INTO bot_checkins (order_id, checked_at) VALUES (?,?)').run([Number(r.lastInsertRowid), day]);
+}
+
+DB.prepare(`INSERT INTO bot_adjustments (sku_key, product_name, qty, unit_cost, counted_at)
+            VALUES ('Test Count Mat','Test Count Mat',-1,5,'2026-09-26')`).run();
+
 // ── Route dispatch for the page's fetch() ───────────────────────────────────
 const calls = [];
 function matchRoute(verb, pathname) {
@@ -1076,6 +1091,90 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const mid = DB.prepare('SELECT id FROM bot_issues WHERE order_id=?').get([k02]).id;
     const keepMissing = await fakeFetch('/api/admin/bot-issues/' + mid, { method: 'PATCH', body: JSON.stringify({ status: 'denied_keep' }) });
     check('a missing item can\'t be "kept"',    miss.status === 200 && keepMissing.status === 400);
+  }
+
+  console.log('\n── In stock view + stock count (real clicks) ──');
+  {
+    const statusSel = d.getElementById('bot-filter-status');
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
+    [...d.querySelectorAll('.btab')].find(b => /^Count Cat/.test(b.textContent.trim())).click(); await tick(100);
+    check('STOCK card shows a $ amount',       /\$[\d,]+\.\d\d/.test(d.getElementById('bs-stock').textContent), d.getElementById('bs-stock').textContent);
+    d.getElementById('bsc-stock').click(); await tick(150);
+    const wrap = d.getElementById('bot-stock-wrap');
+    check('In stock view opens',               wrap.style.display !== 'none' && d.getElementById('bot-product-table-wrap').style.display === 'none');
+    const rows = () => [...wrap.querySelectorAll('tr.bst-row')];
+    const row  = re => rows().find(r => re.test(r.textContent));
+    const td   = (r, i) => r.querySelectorAll('td')[i].textContent.trim();
+    check('2 products in hand',                rows().length === 2, rows().length);
+    check('nothing-left product not listed',   !row(/Test Count Mat/));
+    check('oldest stock listed first',         /Test Count Deck/.test(rows()[0].textContent));
+    check('Deck: 5 in hand, $40.00, $200.00',  td(row(/Deck/), 1) === '5' && td(row(/Deck/), 2) === '$40.00' && td(row(/Deck/), 3) === '$200.00', [1, 2, 3].map(i => td(row(/Deck/), i)).join(' | '));
+    check('Deck age shown in days',            /^\d+d$/.test(td(row(/Deck/), 4)), td(row(/Deck/), 4));
+    check('total at cost $210.00',             /\$210\.00/.test(wrap.querySelector('tfoot').textContent));
+
+    // Sell 2 decks → 3 left, and the 2 come off the OLDEST pick-up.
+    const deckKey = row(/Deck/).dataset.key;
+    await fakeFetch('/api/admin/bot-sales', { method: 'POST', body: JSON.stringify({ sku_key: deckKey, product_name: 'Test Count Deck', qty: 2, unit_price: 55, channel: 'eBay', sold_at: w.botLocalToday() }) });
+    await w.loadBotItemView('Count Cat'); await tick(100);
+    check('after selling 2: 3 in hand',        td(row(/Deck/), 1) === '3');
+    const ageAfter = Number(td(row(/Deck/), 4).replace('d', ''));
+    const sep20 = Math.max(0, Math.floor((Date.now() - new Date(2026, 8, 20).getTime()) / 86400000));
+    check('oldest now the Sep 20 pick-up (FIFO)', ageAfter === sep20, `${ageAfter} vs ${sep20}`);
+
+    // Count: 2 decks on the shelf (1 short); tin skipped.
+    wrap.querySelector('#bst-start').click(); await tick(60);
+    check('count mode adds COUNTED + DIFF',    /COUNTED/.test(wrap.querySelector('thead').textContent) && wrap.querySelectorAll('input.bst-count').length === 2);
+    const inp = row(/Deck/).querySelector('input.bst-count');
+    inp.value = '2'; inp.dispatchEvent(new w.Event('input')); await tick();
+    check('diff shows −1 live',                row(/Deck/).querySelector('.bst-diff').textContent === '−1');
+    const nConf = confirms.length, nAlert = alerts.length;
+    confirmAnswer = true;
+    wrap.querySelector('#bst-save').click(); await tick(250);
+    check('asked before recording a shortage', confirms.length === nConf + 1 && /short/.test(confirms[nConf]));
+    const adj = DB.prepare("SELECT * FROM bot_adjustments WHERE product_name LIKE '%Count Deck%'").all();
+    check('1 correction: −1 at $40',           adj.length === 1 && adj[0].qty === -1 && adj[0].unit_cost === 40, JSON.stringify(adj));
+    check('tin not counted → untouched',       DB.prepare("SELECT COUNT(*) n FROM bot_adjustments WHERE product_name LIKE '%Tin%'").get().n === 0);
+    check('told what changed',                 alerts.length === nAlert + 1 && /Test Count Deck: -1/.test(alerts[alerts.length - 1]), alerts[alerts.length - 1]);
+    check('now 2 in hand, $80 + $10 = $90',    td(row(/Deck/), 1) === '2' && /\$90\.00/.test(wrap.querySelector('tfoot').textContent));
+    check('count mode closed',                 !wrap.querySelector('input.bst-count'));
+
+    // Same count again: the server works out "expected" itself → no new correction.
+    await fakeFetch('/api/admin/bot-stock-count', { method: 'POST', body: JSON.stringify({ counts: [{ sku_key: deckKey, counted: 2 }] }) });
+    check('matching count adds nothing',       DB.prepare("SELECT COUNT(*) n FROM bot_adjustments WHERE product_name LIKE '%Count Deck%'").get().n === 1);
+    const bad = await fakeFetch('/api/admin/bot-stock-count', { method: 'POST', body: JSON.stringify({ counts: [{ sku_key: deckKey, counted: -1 }] }) });
+    check('negative count rejected',           bad.status === 400);
+
+    // History + undo
+    wrap.querySelector('#bst-history-btn').click(); await tick(120);
+    const hist = [...wrap.querySelectorAll('.bst-hist')];
+    const deckH = hist.find(h => /Test Count Deck/.test(h.textContent));
+    check('history shows −1 and −$40.00',      deckH && /−1/.test(deckH.textContent) && /−\$40\.00/.test(deckH.textContent), hist.map(h => h.textContent.replace(/\s+/g, ' ')).join(' | '));
+    check('earlier corrections listed too',    hist.some(h => /Test Count Mat/.test(h.textContent) && /−\$5\.00/.test(h.textContent)));
+    deckH.querySelector('.bst-undo').click(); await tick(250);
+    check('undo → 3 in hand again',            td(row(/Deck/), 1) === '3' && DB.prepare("SELECT COUNT(*) n FROM bot_adjustments WHERE product_name LIKE '%Count Deck%'").get().n === 0);
+
+    console.log('\n── Sold view (real clicks) ──');
+    d.getElementById('bsc-profit').click(); await tick(200);
+    const sw = d.getElementById('bot-sold-wrap');
+    check('SALES PROFIT card opens Sold',      sw.style.display !== 'none' && /Sold/.test(d.querySelector('#bot-view-switch .active').textContent));
+    const srows = () => [...sw.querySelectorAll('tr.sold-row')];
+    check('only this category\'s sale',        srows().length === 1 && /Test Count Deck/.test(srows()[0].textContent), srows().length);
+    const cells = srows()[0].querySelectorAll('td');
+    check('qty 2 · $55.00 · cost $80 · +$30 · 38% · eBay',
+      cells[2].textContent.trim() === '2' && /\$55\.00/.test(cells[3].textContent) && /\$80\.00/.test(cells[5].textContent) &&
+      /\+\$30\.00/.test(cells[6].textContent) && cells[7].textContent.trim() === '38%' && /eBay/.test(cells[8].textContent),
+      [...cells].map(c => c.textContent.trim()).join(' | '));
+    check('total row',                         /\+\$30\.00/.test(sw.querySelector('tr.sold-total').textContent));
+    [...d.querySelectorAll('.btab')].find(b => /^All/.test(b.textContent.trim())).click(); await tick(150);
+    if (d.getElementById('bot-sold-wrap').style.display === 'none') { d.getElementById('bsc-profit').click(); await tick(200); }
+    check('All tab lists every sale',          srows().length === DB.prepare('SELECT COUNT(*) n FROM bot_sales').get().n, `${srows().length}`);
+    // Delete from the Sold list → units back in stock.
+    [...d.querySelectorAll('.btab')].find(b => /^Count Cat/.test(b.textContent.trim())).click(); await tick(150);
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /Sold/.test(b.textContent)).click(); await tick(200);
+    srows()[0].querySelector('.sold-del').click(); await tick(200);
+    check('sale deleted',                      srows().length === 0 && /No sales/.test(sw.textContent));
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /In stock/.test(b.textContent)).click(); await tick(150);
+    check('units back: 5 decks in hand',       td(row(/Deck/), 1) === '5');
   }
 
   console.log('\n── Orders table tracking links use the right carrier too ──');

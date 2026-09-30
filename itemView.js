@@ -96,9 +96,10 @@ function orderLineCosts(order) {
  * @param {object[]} pricingRows  bot_sku_prices rows
  * @param {{products: Map, aliases: Map}} [catalog]  from skuCatalog.loadCatalog()
  * @param {object[]} [salesRows]  bot_sales rows (partial sales, keyed by skuKey)
- * @param {{checkedIn: Map|Set, issues: object[]}} [stock]
- *        Pick-up check-ins and claims. When given, stock ("in hand") counts only
- *        units you've picked up and confirmed; without it every unit counts.
+ * @param {{checkedIn: Map|Set, issues: object[], adjustments: object[]}} [stock]
+ *        Pick-up check-ins, claims and stock-count corrections. When given,
+ *        stock ("in hand") counts only units you've picked up and confirmed
+ *        (plus/minus count corrections); without it every unit counts.
  */
 function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
   const products = (catalog && catalog.products) || new Map();
@@ -118,13 +119,14 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
     if (!g) {
       g = groups[key] = {
         name: display, productId, unlinked: !productId,
-        qty: 0, statuses: {}, addresses: [], retailers: [],
+        qty: 0, statuses: {}, addresses: [], retailers: [], categories: [],
         _rawNames: new Map(),       // itemKey → the store title as seen
         _orderIds: new Set(),
         _lines:    new Map(),       // order id → this product's line in that order
         _sumItem: 0, _sumTax: 0, _sumShip: 0, _sumFinder: 0, _sumTotal: 0,
         _taxEstUnits: 0, _unknownCostUnits: 0,
         inHand: 0, toPickUp: 0, onTheWay: 0, inClaim: 0, _claimValue: 0, writtenOff: 0, refundedUnits: 0,
+        _batches: [],               // { date, qty } picked-up units, for oldest-first aging
       };
     } else if (!productId && /[^\x00-\x7F]/.test(display) && !/[^\x00-\x7F]/.test(g.name)) {
       g.name = display;   // prefer the retailer's proper "Pokémon" spelling
@@ -213,6 +215,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
           }
         }
         g.inHand += Math.max(0, qty - out);
+        if (qty - out > 0) g._batches.push({ date: (checkedIn.get && checkedIn.get(order.id)) || null, qty: qty - out });
       } else if (order.status === 'Delivered' || order.tracking_status === 'Delivered') {
         g.toPickUp += qty;
       } else {
@@ -223,6 +226,8 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
       g.statuses[st] = (g.statuses[st] || 0) + qty;
       if (order.shipping_address) g.addresses.push(order.shipping_address);
       if (order.retailer && !g.retailers.includes(order.retailer)) g.retailers.push(order.retailer);
+      const cat = order.category || 'Other';
+      if (!g.categories.includes(cat)) g.categories.push(cat);
     }
   }
 
@@ -234,6 +239,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
     if (!g._rawNames.has(rk)) g._rawNames.set(rk, k.got);
     g.qty        += k.qty;
     g.inHand     += k.qty;
+    g._batches.push({ date: null, qty: k.qty });
     g._sumItem   += k.unitItem   * k.qty;
     g._sumTax    += k.unitTax    * k.qty;
     g._sumShip   += k.unitShip   * k.qty;
@@ -249,14 +255,19 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
   const pricing = {};
   (pricingRows || []).forEach(r => { if (r && r.sku) pricing[itemKey(r.sku)] = r; });
 
-  // Sales, bucketed by the key they were recorded under.
-  const salesByKey = new Map();
-  for (const r of salesRows || []) {
-    if (!r || !r.sku_key) continue;
-    const k = itemKey(r.sku_key);
-    if (!salesByKey.has(k)) salesByKey.set(k, []);
-    salesByKey.get(k).push(r);
-  }
+  // Sales and stock-count corrections, bucketed by the key they were recorded under.
+  const bucket = rows => {
+    const m = new Map();
+    for (const r of rows || []) {
+      if (!r || !r.sku_key) continue;
+      const k = itemKey(r.sku_key);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(r);
+    }
+    return m;
+  };
+  const salesByKey = bucket(salesRows);
+  const adjByKey   = bucket(stock && stock.adjustments);
 
   return Object.values(groups).map(g => {
     const rawNames = [...g._rawNames.values()];
@@ -269,7 +280,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
     const qty = g.qty || 1;
     const {
       _rawNames, _orderIds, _lines, _sumItem, _sumTax, _sumShip, _sumFinder, _sumTotal,
-      _taxEstUnits, _unknownCostUnits, _claimValue, ...rest
+      _taxEstUnits, _unknownCostUnits, _claimValue, _batches, ...rest
     } = g;
 
     // Soonest-arriving first; anything already delivered sinks to the bottom.
@@ -300,14 +311,42 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
     const soldQty    = sales.reduce((s, r) => s + r.qty, 0);
     const soldGross  = sales.reduce((s, r) => s + r.qty * r.unit_price, 0);
     const soldFees   = sales.reduce((s, r) => s + r.fees, 0);
+    // ── Stock-count corrections ─────────────────────────────────────────────
+    // Counted fewer than expected → units gone (a loss at landed cost);
+    // counted more → units found. Same key rules as sales, each row once.
+    const seenAdj = new Set();
+    const adjustments = [skuKey, ...rawNames].flatMap(k => adjByKey.get(itemKey(k)) || [])
+      .filter(r => (r.id == null) || (!seenAdj.has(r.id) && seenAdj.add(r.id)));
+    const shortUnits = adjustments.reduce((s, r) => s + Math.max(0, -Number(r.qty) || 0), 0);
+    const extraUnits = adjustments.reduce((s, r) => s + Math.max(0, Number(r.qty) || 0), 0);
+    const countLoss  = adjustments.reduce((s, r) => s + (Number(r.qty) < 0 ? -Number(r.qty) * (Number(r.unit_cost) || 0) : 0), 0);
+    const inHand     = tracked ? Math.max(0, g.inHand + extraUnits - shortUnits) : g.inHand;
+
     // What you can still sell: units in hand (when pick-ups are tracked).
-    const unitsLeft  = Math.max(0, (tracked ? g.inHand : g.qty) - soldQty);
+    const unitsLeft  = Math.max(0, (tracked ? inHand : g.qty) - soldQty);
+
+    // Oldest unit still on the shelf, first-in first-out: sold and missing
+    // units are taken from the earliest pick-ups first.
+    let used = soldQty + shortUnits, oldestInStock = null;
+    for (const b of [..._batches].sort((a, b) => String(a.date || '0000').localeCompare(String(b.date || '0000')))) {
+      if (used >= b.qty) { used -= b.qty; continue; }
+      oldestInStock = b.date; break;
+    }
+    if (!unitsLeft) oldestInStock = null;
     const asking     = Number(p.sale_price) || 0;
 
     return {
       ...rest,
       rawNames, skuKey,
       stockTracked: tracked,
+      inHand,
+      shortUnits, extraUnits,
+      countLoss:     round2(countLoss),
+      oldestInStock,
+      // At landed cost — what's still unsold, and where it is.
+      stockAtCost:    round2(unitsLeft    * perUnitTotal),
+      toPickUpCost:   round2((g.toPickUp || 0) * perUnitTotal),
+      onTheWayCost:   round2((g.onTheWay || 0) * perUnitTotal),
       claimValue: round2(_claimValue),
       sales,
       soldQty,

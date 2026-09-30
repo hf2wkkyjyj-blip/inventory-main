@@ -184,6 +184,13 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS bot_issues (
   qty INTEGER NOT NULL, kind TEXT NOT NULL, got_item TEXT, note TEXT, status TEXT DEFAULT 'open',
   refund_amount REAL DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, resolved_at TEXT)`); } catch(e) {}
 
+// Stock-count corrections: counted N on the shelf, the site expected M → qty = N − M.
+// unit_cost is the landed cost at the time, so a shortage is a known loss.
+try { db.exec(`CREATE TABLE IF NOT EXISTS bot_adjustments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, sku_key TEXT NOT NULL, product_name TEXT, qty INTEGER NOT NULL,
+  unit_cost REAL DEFAULT 0, reason TEXT DEFAULT 'count', note TEXT, counted_at TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
+
 try { db.exec(`CREATE TABLE IF NOT EXISTS bot_sales (
   id INTEGER PRIMARY KEY AUTOINCREMENT, sku_key TEXT NOT NULL, product_name TEXT,
   qty INTEGER NOT NULL, unit_price REAL NOT NULL, fees REAL DEFAULT 0, channel TEXT,
@@ -1041,7 +1048,9 @@ function loadStock() {
   let issues = [];
   try { db.prepare('SELECT order_id, checked_at FROM bot_checkins').all().forEach(r => checkedIn.set(r.order_id, r.checked_at)); } catch (_) {}
   try { issues = db.prepare('SELECT * FROM bot_issues').all(); } catch (_) {}
-  return { checkedIn, issues };
+  let adjustments = [];
+  try { adjustments = db.prepare('SELECT * FROM bot_adjustments').all(); } catch (_) {}
+  return { checkedIn, issues, adjustments };
 }
 
 const ISSUE_KINDS    = new Set(['missing', 'wrong', 'damaged']);
@@ -1054,6 +1063,54 @@ function issueUnitCost(issue, order) {
   const line = orderLineCosts(order).find(l => itemKey(l.rawName) === issue.item_key);
   return line ? line.unitTotal : 0;
 }
+
+// All products with their current stock, across every category and status —
+// what the In stock view and a stock count work from.
+function currentStockGroups() {
+  const orders = db.prepare("SELECT * FROM bot_orders WHERE status NOT IN ('Cancelled','Refunded')").all();
+  let pricingRows = [], salesRows = [];
+  try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch (_) {}
+  try { salesRows = db.prepare('SELECT * FROM bot_sales').all(); } catch (_) {}
+  return computeItemGroups(withMainAddress(orders, { replace: true }), pricingRows, SkuCatalog.loadCatalog(db), salesRows, loadStock());
+}
+
+// Save a stock count. The expected number is worked out HERE, not trusted from
+// the page (a sale may have been recorded since the page loaded). Only
+// differences are stored; a count that matches changes nothing.
+app.post('/api/admin/bot-stock-count', auth, adminOnly, (req, res) => {
+  const { counts, date, note } = req.body || {};
+  const day = date || new Date().toISOString().slice(0, 10);
+  if (!Array.isArray(counts) || !counts.length) return res.status(400).json({ error: 'counts required' });
+  if (!isIsoDate(day)) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  for (const c of counts) {
+    const n = Number(c && c.counted);
+    if (!c || !c.sku_key || !Number.isInteger(n) || n < 0) return res.status(400).json({ error: 'Each count needs a product and a whole number of 0 or more' });
+  }
+  const groups = currentStockGroups();
+  const out = [];
+  for (const c of counts) {
+    const g = groups.find(x => x.skuKey === c.sku_key);
+    if (!g) return res.status(404).json({ error: `Unknown product ${c.sku_key}` });
+    const diff = Number(c.counted) - g.unitsLeft;
+    if (!diff) { out.push({ sku_key: g.skuKey, name: g.name, expected: g.unitsLeft, counted: Number(c.counted), diff: 0 }); continue; }
+    db.prepare(`INSERT INTO bot_adjustments (sku_key, product_name, qty, unit_cost, reason, note, counted_at)
+                VALUES (?,?,?,?, 'count', ?, ?)`).run([g.skuKey, g.name, diff, g.perUnitTotal, (note || '').trim() || null, day]);
+    out.push({ sku_key: g.skuKey, name: g.name, expected: g.unitsLeft, counted: Number(c.counted), diff });
+  }
+  res.json({ saved: out.filter(x => x.diff).length, results: out });
+});
+
+app.get('/api/admin/bot-stock-count', auth, adminOnly, (req, res) => {
+  let rows = [];
+  try { rows = db.prepare('SELECT * FROM bot_adjustments ORDER BY counted_at DESC, id DESC LIMIT 200').all(); } catch (_) {}
+  res.json(rows);
+});
+
+// Undo one correction (typed a count wrong).
+app.delete('/api/admin/bot-stock-count/:id', auth, adminOnly, (req, res) => {
+  db.prepare('DELETE FROM bot_adjustments WHERE id=?').run([Number(req.params.id)]);
+  res.json({ ok: true });
+});
 
 // Picked up (and opened) these orders. `issues` lists anything not as ordered.
 app.post('/api/admin/bot-checkin', auth, adminOnly, (req, res) => {
@@ -1348,7 +1405,9 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
       if (s.id != null) seen.add(s.id);
       const revenue = s.qty * s.unit_price;
       const cost    = s.qty * g.perUnitTotal;
-      sales.push({ id: s.id, product: g.name, sold_at: s.sold_at, qty: s.qty,
+      sales.push({ id: s.id, product: g.name, sku_key: g.skuKey, category: (g.categories || [])[0] || 'Other',
+                   sold_at: s.sold_at, qty: s.qty, unit_price: s.unit_price, channel: s.channel || null,
+                   unit_cost: g.perUnitTotal,
                    revenue: r2(revenue), fees: r2(s.fees), cost: r2(cost), profit: r2(revenue - s.fees - cost) });
     }
   }
@@ -1362,8 +1421,16 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
     else if (is.status === 'denied_writeoff' || (is.status === 'denied_keep' && is.kind === 'missing')) claims.writtenOff += cost;
   }
   claims.toPickUpUnits = groups.reduce((a, g) => a + (g.toPickUp || 0), 0);
+  // What's still unsold, at landed cost, and where it is.
+  const stockTotals = {
+    unitsInHand: groups.reduce((a, g) => a + (g.unitsLeft || 0), 0),
+    inHandCost:  r2(groups.reduce((a, g) => a + (g.stockAtCost || 0), 0)),
+    toPickUpCost: r2(groups.reduce((a, g) => a + (g.toPickUpCost || 0), 0)),
+    onTheWayCost: r2(groups.reduce((a, g) => a + (g.onTheWayCost || 0), 0)),
+    countLoss:   r2(groups.reduce((a, g) => a + (g.countLoss || 0), 0)),
+  };
   for (const k of ['pending', 'refunded', 'writtenOff']) claims[k] = r2(claims[k]);
-  res.json({ orderFees, sales, claims });
+  res.json({ orderFees, sales, claims, stock: stockTotals });
 });
 
 // ── Product catalog (see skuCatalog.js) ─────────────────────────────────────
