@@ -586,6 +586,8 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <tbody id="bot-pkg-tbody"></tbody>
       </table>
     </div>
+    <!-- Coming: shipped boxes by address, then by arrival day -->
+    <div id="bot-coming-wrap" style="display:none;"></div>
     <!-- In stock: what's on hand now, at cost, with count mode -->
     <div id="bot-stock-wrap" style="display:none;"></div>
     <!-- Sold: every recorded sale -->
@@ -2775,7 +2777,8 @@ let _botUndo = null;
 function botEffectiveView() {
   if (_botViewMode !== 'auto') return _botViewMode;
   const st = document.getElementById('bot-filter-status').value;
-  return (st === 'Shipped' || st === 'OFD') ? 'package' : 'product';
+  // Shipped = "what's coming where" — boxes by address and arrival day.
+  return (st === 'Shipped' || st === 'OFD') ? 'coming' : 'product';
 }
 
 function botSetView(mode) {
@@ -2787,16 +2790,123 @@ function botApplyView(view) {
   document.getElementById('bot-pkg-wrap').style.display           = view === 'package' ? '' : 'none';
   document.getElementById('bot-pickup-wrap').style.display        = view === 'pickup'  ? '' : 'none';
   document.getElementById('bot-stock-wrap').style.display         = view === 'stock'   ? '' : 'none';
+  document.getElementById('bot-coming-wrap').style.display        = view === 'coming'  ? '' : 'none';
   document.getElementById('bot-sold-wrap').style.display          = view === 'sold'    ? '' : 'none';
   document.getElementById('bot-product-table-wrap').style.display = view === 'product' ? '' : 'none';
   document.getElementById('bot-view-switch').innerHTML =
     `<button class="bot-vs-btn${view === 'stock' ? ' active' : ''}" onclick="botSetView('stock')"><i class="fa fa-cubes"></i> In stock</button>` +
     `<button class="bot-vs-btn${view === 'sold' ? ' active' : ''}" onclick="botSetView('sold')"><i class="fa fa-receipt"></i> Sold</button>` +
+    `<button class="bot-vs-btn${view === 'coming' ? ' active' : ''}" onclick="botSetView('coming')"><i class="fa fa-truck"></i> Coming</button>` +
     `<button class="bot-vs-btn${view === 'pickup' ? ' active' : ''}" onclick="botSetView('pickup')"><i class="fa fa-map-marker-alt"></i> To pick up</button>` +
     `<button class="bot-vs-btn${view === 'package' ? ' active' : ''}" onclick="botSetView('package')"><i class="fa fa-box"></i> By package</button>` +
     `<button class="bot-vs-btn${view === 'product' ? ' active' : ''}" onclick="botSetView('product')"><i class="fa fa-layer-group"></i> By product</button>` +
     (botCurCat() === 'All' ? `<button class="bot-vs-btn" onclick="botShowOrderList(true)"><i class="fa fa-list"></i> Order list</button>` : '');
   if (view !== 'package') { _botPkgSelected.clear(); botRenderActionBar(); }
+}
+
+// ── Coming: what's arriving where, and when ────────────────────────────────
+// Shipped boxes grouped by main address, then by arrival day (out for
+// delivery first, late ones flagged). Orders not shipped yet are counted per
+// address. "Copy for house owner" gives a plain message: boxes, days, carriers.
+let _botComing = [];
+let _botComingGroups = [];
+
+function botDayLabel(ymd) {
+  if (!ymd) return 'No date yet';
+  const d = botParseDate(ymd); if (isNaN(d)) return ymd;
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  const diff = Math.round((d - t) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Tomorrow';
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+function botComingModel(pkgs) {
+  const today = botLocalToday();
+  const byAddr = new Map();
+  for (const p of pkgs) {
+    const s0 = p.shipTo[0] || {};
+    const k = normalizeAddr(s0.address || '') || '—';
+    if (!byAddr.has(k)) byAddr.set(k, { address: s0.address || 'No address yet', names: new Set(), days: new Map(), notShipped: [], boxes: 0, units: 0 });
+    const a = byAddr.get(k);
+    p.shipTo.forEach(x => x.name && a.names.add(x.name));
+    if (p.status === 'Confirmed' || p.status === 'Unship') { a.notShipped.push(p); continue; }
+    a.boxes++; a.units += p.units;
+    const ofd  = p.status === 'OFD';
+    const late = !ofd && p.expected_date && p.expected_date < today;
+    const key  = ofd ? '0|ofd' : late ? '1|late' : p.expected_date ? '2|' + p.expected_date : '3|none';
+    if (!a.days.has(key)) a.days.set(key, { key, ofd, late, date: ofd ? today : (late ? null : p.expected_date), boxes: [] });
+    a.days.get(key).boxes.push(p);
+  }
+  return [...byAddr.values()]
+    .map(a => ({ ...a, days: [...a.days.values()].sort((x, y) => x.key.localeCompare(y.key)) }))
+    .sort((x, y) => (y.boxes - x.boxes) || x.address.localeCompare(y.address));
+}
+
+function botDayTitle(day) {
+  if (day.ofd)  return 'Today — out for delivery';
+  if (day.late) return 'Late — past the expected date';
+  return botDayLabel(day.date);
+}
+
+function renderBotComing() {
+  const wrap = document.getElementById('bot-coming-wrap');
+  const q = (document.getElementById('bot-item-search').value || '').toLowerCase();
+  let pk = _botComing;
+  if (q) pk = pk.filter(p => [p.tracking, ...p.orders.map(o => o.order_number), ...p.shipTo.map(s => s.name), ...p.shipTo.map(s => s.address),
+    ...p.contents.map(c => c.name)].filter(Boolean).join(' ').toLowerCase().includes(q));
+  const groups = _botComingGroups = botComingModel(pk);
+  const boxes = groups.reduce((a, g) => a + g.boxes, 0), units = groups.reduce((a, g) => a + g.units, 0);
+  const shipTo = groups.filter(g => g.boxes).length;
+  document.getElementById('bot-item-count').textContent = `${boxes} box${boxes === 1 ? '' : 'es'} · ${units} unit${units === 1 ? '' : 's'} coming to ${shipTo} address${shipTo === 1 ? '' : 'es'}`;
+  document.getElementById('bot-unlinked-banner').innerHTML = '';
+  if (!groups.length) {
+    wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">Nothing on the way.</div>`;
+    return;
+  }
+  wrap.innerHTML = groups.map((g, gi) => `
+    <div class="bot-coming-addr" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:10px;overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);">
+        <i class="fa fa-map-marker-alt" style="color:#60a5fa;"></i>
+        <div style="flex:1;min-width:0;"><b class="clip">${esc(g.address)}</b>
+          <div style="font-size:11px;color:var(--muted);">${esc([...g.names].join(', '))}</div></div>
+        <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.boxes} box${g.boxes === 1 ? '' : 'es'} · ${g.units} unit${g.units === 1 ? '' : 's'}${g.notShipped.length ? ` · ${g.notShipped.length} not shipped yet` : ''}</span>
+        ${g.boxes ? `<button class="btn btn-ghost btn-sm bot-owner-copy" onclick="botCopyOwnerMsg(${gi}, this)" data-tip="Copy a message for the house owner: how many boxes, which days, which carriers"><i class="fa fa-copy"></i> Copy for house owner</button>` : ''}
+      </div>
+      ${g.days.map(day => `
+        <div class="bot-coming-day" style="padding:6px 12px 2px;font-size:11px;font-weight:700;letter-spacing:.04em;color:${day.late ? '#f87171' : day.ofd ? '#4ade80' : 'var(--muted)'};">
+          ${esc(botDayTitle(day)).toUpperCase()} <span style="font-weight:400;">· ${day.boxes.length} box${day.boxes.length === 1 ? '' : 'es'}</span></div>
+        ${day.boxes.map(p => `
+          <div class="bot-coming-box" style="display:flex;align-items:flex-start;gap:10px;padding:6px 12px 8px 24px;font-size:12px;border-bottom:1px solid var(--border);">
+            <div style="width:190px;white-space:nowrap;">${p.tracking ? `<a href="${esc(p.trackUrl)}" target="_blank" rel="noopener" style="color:#60a5fa;">${esc(p.tracking)}</a>` : '<span style="color:var(--muted);">no tracking</span>'}
+              <div style="font-size:10px;color:var(--muted);">${esc([p.carrierLabel, p.retailers.join(' · ')].filter(Boolean).join(' · '))}${day.late && p.expected_date ? ' · was due ' + esc(botShortDate(p.expected_date)) : ''}</div></div>
+            <div style="flex:1;">${p.contents.map(c => `<span class="bot-pkg-tag">${esc(c.name)} ×${c.qty}</span>`).join('')}
+              <div style="font-size:10px;color:var(--muted);margin-top:2px;">${p.orders.map(o => esc(o.order_number || '')).join(', ')}</div>
+              ${p.conflict ? `<div style="font-size:11px;color:#fbbf24;">⚠ same tracking on orders to ${p.shipTo.length} addresses — check it</div>` : ''}</div>
+          </div>`).join('')}`).join('')}
+      ${g.notShipped.length ? `<div class="bot-coming-notshipped" style="padding:7px 12px;font-size:11px;color:var(--muted);">Ordered, not shipped yet: ${g.notShipped.length} order${g.notShipped.length === 1 ? '' : 's'} — ${g.notShipped.flatMap(p => p.contents.map(c => esc(c.name) + ' ×' + c.qty)).slice(0, 6).join(', ')}</div>` : ''}
+    </div>`).join('');
+}
+
+// Plain text for the house owner: which days, how many boxes, which carriers.
+function botOwnerMessage(g) {
+  const street = String(g.address || '').split(',')[0];
+  const lines = g.days.map(day => {
+    const carriers = [...new Set(day.boxes.map(p => p.carrierLabel).filter(Boolean))];
+    const when = day.ofd ? 'Today (out for delivery)' : day.late ? 'Any day now (running late)' : botDayLabel(day.date);
+    return `• ${when}: ${day.boxes.length} box${day.boxes.length === 1 ? '' : 'es'}${carriers.length ? ` (${carriers.join(', ')})` : ''}`;
+  });
+  return `Heads up — packages coming to ${street}:\n${lines.join('\n')}\n${g.boxes} box${g.boxes === 1 ? '' : 'es'} total. Thank you!`;
+}
+
+async function botCopyOwnerMsg(gi, btn) {
+  const g = _botComingGroups[gi]; if (!g) return;
+  const text = botOwnerMessage(g);
+  try { await navigator.clipboard.writeText(text); }
+  catch (_) { window.prompt('Copy this message:', text); return; }
+  const was = btn.innerHTML;
+  btn.innerHTML = '<i class="fa fa-check"></i> Copied';
+  setTimeout(() => { btn.innerHTML = was; }, 1500);
 }
 
 // ── Cards open their views ──────────────────────────────────────────────────
@@ -3612,6 +3722,16 @@ async function loadBotItemView(cat) {
     renderBotSold();
     return;
   }
+  if (view === 'coming') {
+    // Every package not delivered yet — whatever the status filter says.
+    const q4 = new URLSearchParams({ category: cat });
+    if (retailer) q4.set('retailer', retailer);
+    const pk = await api('GET', '/admin/bot-packages?' + q4.toString());
+    if (!pk) return;
+    _botComing = pk.filter(p => p.status === 'Shipped' || p.status === 'OFD' || p.status === 'Confirmed' || p.status === 'Unship');
+    renderBotComing();
+    return;
+  }
   if (view === 'pickup') {
     // Every delivered box not yet checked in — whatever the status filter says.
     const q2 = new URLSearchParams({ category: cat });
@@ -3664,6 +3784,7 @@ function renderBotItemView() {
   if (botEffectiveView() === 'package') return renderBotPackages();
   if (botEffectiveView() === 'pickup')  return renderBotPickup();
   if (botEffectiveView() === 'stock')   return renderBotStock();
+  if (botEffectiveView() === 'coming')  return renderBotComing();
   if (botEffectiveView() === 'sold')    return renderBotSold();
   const search = (document.getElementById('bot-item-search').value || '').toLowerCase();
   const addr   = document.getElementById('bot-filter-address').value;

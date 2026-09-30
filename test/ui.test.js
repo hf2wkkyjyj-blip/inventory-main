@@ -197,6 +197,21 @@ for (const [num, items, total, day] of [
 DB.prepare(`INSERT INTO bot_adjustments (sku_key, product_name, qty, unit_cost, counted_at)
             VALUES ('Test Count Mat','Test Count Mat',-1,5,'2026-09-26')`).run();
 
+// Coming-view data (made up), dates relative to today so the test never ages.
+const dayOff = n => { const x = new Date(); x.setDate(x.getDate() + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+for (const [num, status, trk, ts, exp, addr, items] of [
+  ['G01', 'Shipped',   '1ZAA11110000000701', 'OFD', dayOff(0),  '10 Coming Rd, Springfield, MN 55001',            ['1x Test Coming Tin @ $20.00']],
+  ['G02', 'Shipped',   '1ZAA11110000000702', null,  dayOff(1),  '010c Coming Road Apt 4, Springfield, MN 55001',   ['2x Test Coming Box @ $30.00']],
+  ['G03', 'Shipped',   '870000000703',       null,  dayOff(3),  '10 Coming Rd, Springfield, MN 55001',            ['1x Test Coming Box @ $30.00']],
+  ['G04', 'Shipped',   '1ZAA11110000000704', null,  dayOff(-2), '10 Coming Rd, Springfield, MN 55001',            ['1x Test Coming Tin @ $20.00']],
+  ['G05', 'Confirmed', null,                 null,  null,       '10 Coming Rd, Springfield, MN 55001',            ['1x Test Coming Pack @ $5.00']],
+  ['G06', 'Shipped',   '1ZAA11110000000706', null,  dayOff(1),  '77 Other Coming St, Springfield, MN 55002',      ['1x Test Coming Pack @ $5.00']],
+  ['G07', 'Delivered', '1ZAA11110000000707', 'Delivered', null, '10 Coming Rd, Springfield, MN 55001',            ['1x Test Coming Pack @ $5.00']],
+]) {
+  DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, tracking, tracking_status, expected_date, shipping_name, shipping_address, items, order_total)
+              VALUES ('Coming Cat','Test Store',?,?,?,?,?,'Test Buyer',?,?,50)`).run([num, status, trk, ts, exp, addr, JSON.stringify(items)]);
+}
+
 // ── Route dispatch for the page's fetch() ───────────────────────────────────
 const calls = [];
 function matchRoute(verb, pathname) {
@@ -449,7 +464,10 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
 
     // Shipped opens the package view, Delivered the product view — read the one on screen.
     const pkgOn  = () => d.getElementById('bot-pkg-wrap').style.display !== 'none';
-    const names  = () => pkgOn()
+    const comingOn = () => d.getElementById('bot-coming-wrap').style.display !== 'none';
+    const names  = () => comingOn()
+      ? [...d.querySelectorAll('#bot-coming-wrap .bot-coming-box')].map(r => r.textContent)
+      : pkgOn()
       ? [...d.querySelectorAll('#bot-pkg-tbody > tr')].map(r => r.textContent)
       : rows().map(r => r.textContent);
     const has    = re => names().some(t => re.test(t));
@@ -492,6 +510,8 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
     [...d.querySelectorAll('.btab')].find(b => /^Pokemon/.test(b.textContent.trim())).click(); await tick(80);
     d.getElementById('bsc-Shipped').click(); await tick(80);
+    check('Shipped opens the Coming view',          d.getElementById('bot-coming-wrap').style.display !== 'none');
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(80);
 
     const pkgRows = () => [...d.querySelectorAll('#bot-pkg-tbody > tr')];
     const pkgRow  = re => pkgRows().find(r => re.test(r.textContent));
@@ -500,7 +520,7 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const undoBar = () => d.getElementById('bot-undo-bar');
     const checkbox = tr => tr.querySelector('input[type=checkbox]');
 
-    check('package view shown on Shipped',          d.getElementById('bot-pkg-wrap').style.display !== 'none');
+    check('By package one click away',              d.getElementById('bot-pkg-wrap').style.display !== 'none');
     check('product table hidden',                   d.getElementById('bot-product-table-wrap').style.display === 'none');
     check('"By package" is the active switch',      /By package/.test(d.querySelector('#bot-view-switch .active').textContent));
 
@@ -858,6 +878,7 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const statusSel = d.getElementById('bot-filter-status');
     [...d.querySelectorAll('.btab')].find(b => /^Pokemon/.test(b.textContent.trim())).click(); await tick(80);
     statusSel.value = 'Shipped'; statusSel.dispatchEvent(new w.Event('change')); await tick(80);
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(80);
     const inShipped = () => [...d.querySelectorAll('#bot-pkg-tbody > tr')].some(r => /870000000601/.test(r.textContent));
     check('stuck order shows in Shipped (the bug)', inShipped());
     d.getElementById('bot-reparse-btn').click(); await tick(250);
@@ -1175,6 +1196,41 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('sale deleted',                      srows().length === 0 && /No sales/.test(sw.textContent));
     [...d.querySelectorAll('#bot-view-switch button')].find(b => /In stock/.test(b.textContent)).click(); await tick(150);
     check('units back: 5 decks in hand',       td(row(/Deck/), 1) === '5');
+  }
+
+  console.log('\n── Coming: shipped boxes by address, then by day (real clicks) ──');
+  {
+    const statusSel = d.getElementById('bot-filter-status');
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
+    [...d.querySelectorAll('.btab')].find(b => /^Coming Cat/.test(b.textContent.trim())).click(); await tick(100);
+    d.getElementById('bsc-Shipped').click(); await tick(150);
+    const wrap = d.getElementById('bot-coming-wrap');
+    check('Shipped card opens Coming',          wrap.style.display !== 'none' && /Coming/.test(d.querySelector('#bot-view-switch .active').textContent));
+    const addrs = () => [...wrap.querySelectorAll('.bot-coming-addr')];
+    const main = addrs().find(a => /10 Coming Rd/.test(a.textContent));
+    check('2 addresses (jig grouped)',          addrs().length === 2 && !/010c|Apt 4/.test(wrap.textContent), addrs().length);
+    check('main address: 4 boxes · 5 units',    /4 boxes · 5 units/.test(main.querySelector('.bot-coming-sum').textContent), main.querySelector('.bot-coming-sum').textContent);
+    const days = [...main.querySelectorAll('.bot-coming-day')].map(x => x.textContent.replace(/\s+/g, ' ').trim());
+    check('out for delivery first, then late, then by date', /^TODAY — OUT FOR DELIVERY/.test(days[0]) && /^LATE/.test(days[1]) && /^TOMORROW/.test(days[2]) && days.length === 4, days.join(' | '));
+    check('delivered box not listed',           !/1ZAA11110000000707/.test(wrap.textContent));
+    check('not-shipped order counted',          /1 not shipped yet/.test(main.textContent) && /Ordered, not shipped yet: 1 order/.test(main.textContent));
+    check('late box says when it was due',      /was due/.test(main.textContent));
+
+    // Copy for house owner
+    copied.length = 0;
+    main.querySelector('.bot-owner-copy').click(); await tick(60);
+    const msg = copied.pop() || '';
+    check('owner message: address',             /^Heads up — packages coming to 10 Coming Rd:/.test(msg), msg);
+    check('owner message: today (OFD) with carrier', /• Today \(out for delivery\): 1 box \(UPS\)/.test(msg));
+    check('owner message: tomorrow',            /• Tomorrow: 1 box \(UPS\)/.test(msg));
+    check('owner message: late one',            /• Any day now \(running late\): 1 box/.test(msg));
+    check('owner message: total',               /4 boxes total\. Thank you!$/.test(msg));
+    check('owner message: no items or tracking', !/Test Coming|1ZAA|8700/.test(msg));
+
+    // Other views are one click away; the status filter can be cleared.
+    [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(100);
+    check('By package still available',         d.getElementById('bot-pkg-wrap').style.display !== 'none');
+    statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
   }
 
   console.log('\n── Orders table tracking links use the right carrier too ──');
