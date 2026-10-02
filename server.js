@@ -1718,6 +1718,17 @@ app.get('/admin/orders', (req, res) => {
 
 // ─── EMAIL SCRAPER ───────────────────────────────────────────────────────────
 const { runEmailScraper, scrapeByOrderNumber, resetEmailScraper, reparseStoredEmails } = require('./emailScraper');
+const { healFromSavedEmails } = require('./selfHeal');
+
+// A scan, then: if orders read by older code still have gaps (shipped with no
+// tracking, no address), re-read the saved emails once (selfHeal.js).
+async function scanAndHeal() {
+  const n = await runEmailScraper(db);
+  try {
+    await healFromSavedEmails(db, d => reparseStoredEmails(d), { after: d => OrderMerge.reconcileDelivered(d) });
+  } catch (e) { console.error('self-heal failed:', e.message); }
+  return n;
+}
 
 // Manual trigger — Scan Emails button in UI calls this
 let _scrapeProgress = { running: false, updated: 0 };
@@ -1725,7 +1736,7 @@ app.post('/api/admin/scrape-emails', auth, adminOnly, (req, res) => {
   if (_scrapeProgress.running) return res.json({ started: false, already: true });
   _scrapeProgress = { running: true, updated: 0 };
   res.json({ started: true });
-  runEmailScraper(db)
+  scanAndHeal()
     .then(n => { _scrapeProgress = { running: false, updated: n }; })
     .catch(e => { console.error('scrape-emails error:', e); _scrapeProgress = { running: false, updated: 0 }; });
 });
@@ -1778,8 +1789,8 @@ app.post('/api/admin/scrape-emails/order', auth, adminOnly, async (req, res) => 
 });
 
 // Auto-run: 5 min after server start, then every 2 hours
-setTimeout(() => runEmailScraper(db), 5 * 60 * 1000);
-setInterval(() => runEmailScraper(db), 2 * 60 * 60 * 1000);
+setTimeout(() => scanAndHeal(), 5 * 60 * 1000);
+setInterval(() => scanAndHeal(), 2 * 60 * 60 * 1000);
 
 // ─── AUTO TRACKING UPDATE ────────────────────────────────────────────────────
 const https = require('https');

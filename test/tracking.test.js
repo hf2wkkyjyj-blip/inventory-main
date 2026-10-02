@@ -89,6 +89,35 @@ const eq = (n, a, e) => {
     eq('876… still captured',       trackingOf(db2, A), A.trk);
   }
 
+  console.log('\n── Self-heal: orders read by older code get fixed by the next scan ──');
+  {
+    const { healFromSavedEmails } = require('../selfHeal');
+    const D = { num: 'P0000000404', trk: '877000000404', name: 'Customer D', addr: '4 Test Ave Springfield, MN 55004' };
+    const db = makeDb([[D]]);
+    // The reported state: shipped (old code saw "shipped") but no tracking, no address.
+    db.prepare("UPDATE bot_orders SET status='Shipped', tracking=NULL WHERE order_number=?").run([D.num]);
+    addEmail(db, '<d877>', shipEmail(D));
+    let calls = 0;
+    const reparse = async d => { calls++; return quiet(() => reparseStoredEmails(d)); };
+    const r1 = await healFromSavedEmails(db, reparse, { version: 'v1', log: () => {} });
+    eq('gap found → saved emails re-read',   r1.ran && calls === 1, true);
+    eq('tracking filled',                    trackingOf(db, D), D.trk);
+    eq('address filled',                     db.prepare('SELECT shipping_address FROM bot_orders WHERE order_number=?').get([D.num]).shipping_address, D.addr);
+    const r2 = await healFromSavedEmails(db, reparse, { version: 'v1', log: () => {} });
+    eq('nothing left → no re-read',          [r2.ran, calls].join(), 'false,1');
+
+    // A gap that can't be filled: re-read once, then not every scan.
+    const db2 = makeDb([[D]]);
+    db2.prepare("UPDATE bot_orders SET status='Shipped', tracking=NULL WHERE order_number=?").run([D.num]);
+    let c2 = 0;
+    const rp2 = async d => { c2++; return quiet(() => reparseStoredEmails(d)); };
+    await healFromSavedEmails(db2, rp2, { version: 'v1', log: () => {} });
+    await healFromSavedEmails(db2, rp2, { version: 'v1', log: () => {} });
+    eq('unfillable gap: re-read once only',  c2, 1);
+    await healFromSavedEmails(db2, rp2, { version: 'v2', log: () => {} });
+    eq('new reader version → tries again',   c2, 2);
+  }
+
   console.log('\n── Ship-to address read from the email ──');
   {
     const db = makeDb([[A], [B]]);

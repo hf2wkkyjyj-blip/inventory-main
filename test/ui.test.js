@@ -891,6 +891,16 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
   }
 
+  console.log('\n── A scan runs the self-heal (re-read saved emails when there are gaps) ──');
+  {
+    DB.prepare("DELETE FROM settings WHERE key='heal_signature'").run();
+    const quietLog = console.log; console.log = () => {};
+    await fakeFetch('/api/admin/scrape-emails', { method: 'POST', body: '{}' });
+    for (let i = 0; i < 40 && !DB.prepare("SELECT value FROM settings WHERE key='heal_signature'").get(); i++) await tick(50);
+    console.log = quietLog;
+    check('Scan Emails → self-heal ran',        !!DB.prepare("SELECT value FROM settings WHERE key='heal_signature'").get());
+  }
+
   console.log('\n── Backup → data check round trip ──');
   {
     const r = await fakeFetch('/api/admin/backup', { method: 'GET' });
