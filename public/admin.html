@@ -2831,6 +2831,14 @@ function botComingModel(pkgs) {
     .sort((x, y) => (y.boxes - x.boxes) || x.address.localeCompare(y.address));
 }
 
+// Name(s) printed on a box's label — what the house owner should expect to see.
+function botReceiverLine(p) {
+  const names = [...new Set((p.orders || []).map(o => (o.shipping_name || '').trim()).filter(Boolean))];
+  return names.length
+    ? `<div class="bot-recv" style="font-size:11px;color:var(--text);margin-top:2px;" data-tip="Name on the label"><i class="fa fa-user" style="font-size:9px;color:var(--muted);margin-right:4px;"></i>${esc(names.join(', '))}</div>`
+    : '';
+}
+
 function botDayTitle(day) {
   if (day.ofd)  return 'Today — out for delivery';
   if (day.late) return 'Late — past the expected date';
@@ -2867,7 +2875,8 @@ function renderBotComing() {
         ${day.boxes.map(p => `
           <div class="bot-coming-box" style="display:flex;align-items:flex-start;gap:10px;padding:6px 12px 8px 24px;font-size:12px;border-bottom:1px solid var(--border);">
             <div style="width:190px;white-space:nowrap;">${p.tracking ? `<a href="${esc(p.trackUrl)}" target="_blank" rel="noopener" style="color:#60a5fa;">${esc(p.tracking)}</a>` : '<span style="color:var(--muted);">no tracking</span>'}
-              <div style="font-size:10px;color:var(--muted);">${esc([p.carrierLabel, p.retailers.join(' · ')].filter(Boolean).join(' · '))}${day.late && p.expected_date ? ' · was due ' + esc(botShortDate(p.expected_date)) : ''}</div></div>
+              <div style="font-size:10px;color:var(--muted);">${esc([p.carrierLabel, p.retailers.join(' · ')].filter(Boolean).join(' · '))}${day.late && p.expected_date ? ' · was due ' + esc(botShortDate(p.expected_date)) : ''}</div>
+              ${botReceiverLine(p)}</div>
             <div style="flex:1;">${p.contents.map(c => `<span class="bot-pkg-tag">${esc(c.name)} ×${c.qty}</span>`).join('')}
               <div style="font-size:10px;color:var(--muted);margin-top:2px;">${p.orders.map(o => esc(o.order_number || '')).join(', ')}</div>
               ${p.conflict ? `<div style="font-size:11px;color:#fbbf24;">⚠ same tracking on orders to ${p.shipTo.length} addresses — check it</div>` : ''}</div>
@@ -3153,7 +3162,8 @@ function renderBotPickup() {
           <div class="bot-pick-box" style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;">
             <input type="checkbox" ${_botPickSel.has(p.key) ? 'checked' : ''} onchange="botPickToggle(${i}, this.checked)" style="margin-top:3px;">
             <div style="width:170px;white-space:nowrap;">${p.tracking ? `<a href="${esc(p.trackUrl)}" target="_blank" rel="noopener" style="color:#60a5fa;">${esc(p.tracking)}</a>` : '<span style="color:var(--muted);">no tracking</span>'}
-              <div style="font-size:10px;color:var(--muted);">${esc(p.retailers.join(' · '))}${p.delivered_date ? ' · delivered ' + botShortDate(p.delivered_date) : ''}</div></div>
+              <div style="font-size:10px;color:var(--muted);">${esc(p.retailers.join(' · '))}${p.delivered_date ? ' · delivered ' + botShortDate(p.delivered_date) : ''}</div>
+              ${botReceiverLine(p)}</div>
             <div style="flex:1;">${p.contents.map(c => `<span class="bot-pkg-tag">${esc(c.name)} ×${c.qty}</span>`).join('')}
               <div style="font-size:10px;color:var(--muted);margin-top:2px;">${p.orders.map(o => esc(o.order_number || '')).join(', ')}</div></div>
             <button class="btn btn-ghost btn-sm bot-pick-checkin" onclick="openCheckin(${i})"><i class="fa fa-box-open"></i> Check in</button>

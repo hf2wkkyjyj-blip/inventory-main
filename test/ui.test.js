@@ -1019,6 +1019,7 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const addrs = () => [...wrap.querySelectorAll('.bot-pick-addr')];
     const boxes = () => [...wrap.querySelectorAll('.bot-pick-box')];
     check('grouped by address (2)',             addrs().length === 2, addrs().length);
+    check('label name shown on pick-up boxes',  boxes().every(b => /Test Buyer/.test((b.querySelector('.bot-recv') || {}).textContent || '')));
     check('3 delivered boxes; shipped one not listed', boxes().length === 3 && !boxes().some(b => /870000000704/.test(b.textContent)), boxes().length);
     const addr10 = addrs().find(a => /10 Pick Rd/.test(a.textContent));
     check('address shows 2 boxes · 4 units',    /2 boxes · 4 units/.test(addr10.textContent), addr10.textContent.replace(/\s+/g, ' ').slice(0, 120));
@@ -1230,6 +1231,8 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('delivered box not listed',           !/1ZAA11110000000707/.test(wrap.textContent));
     check('not-shipped order counted',          /1 not shipped yet/.test(main.textContent) && /Ordered, not shipped yet: 1 order/.test(main.textContent));
     check('late box says when it was due',      /was due/.test(main.textContent));
+    const recv = [...main.querySelectorAll('.bot-coming-box')].map(b => (b.querySelector('.bot-recv') || {}).textContent || '');
+    check('name on the label under each box',   recv.length === 4 && recv.every(t => /Test Buyer/.test(t)), JSON.stringify(recv));
 
     // Copy for house owner
     copied.length = 0;
