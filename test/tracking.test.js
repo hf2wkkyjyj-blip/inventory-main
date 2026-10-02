@@ -75,6 +75,20 @@ const eq = (n, a, e) => {
     eq(`[${lbl}] B gets its own number`, trackingOf(db, B), B.trk);
   }
 
+  console.log('\n── Newer Pokemon Center numbers start with 877, not 876 ──');
+  {
+    const C = { num: 'P0000000303', trk: '877000000303', name: 'Customer C', addr: '3 Test Rd Springfield, MN 55003' };
+    const db = makeDb([[C]]);
+    addEmail(db, '<c877>', shipEmail(C));
+    await quiet(() => reparseStoredEmails(db));
+    eq('877… tracking captured',    trackingOf(db, C), '877000000303');
+    eq('order moved to Shipped',    db.prepare('SELECT status FROM bot_orders WHERE order_number=?').get([C.num]).status, 'Shipped');
+    const db2 = makeDb([[A]]);
+    addEmail(db2, '<a876>', shipEmail(A));
+    await quiet(() => reparseStoredEmails(db2));
+    eq('876… still captured',       trackingOf(db2, A), A.trk);
+  }
+
   console.log('\n── Ship-to address read from the email ──');
   {
     const db = makeDb([[A], [B]]);

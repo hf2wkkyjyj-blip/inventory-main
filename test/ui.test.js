@@ -19,7 +19,7 @@ const path   = require('path');
 const Module = require('module');
 
 let JSDOM;
-for (const p of ['jsdom', '/tmp/uitest/node_modules/jsdom']) {
+for (const p of ['jsdom', '/tmp/uitest/node_modules/jsdom', path.join(__dirname, '..', '..', '..', 'uitest', 'node_modules', 'jsdom')]) {
   try { ({ JSDOM } = require(p)); break; } catch (_) {}
 }
 if (!JSDOM) { console.log('\n  ⏭️  jsdom not installed — UI test skipped (npm i -D jsdom)'); process.exit(0); }

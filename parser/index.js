@@ -21,6 +21,7 @@ const {
   emptyOrder, merge, round2, parseMoney, cleanName, hasAnything,
 } = require('./normalize');
 const { extractShipTo } = require('./shipTo');
+const { findTrackingNumber } = require('./tracking');
 
 // ── Plain-text fallbacks for the few fields regex is genuinely good at ───────
 
@@ -41,22 +42,10 @@ function htmlToText(html) {
     .trim();
 }
 
-const TRACKING_PATTERNS = [
-  /\b(1Z[A-Z0-9]{16})\b/i,          // UPS
-  /\b(876\d{9})\b/,                  // Narvar / Pokemon Center
-  /\b(9[24]\d{18,22})\b/,            // USPS
-  /\b(96\d{20})\b/,                  // FedEx Ground
-  /\b(61\d{18})\b/,                  // FedEx SmartPost
-  /\b(7\d{11})\b/,                   // FedEx Express
-];
 
-function findTrackingInText(text) {
-  if (!text) return null;
-  for (const p of TRACKING_PATTERNS) {
-    const m = text.match(p);
-    if (m) return m[1];
-  }
-  return null;
+// Label first, any format; fixed shapes only as a fallback (parser/tracking.js).
+function findTrackingInText(text, orderNumber) {
+  return findTrackingNumber(text, { orderNumber });
 }
 
 function findOrderNumberInText(text) {
@@ -236,7 +225,7 @@ async function parseOrderEmail({ html, text, subject, from, allowLlm = false } =
   // 4 — Regex fallbacks for identifiers only
   const haystack = `${subject || ''}\n${text || ''}`;
   if (!result.orderNumber)    result.orderNumber    = findOrderNumberInText(haystack);
-  if (!result.trackingNumber) result.trackingNumber = findTrackingInText(haystack);
+  if (!result.trackingNumber) result.trackingNumber = findTrackingInText(haystack, result.orderNumber);
 
   // 4b — Ship-to. Structured data rarely carries it; the text almost always
   // does ("Delivers to:" / a "Shipping Address" block). See shipTo.js.

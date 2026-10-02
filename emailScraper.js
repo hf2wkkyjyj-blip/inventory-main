@@ -76,20 +76,11 @@ function stripHtml(html) {
     .trim();
 }
 
-function findTracking(text) {
-  if (!text) return null;
-  const patterns = [
-    /\b(1Z[A-Z0-9]{16})\b/,         // UPS
-    /\b(876\d{9})\b/,                // Narvar / Pokemon Center
-    /\b(9[24]\d{18,22})\b/,          // USPS
-    /\b(96\d{20})\b/,                // FedEx ground
-    /\b(61\d{18})\b/,                // FedEx SmartPost
-  ];
-  for (const p of patterns) {
-    const m = text.match(p);
-    if (m) return m[1];
-  }
-  return null;
+// One shared reader for both paths (see parser/tracking.js): label first, in
+// any format; known shapes only as a fallback.
+const { findTrackingNumber } = require('./parser/tracking');
+function findTracking(text, orderNumber) {
+  return findTrackingNumber(text, { orderNumber });
 }
 
 function findOrderNumber(text, fromEmail) {
@@ -492,9 +483,6 @@ async function processEmail(parsed, db, opts = {}) {
   const baseCategory = retailerInfo?.category || 'Other';
   if (!retailer) return false;
 
-  // Identifiers: trust structured data first, then the tuned retailer regexes.
-  const tracking =
-    (isStructured ? P.trackingNumber : null) || findTracking(fullText) || P?.trackingNumber || null;
   // Order of trust: structured data → this retailer's own known format →
   // the generic heuristics → whatever the parser scraped from the text.
   const orderNumber =
@@ -502,6 +490,10 @@ async function processEmail(parsed, db, opts = {}) {
     Retailers.orderNumberFor(profile, fullText) ||
     findOrderNumber(fullText, fromEmail) ||
     P?.orderNumber || null;
+  // Tracking: structured data, else whatever follows the "Tracking Number:"
+  // label in any format (parser/tracking.js) — never the order number.
+  const tracking =
+    (isStructured ? P.trackingNumber : null) || findTracking(fullText, orderNumber) || P?.trackingNumber || null;
 
   // hasTracking stops a shipping notice's footer "Cancel order" link from being
   // read as an actual cancellation.
