@@ -2,14 +2,70 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Admin – Solid Supply</title>
+<!-- Add to Home Screen: opens full-screen like an app (iPhone + Android) -->
+<link rel="manifest" href="/admin.webmanifest">
+<meta name="theme-color" content="#111827">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Solid Supply">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
 <style>
 :root{--bg:#0d1117;--surface:#161b22;--card:#1c2333;--border:#30363d;--accent:#2f81f7;--green:#56d364;--yellow:#d29922;--red:#f85149;--orange:#f0883e;--text:#e6edf3;--muted:#8b949e;}
 *{margin:0;padding:0;box-sizing:border-box;}
 body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;min-height:100vh;}
+
+/* ── PHONE (≤ 760px) ─────────────────────────────────────────────────────────
+   Desktop is unchanged. On a phone: two-column cards, scrolling strips for
+   tabs/filters/views, boxes stacked instead of side-by-side columns, big tap
+   targets, 16px inputs (smaller makes iPhone zoom in), full-width dialogs. */
+@media (max-width: 760px) {
+  #topbar{padding:0 12px;padding-top:env(safe-area-inset-top);height:auto;min-height:52px;}
+  #tabs{padding:0 8px;}
+  .tab{padding:11px 12px;}
+  #content{padding:12px 10px calc(16px + env(safe-area-inset-bottom));}
+  input, select, textarea{font-size:16px !important;}
+  .btn{padding:10px 14px;}
+  .modal{width:100% !important;max-width:100vw !important;max-height:92vh;padding:16px;border-radius:14px 14px 0 0;}
+  .overlay{align-items:flex-end !important;}
+
+  #bot-stats-row{grid-template-columns:repeat(2,minmax(0,1fr)) !important;gap:8px !important;}
+  .bot-stat{padding:10px 12px;}
+  .bot-stat .val{font-size:20px !important;}
+
+  #bot-range-row, #bot-cat-tabs, #bot-view-switch{flex-wrap:nowrap !important;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+  #bot-cat-tabs{display:flex;gap:6px;max-width:100%;}
+  #bot-toolbar-row{flex-direction:column;align-items:stretch !important;}
+  #bot-toolbar{margin-left:0 !important;}
+  #bot-toolbar select, #bot-toolbar input{flex:1 1 45%;max-width:none !important;}
+  #bot-view-row{flex-direction:column;align-items:stretch !important;}
+  #bot-item-search{width:100% !important;}
+  #bot-view-switch{margin-left:0 !important;width:100%;}
+  .bot-vs-btn{flex:0 0 auto;padding:9px 12px !important;}
+
+  /* Coming + To pick up: one box per card, tracking above contents */
+  .bot-coming-addr > div:first-child, .bot-pick-addr > div:first-child{flex-wrap:wrap;}
+  .bot-owner-copy, .bot-owner-send{flex:1 1 40%;justify-content:center;}
+  .bot-coming-box, .bot-pick-box{flex-wrap:wrap;padding-left:12px !important;}
+  .bot-coming-box > div:first-child, .bot-pick-box > div:nth-child(2){width:100% !important;white-space:normal !important;}
+  .bot-pick-checkin{width:100%;justify-content:center;padding:12px !important;font-size:15px !important;}
+  .bot-pick-box input[type=checkbox], .bot-pick-addr input[type=checkbox]{width:22px;height:22px;}
+  #bot-pick-bar{flex-wrap:wrap;position:sticky;top:0;z-index:5;}
+  .bot-pkg-tag{white-space:normal;}
+
+  /* In stock: drop cost/unit; bigger count boxes */
+  .bst-cpu{display:none;}
+  input.bst-count{width:64px !important;height:40px;}
+  #bot-stock-wrap .btn{flex:1 1 auto;justify-content:center;}
+
+  /* Check-in dialog: roomy rows */
+  #ci-lines input.ci-good{width:64px !important;height:40px;}
+  #ci-lines select, #ci-lines .ci-got{width:100% !important;}
+}
 
 /* LOGIN */
 #login-screen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999;}
@@ -489,7 +545,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 
   <!-- Date range. Applies to the date an order entered its CURRENT status, so
        with DELIVERED selected "Today" means delivered today, not ordered today. -->
-  <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
+  <div id="bot-range-row" style="display:flex;align-items:center;gap:6px;margin-bottom:14px;flex-wrap:wrap;">
     <span style="font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--muted);margin-right:2px;">WHEN</span>
     <button class="drange active" data-range="all"   onclick="botSetRange('all',this)">All time</button>
     <button class="drange"        data-range="today" onclick="botSetRange('today',this)">Today</button>
@@ -500,9 +556,9 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   </div>
 
   <!-- Category Tabs + Controls -->
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+  <div id="bot-toolbar-row" style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
     <div id="bot-cat-tabs"></div>
-    <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <div id="bot-toolbar" style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <select id="bot-filter-retailer" onchange="botFilterChanged()" style="font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
         <option value="">All retailers</option>
       </select>
@@ -556,7 +612,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 
   <!-- Item view (every tab; All can switch to the order list) -->
   <div id="bot-item-view" style="display:none;">
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
+    <div id="bot-view-row" style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap;">
       <input type="text" id="bot-item-search" placeholder="Search item name…" oninput="renderBotItemView()" style="font-size:12px;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:240px;">
       <span id="bot-item-count" style="color:var(--muted);font-size:12px;"></span>
       <span id="bot-unlinked-banner" style="display:inline-flex;gap:8px;align-items:center;font-size:12px;margin-left:10px;"></span>
@@ -2867,6 +2923,7 @@ function renderBotComing() {
         <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${botOwnerChip(g.address, g.owner)}</div>
           <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
         <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.boxes} box${g.boxes === 1 ? '' : 'es'} · ${g.units} unit${g.units === 1 ? '' : 's'}${g.notShipped.length ? ` · ${g.notShipped.length} not shipped yet` : ''}</span>
+        ${g.boxes && navigator.share ? `<button class="btn btn-primary btn-sm bot-owner-send" onclick="botSendOwnerMsg(${gi})" data-tip="Text it to the house owner"><i class="fa fa-paper-plane"></i> Send</button>` : ''}
         ${g.boxes ? `<button class="btn btn-ghost btn-sm bot-owner-copy" onclick="botCopyOwnerMsg(${gi}, this)" data-tip="Copy a message for the house owner: how many boxes, which days, which carriers"><i class="fa fa-copy"></i> Copy for house owner</button>` : ''}
       </div>
       ${g.days.map(day => `
@@ -2895,6 +2952,12 @@ function botOwnerMessage(g) {
   });
   const hi = g.owner ? `Hi ${String(g.owner).split(' ')[0]} — heads up, packages` : 'Heads up — packages';
   return `${hi} coming to ${street}:\n${lines.join('\n')}\n${g.boxes} box${g.boxes === 1 ? '' : 'es'} total. Thank you!`;
+}
+
+// On a phone: open the share sheet (Messages, WhatsApp…) with the text ready.
+async function botSendOwnerMsg(gi) {
+  const g = _botComingGroups[gi]; if (!g) return;
+  try { await navigator.share({ text: botOwnerMessage(g) }); } catch (_) { /* closed the sheet */ }
 }
 
 async function botCopyOwnerMsg(gi, btn) {
@@ -2956,10 +3019,10 @@ function renderBotStock() {
         <thead><tr>
           <th style="${th}text-align:left;padding-left:12px;">ITEM</th>
           <th style="${th}text-align:center;">IN HAND</th>
-          <th style="${th}text-align:right;">COST / UNIT</th>
+          <th class="bst-cpu" style="${th}text-align:right;">COST / UNIT</th>
           <th style="${th}text-align:right;">AT COST</th>
           <th style="${th}text-align:right;" data-tip="Oldest unit still on the shelf (sold ones are taken oldest-first)">OLDEST</th>
-          ${_botCounting ? `<th style="${th}text-align:center;">COUNTED</th><th style="${th}text-align:center;">DIFF</th>` : ''}
+          ${_botCounting ? `<th style="${th}text-align:center;">COUNTED</th><th style="${th}text-align:center;">DIFF</th>` : `<th style="${th}"></th>`}
         </tr></thead>
         <tbody id="bst-body">${rows.length ? rows.map(i => {
           const days = i.oldestInStock ? botDaysSince(i.oldestInStock) : null;
@@ -2969,17 +3032,18 @@ function renderBotStock() {
             <td style="padding:8px 12px;"><div class="clip" data-tip="${esc(i.name)}">${esc(i.name)}</div>
               <div style="font-size:10px;color:var(--muted);">${esc((i.retailers || []).join(' · '))}${i.toPickUp ? ` · +${i.toPickUp} to pick up` : ''}</div></td>
             <td class="bst-left" style="text-align:center;font-weight:700;">${i.unitsLeft}</td>
-            <td style="text-align:right;font-variant-numeric:tabular-nums;">$${(i.perUnitTotal || 0).toFixed(2)}</td>
+            <td class="bst-cpu" style="text-align:right;font-variant-numeric:tabular-nums;">$${(i.perUnitTotal || 0).toFixed(2)}</td>
             <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">${botMoneyFmt(i.stockAtCost || 0)}</td>
             <td style="text-align:right;color:${ageC};" data-tip="${i.oldestInStock ? 'Picked up ' + esc(i.oldestInStock) : 'Pick-up date unknown'}">${age}</td>
             ${_botCounting ? `<td style="text-align:center;"><input type="number" class="bst-count" data-key="${esc(i.skuKey)}" data-left="${i.unitsLeft}" min="0" step="1"
                  value="${keep[i.skuKey] ?? ''}" oninput="botCountDiff(this)" style="width:60px;text-align:center;"></td>
-               <td class="bst-diff" style="text-align:center;font-weight:700;"></td>` : ''}
+               <td class="bst-diff" style="text-align:center;font-weight:700;"></td>`
+             : `<td style="text-align:right;padding-right:10px;"><button class="btn btn-ghost btn-sm bst-sell" data-key="${esc(i.skuKey)}" onclick="botSellFromStock(this.dataset.key)" data-tip="Record a sale" style="color:#4ade80;"><i class="fa fa-dollar-sign"></i> Sell</button></td>`}
           </tr>`; }).join('')
-          : `<tr><td colspan="${_botCounting ? 7 : 5}" style="text-align:center;padding:32px;color:var(--muted);">Nothing in hand here. Check boxes in under <b>To pick up</b> first.</td></tr>`}</tbody>
+          : `<tr><td colspan="${_botCounting ? 7 : 6}" style="text-align:center;padding:32px;color:var(--muted);">Nothing in hand here. Check boxes in under <b>To pick up</b> first.</td></tr>`}</tbody>
         ${rows.length ? `<tfoot><tr style="border-top:1px solid var(--border);font-weight:700;">
-          <td style="padding:8px 12px;">Total</td><td style="text-align:center;">${units}</td><td></td>
-          <td style="text-align:right;">${botMoneyFmt(cost)}</td><td></td>${_botCounting ? '<td></td><td></td>' : ''}</tr></tfoot>` : ''}
+          <td style="padding:8px 12px;">Total</td><td style="text-align:center;">${units}</td><td class="bst-cpu"></td>
+          <td style="text-align:right;">${botMoneyFmt(cost)}</td><td></td>${_botCounting ? '<td></td><td></td>' : '<td></td>'}</tr></tfoot>` : ''}
       </table>
     </div>
     <div id="bst-history" style="margin-top:12px;${_botCountHistory ? '' : 'display:none;'}"></div>`;
@@ -4006,8 +4070,11 @@ async function saveBotSkuField(idx, field, inputEl) {
 // always computed in one place (itemView.js).
 let _bsItem = null;
 
-function openBotSale(idx) {
-  const item = _botItemRows[idx];
+function openBotSale(idx) { openBotSaleFor(_botItemRows[idx]); }
+// From In stock: rows are found by product key, not by position.
+function botSellFromStock(key) { openBotSaleFor((_botStockItems || []).find(i => i.skuKey === key)); }
+
+function openBotSaleFor(item) {
   if (!item) { alert('Could not open this item — try refreshing.'); return; }
   _bsItem = item;
   const left = item.unitsLeft != null ? item.unitsLeft : item.qty;
@@ -4063,7 +4130,7 @@ async function botSaleRefresh() {
   const key = _bsItem && _bsItem.skuKey;
   botLoadMoney();
   if (botItemViewActive()) await loadBotItemView(botCurCat());
-  const fresh = (_botItems || []).find(i => i.skuKey === key);
+  const fresh = [...(_botItems || []), ...(_botStockItems || [])].find(i => i.skuKey === key);
   if (fresh && _bsItem) {
     _bsItem = fresh;
     document.getElementById('bs-sub').textContent =

@@ -258,12 +258,15 @@ const dom = new JSDOM(html, {
     w.localStorage.setItem('inv_admin_role', 'admin');
     w.fetch   = fakeFetch;
     w.confirm = m => { confirms.push(String(m)); return confirmAnswer; };
+    // A phone browser: the share sheet exists.
+    Object.defineProperty(w.navigator, 'share', { value: async d => { shared.push(d && d.text); }, configurable: true });
     Object.defineProperty(w.navigator, 'clipboard', { value: { writeText: async t => { copied.push(t); } }, configurable: true });
     w.alert   = m => { alerts.push(String(m)); };
     w.prompt  = () => null;
   },
 });
 const alerts = [];
+const shared = [];
 const confirms = [];
 let confirmAnswer = true;
 const copied = [];
@@ -901,6 +904,19 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('Scan Emails → self-heal ran',        !!DB.prepare("SELECT value FROM settings WHERE key='heal_signature'").get());
   }
 
+  console.log('\n── Phone: installable + phone layout ──');
+  {
+    const head = d.head.innerHTML;
+    check('manifest linked',                    !!d.querySelector('link[rel=manifest][href="/admin.webmanifest"]'));
+    check('iPhone home-screen icon + full screen', !!d.querySelector('link[rel=apple-touch-icon]') && !!d.querySelector('meta[name=apple-mobile-web-app-capable][content=yes]'));
+    const man = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'public', 'admin.webmanifest'), 'utf8'));
+    check('manifest opens admin full-screen',   man.start_url === '/admin.html' && man.display === 'standalone');
+    check('manifest icons exist',               man.icons.every(i => fs.existsSync(path.join(__dirname, '..', 'public', i.src.replace(/^\//, '')))));
+    check('phone layout only under 760px',      /@media \(max-width: 760px\)/.test(head) && /#bot-stats-row\{grid-template-columns:repeat\(2/.test(head));
+    check('16px inputs on phones (no iPhone zoom)', /input, select, textarea\{font-size:16px !important;\}/.test(head));
+    check('layout hooks present',               ['bot-range-row', 'bot-toolbar-row', 'bot-toolbar', 'bot-view-row'].every(id => !!d.getElementById(id)));
+  }
+
   console.log('\n── Backup → data check round trip ──');
   {
     const r = await fakeFetch('/api/admin/backup', { method: 'GET' });
@@ -1158,6 +1174,21 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const sep20 = Math.max(0, Math.floor((Date.now() - new Date(2026, 8, 20).getTime()) / 86400000));
     check('oldest now the Sep 20 pick-up (FIFO)', ageAfter === sep20, `${ageAfter} vs ${sep20}`);
 
+    // Sell straight from In stock.
+    const sellBtn = row(/Deck/).querySelector('.bst-sell');
+    check('Sell button on each In stock row',  !!sellBtn && rows().every(r => r.querySelector('.bst-sell')));
+    sellBtn.click(); await tick(60);
+    check('opens Record sale for that product', isVisible(d.getElementById('bot-sale-overlay')) && /Test Count Deck/.test(d.getElementById('bs-sub').textContent) && /3 in hand/.test(d.getElementById('bs-sub').textContent), d.getElementById('bs-sub').textContent);
+    d.getElementById('bs-qty').value = '1'; d.getElementById('bs-price').value = '60';
+    d.getElementById('bs-save').click(); await tick(250);
+    check('sale saved from In stock',          DB.prepare("SELECT COUNT(*) n FROM bot_sales WHERE product_name='Test Count Deck' AND unit_price=60").get().n === 1);
+    check('dialog refreshed: 2 in hand',       /2 in hand/.test(d.getElementById('bs-sub').textContent), d.getElementById('bs-sub').textContent);
+    w.closeBotSale(); await tick(60);
+    check('row now 2 in hand',                 td(row(/Deck/), 1) === '2');
+    // undo that sale so the counts below stay as before
+    DB.prepare("DELETE FROM bot_sales WHERE product_name='Test Count Deck' AND unit_price=60").run();
+    await w.loadBotItemView('Count Cat'); await tick(100);
+
     // Count: 2 decks on the shelf (1 short); tin skipped.
     wrap.querySelector('#bst-start').click(); await tick(60);
     check('count mode adds COUNTED + DIFF',    /COUNTED/.test(wrap.querySelector('thead').textContent) && wrap.querySelectorAll('input.bst-count').length === 2);
@@ -1244,6 +1275,11 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('owner message: late one',            /• Any day now \(running late\): 1 box/.test(msg));
     check('owner message: total',               /4 boxes total\. Thank you!$/.test(msg));
     check('owner message: no items or tracking', !/Test Coming|1ZAA|8700/.test(msg));
+    // On a phone: "Send" opens the share sheet with the same message.
+    const sendBtn = main.querySelector('.bot-owner-send');
+    check('Send button on phones',              !!sendBtn);
+    sendBtn && sendBtn.click(); await tick(60);
+    check('Send shares the owner message',      shared.pop() === msg);
 
     console.log('\n── House owners (paste from a sheet, chip, greeting) ──');
     const chip = () => addrs().find(a => /10 Coming Rd/.test(a.textContent)).querySelector('.bot-owner-chip');
