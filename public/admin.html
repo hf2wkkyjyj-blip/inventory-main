@@ -51,7 +51,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
   .bot-coming-addr > div:first-child, .bot-pick-addr > div:first-child{flex-wrap:wrap;}
   .bot-owner-copy, .bot-owner-send{flex:1 1 40%;justify-content:center;}
   .bot-coming-box, .bot-pick-box{flex-wrap:wrap;padding-left:12px !important;}
-  .bot-coming-box > div:first-child, .bot-pick-box > div:nth-child(2){width:100% !important;white-space:normal !important;}
+  .bot-coming-box > div:first-of-type, .bot-pick-box > div:first-of-type{width:calc(100% - 34px) !important;white-space:normal !important;}
+  .bot-coming-box > div:nth-of-type(2), .bot-pick-box > div:nth-of-type(2){width:100%;}
   .bot-pick-checkin{width:100%;justify-content:center;padding:12px !important;font-size:15px !important;}
   .bot-pick-box input[type=checkbox], .bot-pick-addr input[type=checkbox]{width:22px;height:22px;}
   #bot-pick-bar{flex-wrap:wrap;position:sticky;top:0;z-index:5;}
@@ -472,6 +473,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   .bot-stat .lbl{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.04em;margin-bottom:10px;color:var(--muted);}
   .bot-stat .val{font-size:24px;font-weight:700;}
   .bot-stat .sub{font-size:10px;color:var(--muted);margin-top:4px;line-height:1.35;}
+  .bot-stat.s-teal{border-color:#0f5c5c;} .bot-stat.s-teal .lbl,.bot-stat.s-teal .val{color:#2dd4bf;}
   .bot-stat.s-amber{border-color:#7a5a12;} .bot-stat.s-amber .lbl,.bot-stat.s-amber .val{color:#fbbf24;}
   .bot-stat.s-profit{border-color:#1c5a3f;} .bot-stat.s-profit .lbl{color:#4ade80;}
   .bot-stat.s-green{border-color:#1c5a3f;} .bot-stat.s-green .lbl{color:#34d399;} .bot-stat.s-green .val{color:#34d399;}
@@ -523,6 +525,9 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="bot-stat s-green clickable" onclick="botFilterStatus('Confirmed')" id="bsc-Confirmed"><div class="lbl">CONFIRMED</div><div class="val" id="bs-confirmed">0</div></div>
     <div class="bot-stat s-purple clickable" onclick="botFilterStatus('Shipped')" id="bsc-Shipped"><div class="lbl">SHIPPED</div><div class="val" id="bs-shipped">0</div></div>
     <div class="bot-stat s-blue clickable" onclick="botFilterStatus('Delivered')" id="bsc-Delivered"><div class="lbl">DELIVERED</div><div class="val" id="bs-delivered">0</div></div>
+    <div class="bot-stat s-teal clickable" id="bsc-stock" onclick="botOpenView('stock')" data-tip="Units you have on hand and haven't sold (picked up and checked). Click to see them, sell or count.">
+      <div class="lbl">IN STOCK</div><div class="val" id="bs-stock">0</div>
+      <div class="sub" id="bs-stock-sub"></div></div>
     <div class="bot-stat s-red clickable" onclick="botFilterStatus('Cancelled')" id="bsc-Cancelled"><div class="lbl">CANCELLED</div><div class="val" id="bs-cancelled">0</div></div>
     <div class="bot-stat s-pink clickable" onclick="botFilterStatus('Refunded')" id="bsc-Refunded"><div class="lbl">REFUNDED</div><div class="val" id="bs-refunded">0</div></div>
     <div class="bot-stat s-green"><div class="lbl">SPENT</div><div class="val" style="font-size:18px;" id="bs-spent">$0</div></div>
@@ -532,9 +537,6 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="bot-stat s-profit clickable" id="bsc-profit" onclick="botOpenView('sold')" data-tip="From recorded sales: money in − selling fees − landed cost of the units sold. ROI = profit ÷ that landed cost. Click to see every sale.">
       <div class="lbl">SALES PROFIT</div><div class="val" style="font-size:18px;" id="bs-profit">$0</div>
       <div class="sub" id="bs-profit-sub"></div></div>
-    <div class="bot-stat s-blue clickable" id="bsc-stock" onclick="botOpenView('stock')" data-tip="What you have on hand and haven't sold, at landed cost. Click to see it and count it.">
-      <div class="lbl">STOCK</div><div class="val" style="font-size:18px;" id="bs-stock">$0</div>
-      <div class="sub" id="bs-stock-sub"></div></div>
     <div class="bot-stat s-amber clickable" id="bsc-pickup" onclick="botOpenPickup()" data-tip="Delivered boxes you haven't picked up and checked yet. Click to see them by address.">
       <div class="lbl">TO PICK UP</div><div class="val" style="font-size:18px;" id="bs-pickup">0</div>
       <div class="sub" id="bs-pickup-sub"></div></div>
@@ -2157,10 +2159,8 @@ function botRenderMoneyCards(ordersInRange) {
   const st = _botMoney.stock || {};
   const se = document.getElementById('bs-stock');
   if (se) {
-    se.textContent = botMoneyFmt(st.inHandCost || 0);
-    document.getElementById('bs-stock-sub').textContent =
-      `${st.unitsInHand || 0} in hand` + (st.toPickUpCost ? ` · ${botMoneyFmt(st.toPickUpCost)} to pick up` : '') +
-      (st.onTheWayCost ? ` · ${botMoneyFmt(st.onTheWayCost)} on the way` : '');
+    se.textContent = st.unitsInHand || 0;
+    document.getElementById('bs-stock-sub').textContent = `${botMoneyFmt(st.inHandCost || 0)} at cost`;
   }
   if (botEffectiveView && botEffectiveView() === 'sold' && document.getElementById('bot-sold-wrap').style.display !== 'none') renderBotSold();
   const cl = _botMoney.claims || {};
@@ -2747,8 +2747,13 @@ let _botUndo = null;
 function botEffectiveView() {
   if (_botViewMode !== 'auto') return _botViewMode;
   const st = document.getElementById('bot-filter-status').value;
-  // Shipped = "what's coming where" — boxes by address and arrival day.
-  return (st === 'Shipped' || st === 'OFD') ? 'coming' : 'product';
+  // Each status card opens the address list for that stage:
+  //   Confirmed → ordered (by address), Shipped → coming (by address + day),
+  //   Delivered → delivered (to pick up first, picked-up below).
+  if (st === 'Shipped' || st === 'OFD') return 'coming';
+  if (st === 'Confirmed') return 'ordered';
+  if (st === 'Delivered') return 'delivered';
+  return 'product';
 }
 
 function botSetView(mode) {
@@ -2758,9 +2763,9 @@ function botSetView(mode) {
 
 function botApplyView(view) {
   document.getElementById('bot-pkg-wrap').style.display           = view === 'package' ? '' : 'none';
-  document.getElementById('bot-pickup-wrap').style.display        = view === 'pickup'  ? '' : 'none';
+  document.getElementById('bot-pickup-wrap').style.display        = (view === 'pickup' || view === 'delivered') ? '' : 'none';
   document.getElementById('bot-stock-wrap').style.display         = view === 'stock'   ? '' : 'none';
-  document.getElementById('bot-coming-wrap').style.display        = view === 'coming'  ? '' : 'none';
+  document.getElementById('bot-coming-wrap').style.display        = (view === 'coming' || view === 'ordered') ? '' : 'none';
   document.getElementById('bot-sold-wrap').style.display          = view === 'sold'    ? '' : 'none';
   document.getElementById('bot-product-table-wrap').style.display = view === 'product' ? '' : 'none';
   document.getElementById('bot-view-switch').innerHTML =
@@ -2853,6 +2858,33 @@ async function importOwners() {
 // address. "Copy for house owner" gives a plain message: boxes, days, carriers.
 let _botComing = [];
 let _botComingGroups = [];
+const _botComingSel = new Set();      // package keys ticked in Coming (→ Mark delivered)
+
+// Order numbers under a box, each with its ✎ (edit tracking, status, costs).
+function botOrderEdits(p) {
+  return `<div style="font-size:10px;color:var(--muted);margin-top:3px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">${p.orders.map(o => `
+    <span style="white-space:nowrap;">${esc(o.order_number || '—')}
+      <button class="bot-box-edit" onclick="botEditRow(${Number(o.id)})" data-tip="Edit order ${esc(o.order_number || '')}"
+        style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;width:22px;height:20px;font-size:9px;margin-left:2px;"><i class="fa fa-pen"></i></button></span>`).join('')}</div>`;
+}
+
+function botComingToggle(key, on) { on ? _botComingSel.add(key) : _botComingSel.delete(key); renderBotComing(); }
+function botComingToggleAddr(gi, on) {
+  const g = _botComingGroups[gi]; if (!g) return;
+  g.days.forEach(d => d.boxes.forEach(p => on ? _botComingSel.add(p.key) : _botComingSel.delete(p.key)));
+  renderBotComing();
+}
+async function botComingMarkDelivered() {
+  const sel = _botComing.filter(p => _botComingSel.has(p.key));
+  if (!sel.length) return;
+  const date = (document.getElementById('bot-coming-date') || {}).value || botLocalToday();
+  const btn = document.getElementById('bot-coming-mark'); if (btn) btn.disabled = true;
+  const r = await api('POST', '/admin/bot-orders/bulk-status', { orderIds: sel.flatMap(p => p.orderIds), status: 'Delivered', delivered_date: date });
+  if (!r || r.error) { if (btn) btn.disabled = false; alert((r && r.error) || 'Could not mark delivered.'); return; }
+  _botComingSel.clear();
+  botShowUndo(sel.length, r.previous, date);
+  await loadBotOrders();
+}
 
 function botDayLabel(ymd) {
   if (!ymd) return 'No date yet';
@@ -2916,9 +2948,18 @@ function renderBotComing() {
     wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">Nothing on the way.</div>`;
     return;
   }
-  wrap.innerHTML = groups.map((g, gi) => `
+  const selN = _botComing.filter(p => _botComingSel.has(p.key)).length;
+  const cdate = (document.getElementById('bot-coming-date') || {}).value || botLocalToday();
+  wrap.innerHTML = `
+    <div id="bot-coming-bar" style="display:${selN ? 'flex' : 'none'};gap:10px;align-items:center;flex-wrap:wrap;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:8px 12px;margin-bottom:10px;font-size:12px;position:sticky;top:0;z-index:5;">
+      <b>${selN}</b> box${selN === 1 ? '' : 'es'} selected → delivered on
+      <input type="date" id="bot-coming-date" value="${cdate}" max="${botLocalToday()}" style="font-size:12px;padding:3px 6px;">
+      <button class="btn btn-primary btn-sm" id="bot-coming-mark" onclick="botComingMarkDelivered()"><i class="fa fa-check"></i> Mark delivered</button>
+      <button class="btn btn-ghost btn-sm" onclick="_botComingSel.clear();renderBotComing()">Clear</button>
+    </div>` + groups.map((g, gi) => `
     <div class="bot-coming-addr" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:10px;overflow:hidden;">
       <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);">
+        ${g.boxes ? `<input type="checkbox" class="bot-coming-all" ${g.days.every(d => d.boxes.every(p => _botComingSel.has(p.key))) ? 'checked' : ''} onchange="botComingToggleAddr(${gi}, this.checked)" data-tip="Select every box at this address">` : ''}
         <i class="fa fa-map-marker-alt" style="color:#60a5fa;"></i>
         <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${botOwnerChip(g.address, g.owner)}</div>
           <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
@@ -2930,21 +2971,66 @@ function renderBotComing() {
         <div class="bot-coming-day" style="padding:6px 12px 2px;font-size:11px;font-weight:700;letter-spacing:.04em;color:${day.late ? '#f87171' : day.ofd ? '#4ade80' : 'var(--muted)'};">
           ${esc(botDayTitle(day)).toUpperCase()} <span style="font-weight:400;">· ${day.boxes.length} box${day.boxes.length === 1 ? '' : 'es'}</span></div>
         ${day.boxes.map(p => `
-          <div class="bot-coming-box" style="display:flex;align-items:flex-start;gap:10px;padding:6px 12px 8px 24px;font-size:12px;border-bottom:1px solid var(--border);">
+          <div class="bot-coming-box" style="display:flex;align-items:flex-start;gap:10px;padding:6px 12px 8px 12px;font-size:12px;border-bottom:1px solid var(--border);">
+            <input type="checkbox" class="bot-coming-check" data-key="${esc(p.key)}" ${_botComingSel.has(p.key) ? 'checked' : ''} onchange="botComingToggle(this.dataset.key, this.checked)" style="margin-top:3px;">
             <div style="width:190px;white-space:nowrap;">${p.tracking ? `<a href="${esc(p.trackUrl)}" target="_blank" rel="noopener" style="color:#60a5fa;">${esc(p.tracking)}</a>` : '<span style="color:var(--muted);">no tracking</span>'}
               <div style="font-size:10px;color:var(--muted);">${esc([p.carrierLabel, p.retailers.join(' · ')].filter(Boolean).join(' · '))}${day.late && p.expected_date ? ' · was due ' + esc(botShortDate(p.expected_date)) : ''}</div>
               ${botReceiverLine(p)}</div>
             <div style="flex:1;">${p.contents.map(c => `<span class="bot-pkg-tag">${esc(c.name)} ×${c.qty}</span>`).join('')}
-              <div style="font-size:10px;color:var(--muted);margin-top:2px;">${p.orders.map(o => esc(o.order_number || '')).join(', ')}</div>
+              ${botOrderEdits(p)}
               ${p.conflict ? `<div style="font-size:11px;color:#fbbf24;">⚠ same tracking on orders to ${p.shipTo.length} addresses — check it</div>` : ''}</div>
           </div>`).join('')}`).join('')}
       ${g.notShipped.length ? `<div class="bot-coming-notshipped" style="padding:7px 12px;font-size:11px;color:var(--muted);">Ordered, not shipped yet: ${g.notShipped.length} order${g.notShipped.length === 1 ? '' : 's'} — ${g.notShipped.flatMap(p => p.contents.map(c => esc(c.name) + ' ×' + c.qty)).slice(0, 6).join(', ')}</div>` : ''}
     </div>`).join('');
 }
 
+// ── Ordered (Confirmed card): not shipped yet, by address ──────────────────
+function renderBotOrdered() {
+  const wrap = document.getElementById('bot-coming-wrap');
+  const q = (document.getElementById('bot-item-search').value || '').toLowerCase();
+  let pk = _botComing;
+  if (q) pk = pk.filter(p => [...p.orders.map(o => o.order_number), ...p.shipTo.map(s => s.name), ...p.shipTo.map(s => s.address),
+    ...p.contents.map(c => c.name)].filter(Boolean).join(' ').toLowerCase().includes(q));
+  const groups = _botComingGroups = botComingModel(pk);     // everything lands in notShipped
+  const orders = groups.reduce((a, g) => a + g.notShipped.length, 0);
+  const units = groups.reduce((a, g) => a + g.notShipped.reduce((b, p) => b + p.units, 0), 0);
+  document.getElementById('bot-item-count').textContent = `${orders} order${orders === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'} ordered, not shipped yet`;
+  document.getElementById('bot-unlinked-banner').innerHTML = botOwnersLink();
+  if (!groups.length) {
+    wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">Nothing waiting to ship.</div>`;
+    return;
+  }
+  wrap.innerHTML = groups.map((g, gi) => {
+    const u = g.notShipped.reduce((a, p) => a + p.units, 0);
+    return `
+    <div class="bot-coming-addr bot-ordered-addr" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:10px;overflow:hidden;">
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);">
+        <i class="fa fa-map-marker-alt" style="color:#34d399;"></i>
+        <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${botOwnerChip(g.address, g.owner)}</div>
+          <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
+        <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.notShipped.length} order${g.notShipped.length === 1 ? '' : 's'} · ${u} unit${u === 1 ? '' : 's'}</span>
+        ${navigator.share ? `<button class="btn btn-primary btn-sm bot-owner-send" onclick="botSendOwnerMsg(${gi})" data-tip="Text the house owner"><i class="fa fa-paper-plane"></i> Send</button>` : ''}
+        <button class="btn btn-ghost btn-sm bot-owner-copy" onclick="botCopyOwnerMsg(${gi}, this)" data-tip="Copy a heads-up for the house owner"><i class="fa fa-copy"></i> Copy for house owner</button>
+      </div>
+      ${g.notShipped.map(p => `
+        <div class="bot-coming-box bot-ordered-box" style="display:flex;align-items:flex-start;gap:10px;padding:6px 12px 8px 12px;font-size:12px;border-bottom:1px solid var(--border);">
+          <div style="width:190px;white-space:nowrap;"><span style="color:var(--muted);">not shipped yet</span>
+            <div style="font-size:10px;color:var(--muted);">${esc(p.retailers.join(' · '))}${p.order_date ? ' · ordered ' + esc(botShortDate(p.order_date)) : ''}</div>
+            ${botReceiverLine(p)}</div>
+          <div style="flex:1;">${p.contents.map(c => `<span class="bot-pkg-tag">${esc(c.name)} ×${c.qty}</span>`).join('')}
+            ${botOrderEdits(p)}</div>
+        </div>`).join('')}
+    </div>`; }).join('');
+}
+
 // Plain text for the house owner: which days, how many boxes, which carriers.
 function botOwnerMessage(g) {
   const street = String(g.address || '').split(',')[0];
+  if (botEffectiveView() === 'ordered') {
+    const n = g.notShipped.length;
+    const hi0 = g.owner ? `Hi ${String(g.owner).split(' ')[0]} — heads up` : 'Heads up';
+    return `${hi0}: ${n} package${n === 1 ? '' : 's'} ordered for ${street}. They haven't shipped yet — I'll let you know when they do. Thank you!`;
+  }
   const lines = g.days.map(day => {
     const carriers = [...new Set(day.boxes.map(p => p.carrierLabel).filter(Boolean))];
     const when = day.ofd ? 'Today (out for delivery)' : day.late ? 'Any day now (running late)' : botDayLabel(day.date);
@@ -3167,6 +3253,7 @@ async function botDeleteSoldRow(id) {
 // Delivered ≠ in your hands. Boxes wait here, grouped by address, until you
 // pick them up and check what's inside. Only checked-in units count as stock.
 let _botPickup = [];
+let _botPickIncludePicked = false;   // Delivered card: also list boxes already picked up
 let _botPickRows = [];
 const _botPickSel = new Set();
 
@@ -3182,12 +3269,18 @@ function renderBotPickup() {
   let rows = _botPickup;
   if (q) rows = rows.filter(p => [p.tracking, ...p.orders.map(o => o.order_number), ...p.shipTo.map(s => s.name), ...p.shipTo.map(s => s.address),
     ...p.contents.map(c => c.name)].filter(Boolean).join(' ').toLowerCase().includes(q));
+  const picked = p => p.orders.every(o => o.checked_in);
+  // Waiting boxes first, picked-up after (Delivered card shows both).
+  rows = [...rows].sort((a, b) => picked(a) - picked(b));
   _botPickRows = rows;
-  const units = rows.reduce((a, p) => a + p.units, 0);
-  document.getElementById('bot-item-count').textContent = `${rows.length} box${rows.length === 1 ? '' : 'es'} · ${units} unit${units === 1 ? '' : 's'} to pick up`;
+  const waiting = rows.filter(p => !picked(p));
+  const units = waiting.reduce((a, p) => a + p.units, 0);
+  document.getElementById('bot-item-count').textContent = _botPickIncludePicked
+    ? `${rows.length} delivered box${rows.length === 1 ? '' : 'es'} · ${waiting.length} to pick up (${units} unit${units === 1 ? '' : 's'})`
+    : `${rows.length} box${rows.length === 1 ? '' : 'es'} · ${units} unit${units === 1 ? '' : 's'} to pick up`;
   document.getElementById('bot-unlinked-banner').innerHTML = botOwnersLink();
   if (!rows.length) {
-    wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">Nothing waiting — every delivered box is checked in.</div>`;
+    wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">${_botPickIncludePicked ? 'No delivered boxes here.' : 'Nothing waiting — every delivered box is checked in.'}</div>`;
     return;
   }
   // Group by address (first ship-to of the box).
@@ -3213,24 +3306,28 @@ function renderBotPickup() {
     </div>` +
     [...groups.values()].map(g => {
       const gUnits = g.items.reduce((a, x) => a + x.p.units, 0);
-      const allSel = g.items.every(x => _botPickSel.has(x.p.key));
+      const selectable = g.items.filter(x => !picked(x.p));
+      const allSel = selectable.length > 0 && selectable.every(x => _botPickSel.has(x.p.key));
       return `<div class="bot-pick-addr" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:10px;overflow:hidden;">
         <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);">
           <input type="checkbox" ${allSel ? 'checked' : ''} onchange="botPickToggleAddr('${esc(normalizeAddr(g.address) || '—')}', this.checked)" data-tip="Select every box at this address">
           <i class="fa fa-map-marker-alt" style="color:#fbbf24;"></i>
           <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${botOwnerChip(g.address, g.owner)}</div>
             <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
-          <span style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.items.length} box${g.items.length === 1 ? '' : 'es'} · ${gUnits} unit${gUnits === 1 ? '' : 's'}</span>
+          <span style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.items.length} box${g.items.length === 1 ? '' : 'es'} · ${gUnits} unit${gUnits === 1 ? '' : 's'}${_botPickIncludePicked && selectable.length < g.items.length ? ` · ${g.items.length - selectable.length} picked up` : ''}</span>
         </div>
         ${g.items.map(({ p, i }) => `
           <div class="bot-pick-box" style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;">
-            <input type="checkbox" ${_botPickSel.has(p.key) ? 'checked' : ''} onchange="botPickToggle(${i}, this.checked)" style="margin-top:3px;">
+            <input type="checkbox" ${_botPickSel.has(p.key) ? 'checked' : ''} ${picked(p) ? 'disabled' : ''} onchange="botPickToggle(${i}, this.checked)" style="margin-top:3px;">
             <div style="width:170px;white-space:nowrap;">${p.tracking ? `<a href="${esc(p.trackUrl)}" target="_blank" rel="noopener" style="color:#60a5fa;">${esc(p.tracking)}</a>` : '<span style="color:var(--muted);">no tracking</span>'}
               <div style="font-size:10px;color:var(--muted);">${esc(p.retailers.join(' · '))}${p.delivered_date ? ' · delivered ' + botShortDate(p.delivered_date) : ''}</div>
               ${botReceiverLine(p)}</div>
             <div style="flex:1;">${p.contents.map(c => `<span class="bot-pkg-tag">${esc(c.name)} ×${c.qty}</span>`).join('')}
-              <div style="font-size:10px;color:var(--muted);margin-top:2px;">${p.orders.map(o => esc(o.order_number || '')).join(', ')}</div></div>
-            <button class="btn btn-ghost btn-sm bot-pick-checkin" onclick="openCheckin(${i})"><i class="fa fa-box-open"></i> Check in</button>
+              ${botOrderEdits(p)}</div>
+            ${picked(p)
+              ? `<div class="bot-picked" style="font-size:12px;color:#4ade80;white-space:nowrap;padding-top:4px;">✓ picked up ${esc(botShortDate((p.orders.find(o => o.checked_in) || {}).checked_at || ''))}
+                   <button onclick="botUndoCheckin(${Number((p.orders.find(o => o.checked_in) || {}).id)})" data-tip="Undo pick-up" style="background:none;border:none;color:var(--muted);cursor:pointer;">✕</button></div>`
+              : `<button class="btn btn-ghost btn-sm bot-pick-checkin" onclick="openCheckin(${i})"><i class="fa fa-box-open"></i> Check in</button>`}
           </div>`).join('')}
       </div>`;
     }).join('');
@@ -3242,7 +3339,7 @@ function botPickToggle(i, on) {
   renderBotPickup();
 }
 function botPickToggleAddr(addrKey, on) {
-  _botPickRows.filter(p => (normalizeAddr((p.shipTo[0] || {}).address || '') || '—') === addrKey)
+  _botPickRows.filter(p => (normalizeAddr((p.shipTo[0] || {}).address || '') || '—') === addrKey && !p.orders.every(o => o.checked_in))
     .forEach(p => on ? _botPickSel.add(p.key) : _botPickSel.delete(p.key));
   renderBotPickup();
 }
@@ -3786,23 +3883,29 @@ async function loadBotItemView(cat) {
     renderBotSold();
     return;
   }
-  if (view === 'coming') {
+  if (view === 'coming' || view === 'ordered') {
     // Every package not delivered yet — whatever the status filter says.
     const q4 = new URLSearchParams({ category: cat });
     if (retailer) q4.set('retailer', retailer);
     const pk = await api('GET', '/admin/bot-packages?' + q4.toString());
     if (!pk) return;
-    _botComing = pk.filter(p => p.status === 'Shipped' || p.status === 'OFD' || p.status === 'Confirmed' || p.status === 'Unship');
-    renderBotComing();
+    _botComing = view === 'ordered'
+      ? pk.filter(p => p.status === 'Confirmed' || p.status === 'Unship')
+      : pk.filter(p => p.status === 'Shipped' || p.status === 'OFD' || (status !== 'Shipped' && status !== 'OFD' && (p.status === 'Confirmed' || p.status === 'Unship')));
+    const present = new Set(_botComing.map(p => p.key));
+    [..._botComingSel].forEach(k => { if (!present.has(k)) _botComingSel.delete(k); });
+    if (view === 'ordered') renderBotOrdered(); else renderBotComing();
     return;
   }
-  if (view === 'pickup') {
-    // Every delivered box not yet checked in — whatever the status filter says.
+  if (view === 'pickup' || view === 'delivered') {
+    // Delivered boxes. To pick up = not checked in yet; Delivered = all of
+    // them, with the picked-up ones listed after the ones still waiting.
     const q2 = new URLSearchParams({ category: cat });
     if (retailer) q2.set('retailer', retailer);
     const pk = await api('GET', '/admin/bot-packages?' + q2.toString());
     if (!pk) return;
-    _botPickup = pk.filter(p => p.status === 'Delivered' && p.orders.some(o => !o.checked_in));
+    _botPickIncludePicked = view === 'delivered';
+    _botPickup = pk.filter(p => p.status === 'Delivered' && (_botPickIncludePicked || p.orders.some(o => !o.checked_in)));
     const present = new Set(_botPickup.map(p => p.key));
     [..._botPickSel].forEach(k => { if (!present.has(k)) _botPickSel.delete(k); });
     renderBotPickup();
@@ -3849,6 +3952,8 @@ function renderBotItemView() {
   if (botEffectiveView() === 'pickup')  return renderBotPickup();
   if (botEffectiveView() === 'stock')   return renderBotStock();
   if (botEffectiveView() === 'coming')  return renderBotComing();
+  if (botEffectiveView() === 'ordered') return renderBotOrdered();
+  if (botEffectiveView() === 'delivered') return renderBotPickup();
   if (botEffectiveView() === 'sold')    return renderBotSold();
   const search = (document.getElementById('bot-item-search').value || '').toLowerCase();
   const addr   = document.getElementById('bot-filter-address').value;

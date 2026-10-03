@@ -469,8 +469,11 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     // Shipped opens the package view, Delivered the product view — read the one on screen.
     const pkgOn  = () => d.getElementById('bot-pkg-wrap').style.display !== 'none';
     const comingOn = () => d.getElementById('bot-coming-wrap').style.display !== 'none';
+    const pickOn   = () => d.getElementById('bot-pickup-wrap').style.display !== 'none';
     const names  = () => comingOn()
       ? [...d.querySelectorAll('#bot-coming-wrap .bot-coming-box')].map(r => r.textContent)
+      : pickOn()
+      ? [...d.querySelectorAll('#bot-pickup-wrap .bot-pick-box')].map(r => r.textContent)
       : pkgOn()
       ? [...d.querySelectorAll('#bot-pkg-tbody > tr')].map(r => r.textContent)
       : rows().map(r => r.textContent);
@@ -889,8 +892,8 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     await w.loadBotOrders(); await tick(250);
     check('after Reparse: gone from Shipped',     !inShipped());
     check('status now Delivered',                 DB.prepare("SELECT status FROM bot_orders WHERE order_number='X01'").get().status === 'Delivered');
-    statusSel.value = 'Delivered'; statusSel.dispatchEvent(new w.Event('change')); await tick(80);
-    check('listed under Delivered',               !!rowNamed(/Test Stuck Pack/));
+    statusSel.value = 'Delivered'; statusSel.dispatchEvent(new w.Event('change')); await tick(120);
+    check('listed under Delivered',               [...d.querySelectorAll('#bot-pickup-wrap .bot-pick-box')].some(b => /Test Stuck Pack/.test(b.textContent)));
     statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
   }
 
@@ -1151,7 +1154,9 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const statusSel = d.getElementById('bot-filter-status');
     statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
     [...d.querySelectorAll('.btab')].find(b => /^Count Cat/.test(b.textContent.trim())).click(); await tick(100);
-    check('STOCK card shows a $ amount',       /\$[\d,]+\.\d\d/.test(d.getElementById('bs-stock').textContent), d.getElementById('bs-stock').textContent);
+    check('IN STOCK card: units + $ at cost',  /^\d+$/.test(d.getElementById('bs-stock').textContent) && /\$[\d,]+\.\d\d at cost/.test(d.getElementById('bs-stock-sub').textContent), d.getElementById('bs-stock').textContent + ' / ' + d.getElementById('bs-stock-sub').textContent);
+    const cardIds = [...d.querySelectorAll('#bot-stats-row .bot-stat')].map(c => c.id);
+    check('IN STOCK sits right after DELIVERED', cardIds.indexOf('bsc-stock') === cardIds.indexOf('bsc-Delivered') + 1, cardIds.join(','));
     d.getElementById('bsc-stock').click(); await tick(150);
     const wrap = d.getElementById('bot-stock-wrap');
     check('In stock view opens',               wrap.style.display !== 'none' && d.getElementById('bot-product-table-wrap').style.display === 'none');
@@ -1260,7 +1265,7 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const days = [...main.querySelectorAll('.bot-coming-day')].map(x => x.textContent.replace(/\s+/g, ' ').trim());
     check('out for delivery first, then late, then by date', /^TODAY — OUT FOR DELIVERY/.test(days[0]) && /^LATE/.test(days[1]) && /^TOMORROW/.test(days[2]) && days.length === 4, days.join(' | '));
     check('delivered box not listed',           !/1ZAA11110000000707/.test(wrap.textContent));
-    check('not-shipped order counted',          /1 not shipped yet/.test(main.textContent) && /Ordered, not shipped yet: 1 order/.test(main.textContent));
+    check('not-shipped orders not mixed into Shipped', !/not shipped yet/.test(main.textContent));
     check('late box says when it was due',      /was due/.test(main.textContent));
     const recv = [...main.querySelectorAll('.bot-coming-box')].map(b => (b.querySelector('.bot-recv') || {}).textContent || '');
     check('name on the label under each box',   recv.length === 4 && recv.every(t => /Test Buyer/.test(t)), JSON.stringify(recv));
@@ -1321,6 +1326,55 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('removed → "+ owner" again',          chip() && /\+ owner/.test(chip().textContent));
     const bad = await fakeFetch('/api/admin/bot-address-owners', { method: 'PUT', body: JSON.stringify({ address: 'no number here', owner: 'X' }) });
     check('server rejects an address without a street number', bad.status === 400);
+
+    // Shipped list: tick boxes → Mark delivered; ✎ per order.
+    console.log('\n── Shipped list: select + Mark delivered, ✎ edit ──');
+    const boxRows = () => [...addrs().find(a => /10 Coming Rd/.test(a.textContent)).querySelectorAll('.bot-coming-box')];
+    check('checkbox on every shipped box',      boxRows().every(b => b.querySelector('.bot-coming-check')));
+    check('✎ on every order',                   boxRows().every(b => b.querySelector('.bot-box-edit')));
+    const g02 = boxRows().find(b => /1ZAA11110000000702/.test(b.textContent));
+    g02.querySelector('.bot-coming-check').click(); await tick(60);
+    const bar = d.getElementById('bot-coming-bar');
+    check('bar: 1 box selected',                bar.style.display === 'flex' && /1<\/b> box selected/.test(bar.innerHTML));
+    d.getElementById('bot-coming-date').value = '2026-09-29';
+    d.getElementById('bot-coming-mark').click(); await tick(250);
+    const g02db = DB.prepare("SELECT status, delivered_date FROM bot_orders WHERE order_number='G02'").get();
+    check('G02 marked delivered on the chosen date', g02db.status === 'Delivered' && g02db.delivered_date === '2026-09-29', JSON.stringify(g02db));
+    check('undo offered',                       d.getElementById('bot-undo-bar').style.display === 'flex');
+    d.getElementById('bot-undo-btn').click(); await tick(250);
+    check('undo puts it back to Shipped',       DB.prepare("SELECT status FROM bot_orders WHERE order_number='G02'").get().status === 'Shipped');
+    boxRows()[0].querySelector('.bot-box-edit').click(); await tick(80);
+    check('✎ opens the order editor',           isVisible(d.getElementById('bot-edit-overlay')));
+    w.closeBotEdit(); await tick();
+
+    console.log('\n── Confirmed card: ordered, not shipped yet, by address ──');
+    d.getElementById('bsc-Confirmed').click(); await tick(200);
+    const ow = d.getElementById('bot-coming-wrap');
+    const ordAddr = [...ow.querySelectorAll('.bot-ordered-addr')].find(a => /10 Coming Rd/.test(a.textContent));
+    check('Confirmed opens the ordered list',    !!ordAddr && ow.style.display !== 'none');
+    check('the not-shipped order is there',      ordAddr && /Test Coming Pack/.test(ordAddr.textContent) && /not shipped yet/.test(ordAddr.textContent));
+    check('shipped boxes are not',               ordAddr && !/1ZAA11110000000701/.test(ordAddr.textContent));
+    check('✎ on ordered rows',                   ordAddr && !!ordAddr.querySelector('.bot-box-edit'));
+    copied.length = 0;
+    ordAddr.querySelector('.bot-owner-copy').click(); await tick(60);
+    check('owner note: ordered, not shipped',    /^Heads up: 1 package ordered for 10 Coming Rd\. They haven't shipped yet/.test(copied.pop() || ''));
+    d.getElementById('bsc-Confirmed').click(); await tick(150);   // clear
+
+    console.log('\n── Delivered card: to pick up first, picked up below ──');
+    // G07 is delivered (not picked up); check it in so both kinds exist.
+    const g07 = DB.prepare("SELECT id FROM bot_orders WHERE order_number='G07'").get().id;
+    d.getElementById('bsc-Delivered').click(); await tick(200);
+    const pw = d.getElementById('bot-pickup-wrap');
+    const g07row = () => [...pw.querySelectorAll('.bot-pick-box')].find(b => /1ZAA11110000000707/.test(b.textContent));
+    check('Delivered opens the address list',    pw.style.display !== 'none' && !!g07row());
+    check('waiting box has Check in',            !!g07row().querySelector('.bot-pick-checkin'));
+    await fakeFetch('/api/admin/bot-checkin', { method: 'POST', body: JSON.stringify({ orderIds: [g07], date: '2026-10-01' }) });
+    await w.loadBotOrders(); await tick(200);
+    check('picked-up box still listed, with ✓',  !!g07row() && /picked up/.test(g07row().textContent) && !g07row().querySelector('.bot-pick-checkin'));
+    check('picked-up box can\'t be ticked',      g07row().querySelector('input[type=checkbox]').disabled);
+    check('✎ on delivered rows',                 !!g07row().querySelector('.bot-box-edit'));
+    await fakeFetch('/api/admin/bot-checkin/' + g07, { method: 'DELETE' });
+    d.getElementById('bsc-Delivered').click(); await tick(150);   // clear
 
     // Other views are one click away; the status filter can be cleared.
     [...d.querySelectorAll('#bot-view-switch button')].find(b => /By package/.test(b.textContent)).click(); await tick(100);
