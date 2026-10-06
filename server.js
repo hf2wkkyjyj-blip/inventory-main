@@ -205,6 +205,10 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS bot_partners (
 try { db.exec(`CREATE TABLE IF NOT EXISTS bot_partner_payouts (
   id INTEGER PRIMARY KEY AUTOINCREMENT, partner_id INTEGER NOT NULL, amount REAL NOT NULL, paid_at TEXT, note TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
+// One list per retailer: his account emails + the names on his orders there.
+// An order is his only at that retailer, with his email (and name, if listed).
+try { db.exec(`CREATE TABLE IF NOT EXISTS bot_partner_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, partner_id INTEGER NOT NULL, retailer TEXT NOT NULL, emails TEXT, names TEXT)`); } catch(e) {}
 // ✎ "whose order": NULL = match automatically, 0 = mine, else a partner id.
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN partner_override INTEGER"); } catch(e) {}
 
@@ -1122,24 +1126,34 @@ app.delete('/api/admin/bot-stock-count/:id', auth, adminOnly, (req, res) => {
 });
 
 // ── Partners ────────────────────────────────────────────────────────────────
-// Save a profile (create, or update with id). emails / names: comma or line
-// separated. Tabs (spend, stock, sales, owed) come with /bot-money.
+// Save a partner (create, or update with id) with his per-retailer lists:
+// profiles: [{ retailer, emails, names }] — emails / names comma or line
+// separated. Each list needs a retailer and at least one email. Tabs (spend,
+// stock, sales, owed) come with /bot-money.
 app.post('/api/admin/bot-partners', auth, adminOnly, (req, res) => {
   const b = req.body || {};
   const name = String(b.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Name required' });
-  const emails = String(b.emails || '').trim(), names = String(b.names || '').trim();
-  if (!emails && !names) return res.status(400).json({ error: 'Add at least one email or order name to match his orders' });
-  if (b.id) {
-    db.prepare('UPDATE bot_partners SET name=?, emails=?, names=?, note=? WHERE id=?').run([name, emails, names, String(b.note || ''), Number(b.id)]);
-    return res.json({ id: Number(b.id) });
+  const clean = s => String(s || '').split(/[,;\n]/).map(x => x.trim()).filter(Boolean).join(', ');
+  const profiles = (Array.isArray(b.profiles) ? b.profiles : [])
+    .map(p => ({ retailer: String(p.retailer || '').trim(), emails: clean(p.emails), names: clean(p.names) }))
+    .filter(p => p.retailer || p.emails || p.names);
+  if (!profiles.length) return res.status(400).json({ error: 'Add at least one retailer with his account emails' });
+  if (profiles.some(p => !p.retailer)) return res.status(400).json({ error: 'Pick the retailer for each list' });
+  if (profiles.some(p => !p.emails))   return res.status(400).json({ error: 'Each retailer needs at least one of his account emails' });
+  let id = Number(b.id) || 0;
+  if (id) db.prepare("UPDATE bot_partners SET name=?, note=?, emails='', names='' WHERE id=?").run([name, String(b.note || ''), id]);
+  else    id = Number(db.prepare("INSERT INTO bot_partners (name, emails, names, note) VALUES (?,'','',?)").run([name, String(b.note || '')]).lastInsertRowid);
+  db.prepare('DELETE FROM bot_partner_profiles WHERE partner_id=?').run([id]);
+  for (const p of profiles) {
+    db.prepare('INSERT INTO bot_partner_profiles (partner_id, retailer, emails, names) VALUES (?,?,?,?)').run([id, p.retailer, p.emails, p.names]);
   }
-  const r = db.prepare('INSERT INTO bot_partners (name, emails, names, note) VALUES (?,?,?,?)').run([name, emails, names, String(b.note || '')]);
-  res.json({ id: Number(r.lastInsertRowid) });
+  res.json({ id });
 });
 app.delete('/api/admin/bot-partners/:id', auth, adminOnly, (req, res) => {
   const id = Number(req.params.id);
   db.prepare('DELETE FROM bot_partners WHERE id=?').run([id]);
+  db.prepare('DELETE FROM bot_partner_profiles WHERE partner_id=?').run([id]);
   db.prepare('UPDATE bot_orders SET partner_override=NULL WHERE partner_override=?').run([id]);
   res.json({ ok: true });
 });
@@ -1586,7 +1600,14 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
     const salesNet = ps.reduce((a, x) => a + x.revenue - x.fees, 0);
     const paid  = payouts.filter(x => x.partner_id === p.id).reduce((a, x) => a + (Number(x.amount) || 0), 0);
     return {
-      id: p.id, name: p.name, emails: p.emails || '', names: p.names || '', note: p.note || '',
+      id: p.id, name: p.name, note: p.note || '',
+      // Old single list (before per-retailer lists) — not used for matching.
+      emails: p.emails || '', names: p.names || '',
+      profiles: (p.profiles || []).map(x => ({ retailer: x.retailer, emails: x.emails || '', names: x.names || '' })),
+      // Near-misses: maybe his — you decide (His / Mine).
+      checkList: orders.filter(o => o.partner_check_id === p.id).map(o => ({ id: o.id, order_number: o.order_number,
+        retailer: o.retailer, shipping_name: o.shipping_name, account_email: o.account_email, status: o.status,
+        total: Number(o.order_total) || 0, why: o.partner_check_why })),
       orders: mineOrders.length, spent: r2(spent), fees: r2(fees), totalIn: r2(spent + fees),
       unitsInStock: st.units, stockCost: r2(st.cost),
       unitsSold: sold, salesNet: r2(salesNet), costOfSold: r2(ps.reduce((a, x) => a + x.cost, 0)),
@@ -1599,7 +1620,8 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
   });
   // Your SPENT card leaves their orders out: send which orders are theirs.
   const partnerOrderIds = orders.filter(o => o.partner_id).map(o => o.id);
-  res.json({ orderFees, sales, claims, stock: stockTotals, partners, partnerOrderIds });
+  const retailers = [...new Set(orders.map(o => o.retailer).filter(Boolean))].sort();
+  res.json({ orderFees, sales, claims, stock: stockTotals, partners, partnerOrderIds, retailers });
 });
 
 // ── Product catalog (see skuCatalog.js) ─────────────────────────────────────
@@ -1865,6 +1887,19 @@ app.post('/api/admin/scrape-emails', auth, adminOnly, (req, res) => {
   scanAndHeal()
     .then(n => { _scrapeProgress = { running: false, updated: n }; })
     .catch(e => { console.error('scrape-emails error:', e); _scrapeProgress = { running: false, updated: 0 }; });
+});
+// Re-download old emails from the inbox (default 180 days). Fill-only: fills
+// what older reads didn't save (the account email an order went to), never
+// overwrites, and statuses only move forward. No orders are deleted.
+app.post('/api/admin/scrape-emails/refetch', auth, adminOnly, (req, res) => {
+  if (_scrapeProgress.running) return res.json({ started: false, already: true });
+  const days = Math.min(730, Math.max(7, parseInt((req.body || {}).days) || 180));
+  resetEmailScraper(db, { wipeOrders: false, days });
+  _scrapeProgress = { running: true, updated: 0 };
+  res.json({ started: true, days });
+  scanAndHeal()
+    .then(n => { _scrapeProgress = { running: false, updated: n }; })
+    .catch(e => { console.error('refetch error:', e); _scrapeProgress = { running: false, updated: 0 }; });
 });
 app.get('/api/admin/scrape-emails/status', auth, adminOnly, (req, res) => {
   res.json(_scrapeProgress);

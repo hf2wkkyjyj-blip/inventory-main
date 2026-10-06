@@ -1018,15 +1018,21 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
         <div class="form-group" style="margin:0;"><label style="font-size:11px;">Name</label><input type="text" id="pt-name" style="width:100%;" placeholder="e.g. Alex"></div>
         <div class="form-group" style="margin:0;"><label style="font-size:11px;">Note (optional)</label><input type="text" id="pt-note" style="width:100%;"></div>
-        <div class="form-group" style="margin:0;"><label style="font-size:11px;">His account emails <span style="color:var(--muted);font-weight:400;">— one per line</span></label><textarea id="pt-emails" rows="3" style="width:100%;font-size:12px;"></textarea></div>
-        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Name(s) on his orders <span style="color:var(--muted);font-weight:400;">— one per line</span></label><textarea id="pt-names" rows="3" style="width:100%;font-size:12px;"></textarea></div>
       </div>
+      <div style="font-size:11px;font-weight:700;color:var(--muted);margin:10px 0 4px;">HIS PROFILES, PER RETAILER</div>
+      <div id="pt-profiles"></div>
+      <button class="btn btn-ghost btn-sm" id="pt-add-profile" onclick="partnerAddProfile()"><i class="fa fa-plus"></i> Add a retailer</button>
       <div id="pt-error" style="font-size:12px;color:#f87171;margin-top:6px;display:none;"></div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
         <button class="btn btn-ghost btn-sm" onclick="partnerFormReset()">Clear</button>
         <button class="btn btn-primary btn-sm" id="pt-save" onclick="savePartner()"><i class="fa fa-save"></i> Save partner</button>
       </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:6px;">An order is his when it went to one of his emails, or has his name on it. Fix any single order with ✎ → "Whose order". No card numbers needed.</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;">An order is his only when it's from <b>that retailer</b>, went to <b>one of his emails</b>, and (if you list names) has <b>one of his names</b>. Near-misses aren't moved — they show under "Check these" for you to decide. Tip: paste his profile rows (email ⇥ name ⇥ …) straight into the emails box; the names are filled in for you. No card numbers or phones needed.</div>
+    </div>
+    <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:12px;font-size:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <div style="flex:1;min-width:240px;color:var(--muted);">Older orders were read before the account email was saved, so they can't match yet. Re-download your old emails once to fill it in — nothing is overwritten or deleted.</div>
+      <select id="pt-refetch-days" style="font-size:12px;"><option value="90">last 90 days</option><option value="180" selected>last 180 days</option><option value="365">last year</option></select>
+      <button class="btn btn-ghost btn-sm" id="pt-refetch" onclick="partnerRefetch()"><i class="fa fa-envelope"></i> Re-download old emails</button>
     </div>
     <div style="display:flex;justify-content:flex-end;margin-top:12px;"><button class="btn btn-ghost btn-sm" onclick="closePartners()">Close</button></div>
   </div>
@@ -2813,16 +2819,74 @@ function botApplyView(view) {
 // ── Partners ────────────────────────────────────────────────────────────────
 const _ptOpen = new Set();      // partner ids whose order list is expanded
 async function openPartners() {
-  partnerFormReset();
   document.getElementById('bot-partners-overlay').classList.add('open');
-  await botLoadMoney();
+  await botLoadMoney();          // first: the retailer list comes with it
+  partnerFormReset();
   renderPartners();
 }
 function closePartners() { document.getElementById('bot-partners-overlay').classList.remove('open'); }
 function partnerFormReset() {
-  ['pt-id', 'pt-name', 'pt-note', 'pt-emails', 'pt-names'].forEach(id => { document.getElementById(id).value = ''; });
+  ['pt-id', 'pt-name', 'pt-note'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('pt-profiles').innerHTML = '';
+  partnerAddProfile();
   document.getElementById('pt-form-title').textContent = 'ADD A PARTNER';
   document.getElementById('pt-error').style.display = 'none';
+}
+const _ptLines = s => String(s || '').split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
+// One retailer's list: [retailer ▾] [his emails] [his names] ✕
+function partnerAddProfile(p = {}) {
+  const rets = [...new Set([...(_botMoney.retailers || []), p.retailer].filter(Boolean))].sort();
+  const div = document.createElement('div');
+  div.className = 'pt-profile';
+  div.style.cssText = 'display:grid;grid-template-columns:150px 1fr 1fr 24px;gap:8px;align-items:start;margin-bottom:8px;';
+  div.innerHTML = `
+    <select class="pt-ret" style="font-size:12px;"><option value="">Retailer…</option>${rets.map(r => `<option${r === p.retailer ? ' selected' : ''}>${esc(r)}</option>`).join('')}</select>
+    <textarea class="pt-emails" rows="3" style="font-size:12px;" placeholder="His account emails — one per line">${esc(_ptLines(p.emails).join('\n'))}</textarea>
+    <textarea class="pt-names" rows="3" style="font-size:12px;" placeholder="Names on his orders — one per line (optional)">${esc(_ptLines(p.names).join('\n'))}</textarea>
+    <button class="pt-del-profile" title="Remove this retailer" style="background:none;border:none;color:#f87171;cursor:pointer;margin-top:4px;">✕</button>`;
+  div.querySelector('.pt-del-profile').onclick = () => div.remove();
+  // Pasted profile rows (email ⇥ name ⇥ phone ⇥ address…) → emails + names.
+  const em = div.querySelector('.pt-emails'), nm = div.querySelector('.pt-names');
+  em.addEventListener('input', () => {
+    if (!/\t/.test(em.value)) return;
+    const emails = [], names = _ptLines(nm.value);
+    for (const line of em.value.split(/\n/)) {
+      const f = line.split('\t').map(x => x.trim());
+      const i = f.findIndex(x => /@/.test(x));
+      if (i < 0) { if (f[0]) emails.push(f[0]); continue; }
+      emails.push(f[i]);
+      if (f[i + 1] && !/@/.test(f[i + 1]) && !names.includes(f[i + 1])) names.push(f[i + 1]);
+    }
+    em.value = [...new Set(emails)].join('\n');
+    nm.value = names.join('\n');
+  });
+  document.getElementById('pt-profiles').appendChild(div);
+  return div;
+}
+async function partnerRefetch() {
+  const days = Number(document.getElementById('pt-refetch-days').value) || 180;
+  if (!confirm(`Re-download your emails from the last ${days} days? It fills in what older reads missed (like the account email). Nothing is overwritten or deleted. It can take a few minutes.`)) return;
+  const btn = document.getElementById('pt-refetch');
+  btn.disabled = true; btn.innerHTML = '<i class="fa fa-envelope fa-spin"></i> Re-downloading…';
+  const r = await api('POST', '/admin/scrape-emails/refetch', { days });
+  if (!r || r.already) {
+    btn.innerHTML = r && r.already ? 'A scan is already running — try again in a minute' : 'Could not start';
+    setTimeout(() => { btn.disabled = false; btn.innerHTML = '<i class="fa fa-envelope"></i> Re-download old emails'; }, 4000);
+    return;
+  }
+  const deadline = Date.now() + 10 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise(res => setTimeout(res, 2000));
+    const st = await api('GET', '/admin/scrape-emails/status').catch(() => null);
+    if (!st || !st.running) break;
+    if (st.updated !== undefined) btn.innerHTML = `<i class="fa fa-envelope fa-spin"></i> Read ${st.updated}…`;
+  }
+  btn.disabled = false; btn.innerHTML = '<i class="fa fa-envelope"></i> Re-download old emails';
+  await loadBotOrders(); await botLoadMoney(); renderPartners();
+}
+async function partnerSetOwner(orderId, partnerId) {
+  await api('PUT', '/admin/bot-orders/' + orderId + '/owner', { partner_id: partnerId });
+  await loadBotOrders(); await botLoadMoney(); renderPartners();
 }
 function renderPartners() {
   const ps = _botMoney.partners || [];
@@ -2832,6 +2896,7 @@ function renderPartners() {
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         <b style="font-size:14px;"><i class="fa fa-handshake" style="color:#c4b5fd;font-size:12px;"></i> ${esc(p.name)}</b>
         <span style="font-size:11px;color:var(--muted);">${p.orders} order${p.orders === 1 ? '' : 's'}</span>
+        <span class="pt-prof-sum" style="font-size:11px;color:var(--muted);">${(p.profiles || []).map(x => `${esc(x.retailer)}: ${_ptLines(x.emails).length} email${_ptLines(x.emails).length === 1 ? '' : 's'}${_ptLines(x.names).length ? `, ${_ptLines(x.names).length} names` : ''}`).join(' · ') || '<span style="color:#fbbf24;">no retailer lists yet — Edit to add</span>'}</span>
         <span style="flex:1;"></span>
         <button class="btn btn-ghost btn-sm" onclick="editPartner(${p.id})"><i class="fa fa-pen"></i> Edit</button>
         <button class="btn btn-ghost btn-sm" onclick="deletePartner(${p.id})" style="color:#f87171;">Remove</button>
@@ -2852,10 +2917,20 @@ function renderPartners() {
         <span style="flex:1;"></span>
         <a href="#" onclick="_ptOpen.has(${p.id}) ? _ptOpen.delete(${p.id}) : _ptOpen.add(${p.id}); renderPartners(); return false;" style="color:#60a5fa;">${_ptOpen.has(p.id) ? 'Hide' : 'Show'} his orders, sales & payments</a>
       </div>
+      ${(p.checkList || []).length ? `<div class="pt-check" style="margin-top:8px;border:1px dashed #b45309;border-radius:8px;padding:8px;font-size:11px;">
+        <div style="font-weight:700;color:#fbbf24;margin-bottom:4px;">CHECK THESE (${p.checkList.length}) — maybe his, still counted as yours</div>
+        ${p.checkList.map(o => `<div class="pt-check-row" data-id="${o.id}" style="display:flex;gap:8px;align-items:center;padding:3px 0;border-top:1px solid var(--border);flex-wrap:wrap;">
+          <span style="width:120px;">${esc(o.order_number || '')}</span><span style="width:100px;color:var(--muted);">${esc(o.retailer || '')}</span>
+          <span style="width:110px;">${esc(o.shipping_name || '')}</span><span style="flex:1;color:var(--muted);">${esc(o.why)}</span>
+          <span>${m(o.total)}</span>
+          <button class="btn btn-ghost btn-sm pt-his" onclick="partnerSetOwner(${o.id}, ${p.id})">His</button>
+          <button class="btn btn-ghost btn-sm pt-mine" onclick="partnerSetOwner(${o.id}, 0)">Mine</button></div>`).join('')}
+      </div>` : ''}
       ${_ptOpen.has(p.id) ? `<div style="margin-top:8px;font-size:11px;">
         ${p.orderList.map(o => `<div class="pt-order" style="display:flex;gap:10px;padding:3px 0;border-top:1px solid var(--border);">
           <span style="width:130px;">${esc(o.order_number || '')}</span><span style="width:110px;color:var(--muted);">${esc(o.retailer || '')}</span>
           <span style="width:80px;color:var(--muted);">${esc(o.status || '')}</span><span style="flex:1;color:var(--muted);">${o.match === 'manual' ? 'set by hand' : 'matched by ' + esc(o.match || '')}</span>
+          <button class="btn btn-ghost btn-sm pt-mine" onclick="partnerSetOwner(${o.id}, 0)" title="This one is mine">Mine</button>
           <span>${m(o.total)}</span></div>`).join('') || '<div style="color:var(--muted);">No orders yet.</div>'}
         ${p.sales.length ? `<div style="margin-top:6px;font-weight:700;color:var(--muted);">SALES OF HIS UNITS</div>` + p.sales.map(x => `<div style="display:flex;gap:10px;padding:2px 0;">
           <span style="width:90px;color:var(--muted);">${esc(botShortDate(x.sold_at || ''))}</span><span style="flex:1;">${esc(x.product)} ×${x.qty}</span><span>${m(x.revenue - x.fees)}</span></div>`).join('') : ''}
@@ -2870,8 +2945,11 @@ function editPartner(id) {
   document.getElementById('pt-id').value = p.id;
   document.getElementById('pt-name').value = p.name;
   document.getElementById('pt-note').value = p.note || '';
-  document.getElementById('pt-emails').value = String(p.emails || '').split(/[,;]/).map(x => x.trim()).filter(Boolean).join('\n');
-  document.getElementById('pt-names').value = String(p.names || '').split(/[,;]/).map(x => x.trim()).filter(Boolean).join('\n');
+  document.getElementById('pt-profiles').innerHTML = '';
+  (p.profiles || []).forEach(x => partnerAddProfile(x));
+  // The old single list (no retailer): offered back so you can pick its retailer.
+  if (p.emails || p.names) partnerAddProfile({ emails: p.emails, names: p.names });
+  if (!document.querySelector('#pt-profiles .pt-profile')) partnerAddProfile();
   document.getElementById('pt-form-title').textContent = 'EDIT ' + p.name.toUpperCase();
 }
 async function savePartner() {
@@ -2880,11 +2958,17 @@ async function savePartner() {
     id: Number(document.getElementById('pt-id').value) || undefined,
     name: document.getElementById('pt-name').value.trim(),
     note: document.getElementById('pt-note').value.trim(),
-    emails: document.getElementById('pt-emails').value.split(/\n/).map(x => x.trim()).filter(Boolean).join(', '),
-    names:  document.getElementById('pt-names').value.split(/\n/).map(x => x.trim()).filter(Boolean).join(', '),
+    profiles: [...document.querySelectorAll('#pt-profiles .pt-profile')].map(div => ({
+      retailer: div.querySelector('.pt-ret').value,
+      emails: _ptLines(div.querySelector('.pt-emails').value).join(', '),
+      names:  _ptLines(div.querySelector('.pt-names').value).join(', '),
+    })).filter(x => x.retailer || x.emails || x.names),
   };
-  if (!body.name) { err.textContent = 'Give him a name.'; err.style.display = ''; return; }
-  if (!body.emails && !body.names) { err.textContent = 'Add at least one email or a name that appears on his orders.'; err.style.display = ''; return; }
+  const bad = msg => { err.textContent = msg; err.style.display = ''; };
+  if (!body.name) return bad('Give him a name.');
+  if (!body.profiles.length) return bad('Add a retailer with his account emails.');
+  if (body.profiles.some(x => !x.retailer)) return bad('Pick the retailer for each list.');
+  if (body.profiles.some(x => !x.emails)) return bad('Each retailer needs at least one of his account emails.');
   const r = await api('POST', '/admin/bot-partners', body);
   if (!r) { err.textContent = 'Could not save.'; err.style.display = ''; return; }
   partnerFormReset();
@@ -3125,10 +3209,13 @@ function botShowStockCost(el) {
 function botReceiverLine(p) {
   const names = [...new Set((p.orders || []).map(o => (o.shipping_name || '').trim()).filter(Boolean))];
   const partners = [...new Set((p.orders || []).map(o => o.partner_name).filter(Boolean))];
+  const maybe = [...new Set((p.orders || []).filter(o => !o.partner_name).map(o => o.partner_check_name).filter(Boolean))];
   return (names.length
     ? `<div class="bot-recv" style="font-size:11px;color:var(--text);margin-top:2px;" data-tip="Name on the label"><i class="fa fa-user" style="font-size:9px;color:var(--muted);margin-right:4px;"></i>${esc(names.join(', '))}</div>`
     : '') + (partners.length
     ? `<div class="bot-partner-tag" style="font-size:10px;margin-top:2px;"><span style="border:1px solid #6d28d9;color:#c4b5fd;border-radius:999px;padding:0 7px;"><i class="fa fa-handshake" style="font-size:9px;"></i> ${esc(partners.join(', '))}'s</span></div>`
+    : '') + (maybe.length
+    ? `<div class="bot-partner-maybe" style="font-size:10px;margin-top:2px;" data-tip="Near-miss — check it in Partners"><span style="border:1px dashed #b45309;color:#fbbf24;border-radius:999px;padding:0 7px;"><i class="fa fa-handshake" style="font-size:9px;"></i> ${esc(maybe.join(', '))}'s?</span></div>`
     : '');
 }
 
@@ -4696,7 +4783,8 @@ function botEditRow(id) {
   // Whose order: automatic match (shown), mine, or a partner — saved on Save.
   const ownSel = document.getElementById('bot-edit-owner');
   const ps = (_botMoney.partners || []);
-  const auto = o.partner_match && o.partner_match !== 'manual' ? `Auto — ${o.partner_name} (by ${o.partner_match})` : 'Auto — mine';
+  const auto = o.partner_match && o.partner_match !== 'manual' ? `Auto — ${o.partner_name} (by ${o.partner_match})`
+             : o.partner_check_name ? `Auto — mine (check: maybe ${o.partner_check_name}'s)` : 'Auto — mine';
   ownSel.innerHTML = `<option value="">${esc(auto)}</option><option value="0">Mine</option>` +
     ps.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   ownSel.value = o.partner_override === null || o.partner_override === undefined ? '' : String(o.partner_override);
