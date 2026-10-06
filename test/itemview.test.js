@@ -291,6 +291,42 @@ console.log('\n── Stock counts, oldest-first aging, stock at cost ──');
   eq('category carried for filters',        g.categories.join(), 'Other');
 }
 
+console.log('\n── Real cost per unit, oldest first (the ETB $77 vs $91 report) ──');
+{
+  const T = 'Test Real ETB';
+  // Cheap batch first (no fee), expensive batch later ($30 order fee on 2 units).
+  const orders = [
+    { id: 1, retailer: 'Test', status: 'Delivered', order_total: 140, items: `["2x ${T} @ $70.00"]` },
+    { id: 2, retailer: 'Test', status: 'Delivered', order_total: 140, finder_fee: 30, items: `["2x ${T} @ $70.00"]` },
+    { id: 3, retailer: 'Test', status: 'Shipped',   order_total: 140, items: `["2x ${T} @ $70.00"]` },   // on the way
+  ];
+  const checkedIn = new Map([[1, '2026-09-01'], [2, '2026-10-01']]);
+  const run = sales => computeItemGroups(orders, [], undefined, sales, { checkedIn, issues: [], adjustments: [] })[0];
+
+  const g0 = run([]);
+  eq('average over everything bought',       g0.perUnitTotal, 75);          // (70×6 + 30) / 6
+  eq('stock valued at the real batches',     g0.stockAtCost, 310);          // 2×70 + 2×85
+  eq('cost/unit on the shelf',               g0.stockUnit.total, 77.5);
+  eq('shelf fee share',                      g0.stockUnit.fee, 7.5);
+
+  const g1 = run([{ id: 1, sku_key: T, qty: 2, unit_price: 100, fees: 0, sold_at: '2026-10-02' }]);
+  eq('sale uses the OLDEST units ($70 each)', g1.sales[0].cost, 140);
+  eq('profit from real cost',                g1.realizedProfit, 60);        // 200 − 140
+  eq('ROI on real cost',                     g1.realizedROI, 0.4286);
+  eq('what\'s left is the $85 batch',        [g1.unitsLeft, g1.stockAtCost, g1.stockUnit.total].join(), '2,170,85');
+
+  const g2 = run([{ id: 1, sku_key: T, qty: 3, unit_price: 100, fees: 0, sold_at: '2026-10-02' }]);
+  eq('3 sold = 2×$70 + 1×$85',               g2.sales[0].cost, 225);
+  eq('spent = sold cost + stock cost',       Math.round((g2.soldCost + g2.stockAtCost) * 100) / 100, 310);
+
+  // Two sales: the EARLIER sale gets the older units, whatever order they were typed in.
+  const g3 = run([{ id: 9, sku_key: T, qty: 1, unit_price: 100, fees: 0, sold_at: '2026-10-05' },
+                  { id: 8, sku_key: T, qty: 2, unit_price: 100, fees: 0, sold_at: '2026-10-02' }]);
+  const byId = id => g3.sales.find(x => x.id === id);
+  eq('earlier sale: the two $70 units',      byId(8).cost, 140);
+  eq('later sale: the next unit ($85)',      byId(9).cost, 85);
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -54,7 +54,14 @@ function checkData(db) {
   const pricing = hasTable(db, 'bot_sku_prices') ? db.prepare('SELECT * FROM bot_sku_prices').all() : [];
   const sales   = hasTable(db, 'bot_sales') ? db.prepare('SELECT * FROM bot_sales').all() : [];
   const catalog = hasTable(db, 'sku_products') ? Sku.loadCatalog(db) : { products: new Map(), aliases: new Map() };
-  const groups  = computeItemGroups(live, pricing, catalog, sales);
+  // Same stock data the site uses, so costs match the site exactly (real
+  // per-unit cost of what was picked up, oldest first).
+  const stock = {
+    checkedIn:   new Map(hasTable(db, 'bot_checkins') ? db.prepare('SELECT order_id, checked_at FROM bot_checkins').all().map(r => [r.order_id, r.checked_at]) : []),
+    issues:      hasTable(db, 'bot_issues') ? db.prepare('SELECT * FROM bot_issues').all() : [],
+    adjustments: hasTable(db, 'bot_adjustments') ? db.prepare('SELECT * FROM bot_adjustments').all() : [],
+  };
+  const groups  = computeItemGroups(live, pricing, catalog, sales, stock);
   const label   = o => `#${o.order_number || o.id} (${o.retailer || '?'}, ${o.status})`;
 
   // ── Summary: the same totals the cards show (All time) ───────────────────
@@ -68,7 +75,7 @@ function checkData(db) {
   }
   const orderFeeTotal = live.reduce((s, o) => s + (Number(o.finder_fee) || 0), 0);
   const unitFeeTotal  = [...unitFeeByOrder.values()].reduce((s, v) => s + v, 0);
-  const saleRows = groups.flatMap(g => g.sales.map(s => ({ ...s, cost: s.qty * g.perUnitTotal })));
+  const saleRows = groups.flatMap(g => g.sales.map(s => ({ ...s, cost: s.cost != null ? s.cost : s.qty * g.perUnitTotal })));  // real (FIFO) cost
   const salesProfit = saleRows.reduce((s, x) => s + x.qty * x.unit_price - x.fees - x.cost, 0);
   const summary = {
     orders: all.length, byStatus, spent: r2(spent),

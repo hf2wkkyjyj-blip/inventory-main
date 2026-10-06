@@ -126,7 +126,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
         _sumItem: 0, _sumTax: 0, _sumShip: 0, _sumFinder: 0, _sumTotal: 0,
         _taxEstUnits: 0, _unknownCostUnits: 0,
         inHand: 0, toPickUp: 0, onTheWay: 0, inClaim: 0, _claimValue: 0, writtenOff: 0, refundedUnits: 0,
-        _batches: [],               // { date, qty } picked-up units, for oldest-first aging
+        _batches: [],               // { date, qty, c:{item,tax,ship,fee} } picked-up units at THEIR cost (FIFO)
       };
     } else if (!productId && /[^\x00-\x7F]/.test(display) && !/[^\x00-\x7F]/.test(g.name)) {
       g.name = display;   // prefer the retailer's proper "Pokémon" spelling
@@ -215,7 +215,8 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
           }
         }
         g.inHand += Math.max(0, qty - out);
-        if (qty - out > 0) g._batches.push({ date: (checkedIn.get && checkedIn.get(order.id)) || null, qty: qty - out });
+        if (qty - out > 0) g._batches.push({ date: (checkedIn.get && checkedIn.get(order.id)) || null, qty: qty - out,
+                                             c: { item: unitItem, tax: unitTax, ship: unitShip, fee: unitFinder } });
       } else if (order.status === 'Delivered' || order.tracking_status === 'Delivered') {
         g.toPickUp += qty;
       } else {
@@ -239,7 +240,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
     if (!g._rawNames.has(rk)) g._rawNames.set(rk, k.got);
     g.qty        += k.qty;
     g.inHand     += k.qty;
-    g._batches.push({ date: null, qty: k.qty });
+    g._batches.push({ date: null, qty: k.qty, c: { item: k.unitItem, tax: k.unitTax, ship: k.unitShip, fee: k.unitFinder } });
     g._sumItem   += k.unitItem   * k.qty;
     g._sumTax    += k.unitTax    * k.qty;
     g._sumShip   += k.unitShip   * k.qty;
@@ -325,14 +326,46 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
     // What you can still sell: units in hand (when pick-ups are tracked).
     const unitsLeft  = Math.max(0, (tracked ? inHand : g.qty) - soldQty);
 
-    // Oldest unit still on the shelf, first-in first-out: sold and missing
-    // units are taken from the earliest pick-ups first.
-    let used = soldQty + shortUnits, oldestInStock = null;
-    for (const b of [..._batches].sort((a, b) => String(a.date || '0000').localeCompare(String(b.date || '0000')))) {
-      if (used >= b.qty) { used -= b.qty; continue; }
-      oldestInStock = b.date; break;
+    // ── Real cost per unit, oldest first (FIFO) ──────────────────────────────
+    // Each checked-in box is a batch at ITS order's cost (item + tax + ship +
+    // finder fee) plus any extra per-unit fee. Sales use up the oldest units
+    // first, so a sale's cost is what those units really cost; what's left is
+    // valued at the real cost of the units still on the shelf. Units found in a
+    // count join at the average. Without pick-up tracking: the average.
+    const extra = Number(p.buyer_fee) || 0;
+    const avgC = { item: _sumItem / qty, tax: _sumTax / qty, ship: _sumShip / qty, fee: _sumFinder / qty };
+    const queue = [..._batches].sort((a, b) => String(a.date || '0000').localeCompare(String(b.date || '0000')))
+      .map(b => ({ ...b }));
+    if (extraUnits) queue.push({ date: null, qty: extraUnits, c: avgC });
+    const unitCost = c => c.item + c.tax + c.ship + c.fee + extra;
+    const take = n => {                      // cost of the next n units, oldest first
+      let cost = 0;
+      while (n > 0 && queue.length) {
+        const b = queue[0], t = Math.min(n, b.qty);
+        cost += t * unitCost(b.c); b.qty -= t; n -= t;
+        if (!b.qty) queue.shift();
+      }
+      return cost + n * perUnitTotal;        // more sold than recorded in hand → average
+    };
+    if (tracked) {
+      [...sales].sort((a, b) => String(a.sold_at || '').localeCompare(String(b.sold_at || '')) || (a.id || 0) - (b.id || 0))
+        .forEach(sl => { sl.cost = round2(take(sl.qty)); });
+      if (shortUnits) take(shortUnits);
+    } else {
+      sales.forEach(sl => { sl.cost = round2(sl.qty * perUnitTotal); });
     }
-    if (!unitsLeft) oldestInStock = null;
+    const soldCost = sales.reduce((a, sl) => a + sl.cost, 0);
+    const left = tracked ? queue.filter(b => b.qty > 0) : [];
+    const leftUnits = left.reduce((a, b) => a + b.qty, 0);
+    const sumLeft = k => left.reduce((a, b) => a + b.qty * b.c[k], 0);
+    const stockAtCost = tracked ? left.reduce((a, b) => a + b.qty * unitCost(b.c), 0) : unitsLeft * perUnitTotal;
+    // Breakdown of what's on the shelf (per unit), for the click popup.
+    const stockUnit = leftUnits ? {
+      item: round2(sumLeft('item') / leftUnits), tax: round2(sumLeft('tax') / leftUnits),
+      ship: round2(sumLeft('ship') / leftUnits), fee: round2(sumLeft('fee') / leftUnits + extra),
+      total: round2(stockAtCost / leftUnits),
+    } : null;
+    const oldestInStock = unitsLeft && left.length ? left[0].date : null;
     const asking     = Number(p.sale_price) || 0;
 
     return {
@@ -343,8 +376,9 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
       shortUnits, extraUnits,
       countLoss:     round2(countLoss),
       oldestInStock,
-      // At landed cost — what's still unsold, and where it is.
-      stockAtCost:    round2(unitsLeft    * perUnitTotal),
+      // At real cost — what's still unsold (FIFO), and where the rest is.
+      stockAtCost:    round2(stockAtCost),
+      stockUnit,
       toPickUpCost:   round2((g.toPickUp || 0) * perUnitTotal),
       onTheWayCost:   round2((g.onTheWay || 0) * perUnitTotal),
       claimValue: round2(_claimValue),
@@ -354,10 +388,11 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
       soldFees:       round2(soldFees),
       avgSalePrice:   soldQty ? round2(soldGross / soldQty) : null,
       // What the sold units actually made after their fees and their landed cost.
-      realizedProfit: soldQty ? round2(soldGross - soldFees - soldQty * perUnitTotal) : null,
-      // Return on what the sold units cost you (landed), e.g. 0.4 = 40%.
-      realizedROI: soldQty && perUnitTotal > 0
-        ? Math.round((soldGross - soldFees - soldQty * perUnitTotal) / (soldQty * perUnitTotal) * 10000) / 10000 : null,
+      soldCost:       round2(soldCost),
+      realizedProfit: soldQty ? round2(soldGross - soldFees - soldCost) : null,
+      // Return on what the sold units really cost you, e.g. 0.4 = 40%.
+      realizedROI: soldQty && soldCost > 0
+        ? Math.round((soldGross - soldFees - soldCost) / soldCost * 10000) / 10000 : null,
       unitsLeft,
       // What the rest would make at the asking price (before any selling fees).
       expectedProfitLeft: asking > 0 && unitsLeft > 0 ? round2(unitsLeft * (asking - perUnitTotal)) : null,

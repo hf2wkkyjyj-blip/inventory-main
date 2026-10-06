@@ -2976,15 +2976,19 @@ function botShowBoxCost(el) {
   botCostPopover(el, name, parts, c.total, foot);
 }
 
+// In stock: the real cost of the units on the shelf (oldest-first), not the
+// average of everything ever bought.
 function botShowStockCost(el) {
   const i = (_botStockItems || []).find(x => x.skuKey === el.dataset.key);
   if (!i) return;
+  const u = i.stockUnit || { item: i.perUnitItem, tax: i.perUnitTax, ship: i.perUnitShip, fee: i.perUnitFinder, total: i.perUnitTotal };
   botCostPopover(el, i.name, [
-    ['Item', i.perUnitItem, true],
-    [i.taxEstimated ? 'Tax <span style="font-size:10px;opacity:.7;">(est. from total)</span>' : 'Tax', i.perUnitTax, true],
-    ['Shipping', i.perUnitShip],
-    ['Finder fee', i.perUnitFinder],
-  ], i.perUnitTotal, `Average over every unit bought · ${i.unitsLeft} in hand = $${(i.stockAtCost || 0).toFixed(2)}`);
+    ['Item', u.item, true],
+    [i.taxEstimated ? 'Tax <span style="font-size:10px;opacity:.7;">(est. from total)</span>' : 'Tax', u.tax, true],
+    ['Shipping', u.ship],
+    ['Finder fee', u.fee],
+  ], u.total, `${i.unitsLeft} in hand = $${(i.stockAtCost || 0).toFixed(2)} · the real cost of these units` +
+     (Math.abs(u.total - i.perUnitTotal) > 0.005 ? ` (average of all bought: $${(i.perUnitTotal || 0).toFixed(2)})` : ''));
 }
 
 // Name(s) printed on a box's label — what the house owner should expect to see.
@@ -3211,8 +3215,10 @@ function renderBotStock() {
             <td style="padding:8px 12px;"><div class="clip bst-name" data-key="${esc(i.skuKey)}" onclick="botShowStockCost(this)" data-tip="Click for landed cost" style="cursor:pointer;">${esc(i.name)}</div>
               <div style="font-size:10px;color:var(--muted);">${esc((i.retailers || []).join(' · '))}${i.toPickUp ? ` · +${i.toPickUp} to pick up` : ''}</div></td>
             <td class="bst-left" style="text-align:center;font-weight:700;">${i.unitsLeft}</td>
-            <td class="bst-cpu" style="text-align:right;font-variant-numeric:tabular-nums;">$${(i.perUnitTotal || 0).toFixed(2)}</td>
-            <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;">${botMoneyFmt(i.stockAtCost || 0)}</td>
+            <td class="bst-cpu" style="text-align:right;font-variant-numeric:tabular-nums;"><span class="bst-cost" data-key="${esc(i.skuKey)}" onclick="botShowStockCost(this)" data-tip="Click for the breakdown"
+                style="cursor:pointer;color:#60a5fa;border-bottom:1px dotted #60a5fa;">$${((i.stockUnit && i.stockUnit.total) || i.perUnitTotal || 0).toFixed(2)}</span></td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;"><span class="bst-cost" data-key="${esc(i.skuKey)}" onclick="botShowStockCost(this)" data-tip="Click for the breakdown"
+                style="cursor:pointer;border-bottom:1px dotted var(--muted);">${botMoneyFmt(i.stockAtCost || 0)}</span></td>
             <td style="text-align:right;color:${ageC};" data-tip="${i.oldestInStock ? 'Picked up ' + esc(i.oldestInStock) : 'Pick-up date unknown'}">${age}</td>
             ${_botCounting ? `<td style="text-align:center;"><input type="number" class="bst-count" data-key="${esc(i.skuKey)}" data-left="${i.unitsLeft}" min="0" step="1"
                  value="${keep[i.skuKey] ?? ''}" oninput="botCountDiff(this)" style="width:60px;text-align:center;"></td>
@@ -4301,7 +4307,7 @@ function botSalePreview() {
   const price = parseFloat(document.getElementById('bs-price').value) || 0;
   const fees  = parseFloat(document.getElementById('bs-fees').value)  || 0;
   const left  = _bsItem.unitsLeft != null ? _bsItem.unitsLeft : _bsItem.qty;
-  const landed = _bsItem.perUnitTotal || 0;
+  const landed = (_bsItem.stockUnit && _bsItem.stockUnit.total) || _bsItem.perUnitTotal || 0;
   const profit = qty * price - fees - qty * landed;
   const warn = qty > left
     ? `<div style="color:#fbbf24;margin-top:4px;">⚠ Only ${left} in hand (picked up) — check in the rest first, or save anyway.</div>` : '';

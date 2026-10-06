@@ -1475,7 +1475,7 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
       if (s.id != null && seen.has(s.id)) continue;
       if (s.id != null) seen.add(s.id);
       const revenue = s.qty * s.unit_price;
-      const cost    = s.qty * g.perUnitTotal;
+      const cost    = s.cost != null ? s.cost : s.qty * g.perUnitTotal;   // real (FIFO) cost of these units
       sales.push({ id: s.id, product: g.name, sku_key: g.skuKey, category: (g.categories || [])[0] || 'Other',
                    sold_at: s.sold_at, qty: s.qty, unit_price: s.unit_price, channel: s.channel || null,
                    unit_cost: g.perUnitTotal,

@@ -680,17 +680,17 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('sale 1 stored',                    DB.prepare('SELECT COUNT(*) n FROM bot_sales').get().n === 1);
     check('SOLD 2/4 on the row',              cell(4).textContent.trim() === '2/4', cell(4).textContent.trim());
     await tick(80);
-    check('SALES PROFIT card +$18.90',        cardMoney('bs-profit') === 18.9, d.getElementById('bs-profit').textContent);
+    check('SALES PROFIT card +$18.90',        cardMoney('bs-profit') === 18.91, d.getElementById('bs-profit').textContent);
 
     // WHEN filter: sold today counts under Today; move the sale to an old date → gone.
     const rangeBtn = t => [...d.querySelectorAll('.drange')].find(b => b.textContent.trim() === t);
     rangeBtn('Today').click(); await tick(60);
-    check('Today: sale counted',              cardMoney('bs-profit') === 18.9, d.getElementById('bs-profit').textContent);
+    check('Today: sale counted',              cardMoney('bs-profit') === 18.91, d.getElementById('bs-profit').textContent);
     DB.prepare("UPDATE bot_sales SET sold_at='2025-01-01'").run();
     await w.botLoadMoney(); await tick(40);
     check('Today: old sale not counted',      cardMoney('bs-profit') === 0 && /no sales yet/.test(d.getElementById('bs-profit-sub').textContent), d.getElementById('bs-profit').textContent);
     rangeBtn('All time').click(); await tick(60);
-    check('All time: counted again',          cardMoney('bs-profit') === 18.9);
+    check('All time: counted again',          cardMoney('bs-profit') === 18.91);
     DB.prepare('UPDATE bot_sales SET sold_at=?').run([w.botLocalToday()]);
     await w.botLoadMoney(); await tick(40);
     check('dialog stays open for the next',   isVisible(ov));
@@ -703,10 +703,10 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('sale 2 stored as typed',           r2.qty === 1 && r2.unit_price === 55 && r2.fees === 4 && r2.channel === 'eBay');
     check('SOLD 3/4',                         cell(4).textContent.trim() === '3/4', cell(4).textContent.trim());
     // 2×50 + 55 − 4 − 3 × 40.55
-    check('realized profit +$29.35 shown',    /\+\$29\.35 made/.test(cell(5).textContent), cell(5).textContent.replace(/\s+/g, ' ').trim());
-    check('ROI next to it: 24%',              /29\.35 made · 24% ROI/.test(cell(5).textContent.replace(/\s+/g, ' ')), cell(5).textContent.replace(/\s+/g, ' ').trim());
+    check('realized profit +$29.35 shown',    /\+\$29\.36 made/.test(cell(5).textContent), cell(5).textContent.replace(/\s+/g, ' ').trim());
+    check('ROI next to it: 24%',              /29\.36 made · 24% ROI/.test(cell(5).textContent.replace(/\s+/g, ' ')), cell(5).textContent.replace(/\s+/g, ' ').trim());
     await tick(80);
-    check('card: +$29.35 profit',             cardMoney('bs-profit') === 29.35, d.getElementById('bs-profit').textContent);
+    check('card: +$29.35 profit',             cardMoney('bs-profit') === 29.36, d.getElementById('bs-profit').textContent);
     check('card: 3 sold · $155.00 in · ROI 24%', /3 sold · \$155\.00 in · ROI 24%/.test(d.getElementById('bs-profit-sub').textContent), d.getElementById('bs-profit-sub').textContent);
     check('history lists both',               d.querySelectorAll('#bs-history .bs-sale').length === 2);
 
@@ -718,7 +718,7 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('deleted from the database',        DB.prepare('SELECT COUNT(*) n FROM bot_sales').get().n === 1);
     check('SOLD back to 2/4',                 cell(4).textContent.trim() === '2/4', cell(4).textContent.trim());
     await tick(80);
-    check('card back to +$18.90 after delete', cardMoney('bs-profit') === 18.9, d.getElementById('bs-profit').textContent);
+    check('card back to +$18.90 after delete', cardMoney('bs-profit') === 18.91, d.getElementById('bs-profit').textContent);
 
     w.closeBotSale(); await tick();
     check('dialog closes',                    !isVisible(ov));
@@ -1169,9 +1169,13 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('Deck: 5 in hand, $40.00, $200.00',  td(row(/Deck/), 1) === '5' && td(row(/Deck/), 2) === '$40.00' && td(row(/Deck/), 3) === '$200.00', [1, 2, 3].map(i => td(row(/Deck/), i)).join(' | '));
     check('Deck age shown in days',            /^\d+d$/.test(td(row(/Deck/), 4)), td(row(/Deck/), 4));
     check('total at cost $210.00',             /\$210\.00/.test(wrap.querySelector('tfoot').textContent));
+    row(/Deck/).querySelector('.bst-cost').click(); await tick(60);
+    const cpop = d.getElementById('landed-popover');
+    check('In stock: clicking the cost opens it too', cpop && /Total ?\$40\.00/.test(cpop.textContent.replace(/\s+/g, ' ')), cpop && cpop.textContent);
+    cpop && cpop.remove();
     row(/Deck/).querySelector('.bst-name').click(); await tick(60);
     const spop = d.getElementById('landed-popover');
-    check('In stock: name click → cost popup',   spop && /Total ?\$40\.00/.test(spop.textContent.replace(/\s+/g, ' ')) && /Average/.test(spop.textContent), spop && spop.textContent.replace(/\s+/g, ' '));
+    check('In stock: name click → cost popup',   spop && /Total ?\$40\.00/.test(spop.textContent.replace(/\s+/g, ' ')) && /real cost of these units/.test(spop.textContent), spop && spop.textContent.replace(/\s+/g, ' '));
     spop && spop.remove();
 
     // Sell 2 decks → 3 left, and the 2 come off the OLDEST pick-up.
