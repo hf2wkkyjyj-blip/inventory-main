@@ -3140,6 +3140,27 @@ const botDaysSince = d => { const t = botParseDate(d); return isNaN(t) ? null : 
 // what's actually on the shelf; the server works out the difference and keeps
 // it as a correction (short = loss at cost, extra = found).
 let _botStockItems = [];
+let _botStockShown = [];      // what the In stock list is showing (filters applied)
+
+// Bulk list for a buyer: what's on screen, names + quantities only. Never any
+// cost — landed cost and fees are yours. Alphabetical, so it reads like a menu.
+function botBuyerListText() {
+  const rows = [...(_botStockShown || [])].sort((a, b) => a.name.localeCompare(b.name));
+  const units = rows.reduce((a, i) => a + i.unitsLeft, 0);
+  const day = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `Available now (${day}):\n` + rows.map(i => `• ${i.name} — ${i.unitsLeft}`).join('\n') +
+    `\n\n${rows.length} item${rows.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'}`;
+}
+async function botCopyBuyerList(btn) {
+  const text = botBuyerListText();
+  try { await navigator.clipboard.writeText(text); }
+  catch (_) { window.prompt('Copy this list:', text); return; }
+  const was = btn.innerHTML; btn.innerHTML = '<i class="fa fa-check"></i> Copied';
+  setTimeout(() => { btn.innerHTML = was; }, 1500);
+}
+async function botSendBuyerList() {
+  try { await navigator.share({ text: botBuyerListText() }); } catch (_) { /* closed the sheet */ }
+}
 let _botCounting = false;
 let _botCountHistory = null;
 
@@ -3150,6 +3171,7 @@ function renderBotStock() {
   wrap.querySelectorAll('input.bst-count').forEach(i => { if (i.value !== '') keep[i.dataset.key] = i.value; });
   let rows = (_botStockItems || []).filter(i => i.unitsLeft > 0);
   if (q) rows = rows.filter(i => i.name.toLowerCase().includes(q));
+  _botStockShown = rows;
   rows.sort((a, b) => String(a.oldestInStock || '9999').localeCompare(String(b.oldestInStock || '9999')) || a.name.localeCompare(b.name));
   const units = rows.reduce((a, i) => a + i.unitsLeft, 0);
   const cost  = rows.reduce((a, i) => a + (i.stockAtCost || 0), 0);
@@ -3165,7 +3187,10 @@ function renderBotStock() {
            <button class="btn btn-ghost btn-sm" onclick="botCountMode(false)">Cancel</button>
            <button class="btn btn-primary btn-sm" id="bst-save" onclick="botSaveCount()"><i class="fa fa-save"></i> Save count</button>`
         : `<button class="btn btn-primary btn-sm" id="bst-start" onclick="botCountMode(true)"><i class="fa fa-clipboard-check"></i> Count stock</button>
-           <button class="btn btn-ghost btn-sm" id="bst-history-btn" onclick="botToggleCountHistory()"><i class="fa fa-history"></i> Count history</button>`}
+           <button class="btn btn-ghost btn-sm" id="bst-history-btn" onclick="botToggleCountHistory()"><i class="fa fa-history"></i> Count history</button>
+           <span style="flex:1;"></span>
+           ${rows.length && navigator.share ? `<button class="btn btn-primary btn-sm" id="bst-buyer-send" onclick="botSendBuyerList()"><i class="fa fa-paper-plane"></i> Send list</button>` : ''}
+           ${rows.length ? `<button class="btn btn-ghost btn-sm" id="bst-buyer-copy" onclick="botCopyBuyerList(this)" data-tip="Item names and quantities only — no costs"><i class="fa fa-copy"></i> Copy list for buyer</button>` : ''}`}
     </div>
     <div id="bst-error" style="font-size:12px;color:#f87171;margin-bottom:8px;display:none;"></div>
     <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">

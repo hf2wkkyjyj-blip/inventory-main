@@ -1183,6 +1183,22 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const sep20 = Math.max(0, Math.floor((Date.now() - new Date(2026, 8, 20).getTime()) / 86400000));
     check('oldest now the Sep 20 pick-up (FIFO)', ageAfter === sep20, `${ageAfter} vs ${sep20}`);
 
+    // Buyer list: names + quantities only, never cost.
+    copied.length = 0;
+    wrap.querySelector('#bst-buyer-copy').click(); await tick(60);
+    const blist = copied.pop() || '';
+    check('buyer list: header + one line per item', /^Available now \(/.test(blist) && /• Test Count Deck — 3/.test(blist) && /• Test Count Tin — 1/.test(blist), blist);
+    check('buyer list: alphabetical + totals',  blist.indexOf('Deck') < blist.indexOf('Tin') && /2 items · 4 units$/.test(blist), blist);
+    check('buyer list: NO costs anywhere',     !/\$|cost|landed|fee/i.test(blist), blist);
+    check('buyer list: sold-out item left out', !/Test Count Mat/.test(blist));
+    wrap.querySelector('#bst-buyer-send').click(); await tick(60);
+    check('Send shares the same list',         shared.pop() === blist);
+    d.getElementById('bot-item-search').value = 'tin'; d.getElementById('bot-item-search').dispatchEvent(new w.Event('input')); await tick(60);
+    copied.length = 0;
+    wrap.querySelector('#bst-buyer-copy').click(); await tick(60);
+    check('follows the search on screen',      /Test Count Tin — 1/.test(copied[0] || '') && !/Deck/.test(copied[0] || ''), copied[0]);
+    d.getElementById('bot-item-search').value = ''; d.getElementById('bot-item-search').dispatchEvent(new w.Event('input')); await tick(60);
+
     // Sell straight from In stock.
     const sellBtn = row(/Deck/).querySelector('.bst-sell');
     check('Sell button on each In stock row',  !!sellBtn && rows().every(r => r.querySelector('.bst-sell')));
