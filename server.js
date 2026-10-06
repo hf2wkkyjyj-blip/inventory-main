@@ -1254,8 +1254,36 @@ app.get('/api/admin/bot-packages', auth, adminOnly, (req, res) => {
   if (retailer) { sql += ' AND retailer=?'; params.push(retailer); }
   if (status)   { sql += ' AND status=?';   params.push(status); }
   else          { sql += " AND status NOT IN ('Cancelled','Refunded')"; }
-  res.json(computePackages(withMainAddress(db.prepare(sql).all(params), { replace: true }), SkuCatalog.loadCatalog(db), loadStock()));
+  const catalog = SkuCatalog.loadCatalog(db);
+  const orders = withMainAddress(db.prepare(sql).all(params), { replace: true });
+  attachLineCosts(orders, catalog);
+  res.json(computePackages(orders, catalog, loadStock()));
 });
+
+// What each item in an order really cost per unit: item + its share of tax,
+// shipping and the order/box finder fee (same math as the product view), plus
+// any extra per-unit fee typed for that product. Shown when an item is clicked.
+function attachLineCosts(orders, catalog) {
+  let pricing = new Map();
+  try { db.prepare('SELECT * FROM bot_sku_prices').all().forEach(r => pricing.set(itemKey(r.sku), r)); } catch (_) {}
+  const r2 = n => Math.round(n * 100) / 100;
+  for (const o of orders) {
+    const lines = orderLineCosts(o);
+    const map = {};
+    for (const l of lines) {
+      const k   = itemKey(l.rawName);
+      const pid = catalog.aliases.get(k);
+      const pr  = (pid && pricing.get(itemKey('#p' + pid))) || pricing.get(k) || {};
+      const extra = Number(pr.buyer_fee) || 0;
+      map[k] = {
+        item: r2(l.unitItem), tax: r2(l.unitTax), ship: r2(l.unitShip),
+        orderFee: r2(l.unitFinder), extraFee: r2(extra),
+        total: r2(l.unitTotal + extra), taxEstimated: !!lines.taxEstimated,
+      };
+    }
+    o._lineCosts = map;
+  }
+}
 
 const BOT_STATUS_SET = new Set(['Confirmed', 'Unship', 'Shipped', 'OFD', 'Delivered', 'Cancelled', 'Refunded']);
 const isIsoDate = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s + 'T12:00:00'));

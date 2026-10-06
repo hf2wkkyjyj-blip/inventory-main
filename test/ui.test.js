@@ -1169,6 +1169,10 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('Deck: 5 in hand, $40.00, $200.00',  td(row(/Deck/), 1) === '5' && td(row(/Deck/), 2) === '$40.00' && td(row(/Deck/), 3) === '$200.00', [1, 2, 3].map(i => td(row(/Deck/), i)).join(' | '));
     check('Deck age shown in days',            /^\d+d$/.test(td(row(/Deck/), 4)), td(row(/Deck/), 4));
     check('total at cost $210.00',             /\$210\.00/.test(wrap.querySelector('tfoot').textContent));
+    row(/Deck/).querySelector('.bst-name').click(); await tick(60);
+    const spop = d.getElementById('landed-popover');
+    check('In stock: name click → cost popup',   spop && /Total ?\$40\.00/.test(spop.textContent.replace(/\s+/g, ' ')) && /Average/.test(spop.textContent), spop && spop.textContent.replace(/\s+/g, ' '));
+    spop && spop.remove();
 
     // Sell 2 decks → 3 left, and the 2 come off the OLDEST pick-up.
     const deckKey = row(/Deck/).dataset.key;
@@ -1326,6 +1330,19 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     check('removed → "+ owner" again',          chip() && /\+ owner/.test(chip().textContent));
     const bad = await fakeFetch('/api/admin/bot-address-owners', { method: 'PUT', body: JSON.stringify({ address: 'no number here', owner: 'X' }) });
     check('server rejects an address without a street number', bad.status === 400);
+
+    // Click an item → its landed cost for THIS order.
+    console.log('\n── Click an item → landed cost + fee ──');
+    DB.prepare("UPDATE bot_orders SET tax_amount=2.4, finder_fee=10 WHERE order_number='G03'").run();
+    await w.loadBotOrders(); await tick(200);
+    const g03tag = [...wrap.querySelectorAll('.bot-coming-box')].find(b => /870000000703/.test(b.textContent)).querySelector('.bot-cost-tag');
+    check('item tags are clickable',             !!g03tag);
+    g03tag.click(); await tick(60);
+    const pop = d.getElementById('landed-popover');
+    const popTxt = pop ? pop.textContent.replace(/\s+/g, ' ') : '';
+    check('popup: item $30 + tax $2.40 + fee $10', /Item ?\$30\.00/.test(popTxt) && /Tax ?\$2\.40/.test(popTxt) && /Finder fee \(order\/box\) ?\$10\.00/.test(popTxt), popTxt);
+    check('popup total $42.40 for this order',   /Total ?\$42\.40/.test(popTxt) && /order G03/.test(popTxt), popTxt);
+    pop && pop.remove();
 
     // Shipped list: tick boxes → Mark delivered; ✎ per order.
     console.log('\n── Shipped list: select + Mark delivered, ✎ edit ──');

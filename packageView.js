@@ -87,7 +87,7 @@ function computePackages(orders, catalog, stock) {
       const lk   = itemKey(raw);
       const ln   = lines.find(l => l.item_key === lk);
       if (ln) ln.qty += parseQty(part);
-      else lines.push({ item_key: lk, item_name: raw, name, qty: parseQty(part) });
+      else lines.push({ item_key: lk, item_name: raw, name, qty: parseQty(part), cost: (o._lineCosts && o._lineCosts[lk]) || null });
       const c    = p._contents.get(k);
       if (c) c.qty += parseQty(part);
       else p._contents.set(k, { name, qty: parseQty(part) });
