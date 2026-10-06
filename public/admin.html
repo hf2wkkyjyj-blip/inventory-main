@@ -2987,8 +2987,7 @@ function botShowStockCost(el) {
     [i.taxEstimated ? 'Tax <span style="font-size:10px;opacity:.7;">(est. from total)</span>' : 'Tax', u.tax, true],
     ['Shipping', u.ship],
     ['Finder fee', u.fee],
-  ], u.total, `${i.unitsLeft} in hand = $${(i.stockAtCost || 0).toFixed(2)} · the real cost of these units` +
-     (Math.abs(u.total - i.perUnitTotal) > 0.005 ? ` (average of all bought: $${(i.perUnitTotal || 0).toFixed(2)})` : ''));
+  ], u.total, `Average of the ${i.unitsLeft} checked-in unit${i.unitsLeft === 1 ? '' : 's'} in hand = $${(i.stockAtCost || 0).toFixed(2)} · the real cost of these units`);
 }
 
 // Name(s) printed on a box's label — what the house owner should expect to see.
