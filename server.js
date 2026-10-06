@@ -18,6 +18,7 @@ const SkuCatalog = require('./skuCatalog');
 const { computePackages } = require('./packageView');
 const { splitBoxFee, orderSignature } = require('./feeSplit');
 const { buildAddressBook, addressKey, parseAddress } = require('./addresses');
+const { loadPartners, annotatePartners } = require('./partners');
 
 // Jigged address variations → the one real place they deliver to (addresses.js).
 // The book is built from every address on file so labels are stable whatever
@@ -39,6 +40,7 @@ function loadOwners() {
 function withMainAddress(orders, { replace = false } = {}) {
   const book = addressBook();
   const owners = loadOwners();
+  orders = annotatePartners(orders, loadPartners(db));     // whose order (partners.js)
   return orders.map(o => {
     const main  = book.main(o.shipping_address);
     const k     = o.shipping_address ? addressKey(o.shipping_address) : null;
@@ -194,6 +196,17 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS bot_issues (
   id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, item_key TEXT NOT NULL, item_name TEXT,
   qty INTEGER NOT NULL, kind TEXT NOT NULL, got_item TEXT, note TEXT, status TEXT DEFAULT 'open',
   refund_amount REAL DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, resolved_at TEXT)`); } catch(e) {}
+
+// Partners: orders bought for someone else on their card. Profile matched by
+// account email or the name on the order (partners.js). Database only.
+try { db.exec(`CREATE TABLE IF NOT EXISTS bot_partners (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, emails TEXT, names TEXT, note TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
+try { db.exec(`CREATE TABLE IF NOT EXISTS bot_partner_payouts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, partner_id INTEGER NOT NULL, amount REAL NOT NULL, paid_at TEXT, note TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
+// ✎ "whose order": NULL = match automatically, 0 = mine, else a partner id.
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN partner_override INTEGER"); } catch(e) {}
 
 // House owners: the person whose house a main address is. One row per place.
 try { db.exec(`CREATE TABLE IF NOT EXISTS bot_address_owners (
@@ -1108,6 +1121,50 @@ app.delete('/api/admin/bot-stock-count/:id', auth, adminOnly, (req, res) => {
   res.json({ ok: true });
 });
 
+// ── Partners ────────────────────────────────────────────────────────────────
+// Save a profile (create, or update with id). emails / names: comma or line
+// separated. Tabs (spend, stock, sales, owed) come with /bot-money.
+app.post('/api/admin/bot-partners', auth, adminOnly, (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Name required' });
+  const emails = String(b.emails || '').trim(), names = String(b.names || '').trim();
+  if (!emails && !names) return res.status(400).json({ error: 'Add at least one email or order name to match his orders' });
+  if (b.id) {
+    db.prepare('UPDATE bot_partners SET name=?, emails=?, names=?, note=? WHERE id=?').run([name, emails, names, String(b.note || ''), Number(b.id)]);
+    return res.json({ id: Number(b.id) });
+  }
+  const r = db.prepare('INSERT INTO bot_partners (name, emails, names, note) VALUES (?,?,?,?)').run([name, emails, names, String(b.note || '')]);
+  res.json({ id: Number(r.lastInsertRowid) });
+});
+app.delete('/api/admin/bot-partners/:id', auth, adminOnly, (req, res) => {
+  const id = Number(req.params.id);
+  db.prepare('DELETE FROM bot_partners WHERE id=?').run([id]);
+  db.prepare('UPDATE bot_orders SET partner_override=NULL WHERE partner_override=?').run([id]);
+  res.json({ ok: true });
+});
+app.post('/api/admin/bot-partners/:id/payouts', auth, adminOnly, (req, res) => {
+  const amount = Number((req.body || {}).amount);
+  const day = (req.body || {}).paid_at || new Date().toISOString().slice(0, 10);
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Amount must be more than 0' });
+  if (!isIsoDate(day)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  db.prepare('INSERT INTO bot_partner_payouts (partner_id, amount, paid_at, note) VALUES (?,?,?,?)')
+    .run([Number(req.params.id), Math.round(amount * 100) / 100, day, String((req.body || {}).note || '').trim() || null]);
+  res.json({ ok: true });
+});
+app.delete('/api/admin/bot-partner-payouts/:id', auth, adminOnly, (req, res) => {
+  db.prepare('DELETE FROM bot_partner_payouts WHERE id=?').run([Number(req.params.id)]);
+  res.json({ ok: true });
+});
+// Whose order: null = match automatically, 0 = mine, or a partner id.
+app.put('/api/admin/bot-orders/:id/owner', auth, adminOnly, (req, res) => {
+  const v = (req.body || {}).partner_id;
+  const val = v === null || v === undefined || v === '' ? null : Number(v);
+  if (val !== null && !Number.isInteger(val)) return res.status(400).json({ error: 'bad partner' });
+  db.prepare('UPDATE bot_orders SET partner_override=? WHERE id=?').run([val, Number(req.params.id)]);
+  res.json({ ok: true });
+});
+
 // ── House owners ────────────────────────────────────────────────────────────
 // List (with how many orders go to each place), bulk import (pasted from a
 // sheet: name + address), and set/clear one.
@@ -1448,7 +1505,8 @@ app.get('/api/admin/backup', auth, adminOnly, (req, res) => {
 // whichever fall inside the WHEN range. Cancelled/refunded orders are left out
 // (no inventory, no fee).
 app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
-  const orders = db.prepare("SELECT * FROM bot_orders WHERE status NOT IN ('Cancelled','Refunded')").all();
+  const partnersList = loadPartners(db);
+  const orders = annotatePartners(db.prepare("SELECT * FROM bot_orders WHERE status NOT IN ('Cancelled','Refunded')").all(), partnersList);
   let pricingRows = [], salesRows = [];
   try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch (_) {}
   try { salesRows = db.prepare('SELECT * FROM bot_sales').all(); } catch (_) {}
@@ -1464,22 +1522,30 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
       unitFees.set(l.id, (unitFees.get(l.id) || 0) + l.qty * g.perUnitFeeTyped);
     }
   }
-  const orderFees = orders
-    .map(o => ({ id: o.id, fee: r2((Number(o.finder_fee) || 0) + (unitFees.get(o.id) || 0)) }))
+  const allFees = orders
+    .map(o => ({ id: o.id, partner_id: o.partner_id, fee: r2((Number(o.finder_fee) || 0) + (unitFees.get(o.id) || 0)) }))
     .filter(x => x.fee > 0);
+  // Your FINDER FEES card: your orders only — a partner's fees are on his tab.
+  const orderFees = allFees.filter(x => !x.partner_id).map(({ id, fee }) => ({ id, fee }));
 
   const seen = new Set();
   const sales = [];
+  const partnerSales = [];
   for (const g of groups) {
     for (const s of g.sales) {
       if (s.id != null && seen.has(s.id)) continue;
       if (s.id != null) seen.add(s.id);
-      const revenue = s.qty * s.unit_price;
-      const cost    = s.cost != null ? s.cost : s.qty * g.perUnitTotal;   // real (FIFO) cost of these units
+      // Only YOUR units of a sale count here; a partner's units go on his tab.
+      const parts = s.parts || [{ owner: 0, qty: s.qty, revenue: s.qty * s.unit_price, fees: s.fees, cost: s.cost != null ? s.cost : s.qty * g.perUnitTotal }];
+      for (const pt of parts.filter(x => x.owner)) {
+        partnerSales.push({ partner_id: pt.owner, id: s.id, product: g.name, sold_at: s.sold_at, ...pt });
+      }
+      const mine = parts.find(x => !x.owner);
+      if (!mine || !mine.qty) continue;
       sales.push({ id: s.id, product: g.name, sku_key: g.skuKey, category: (g.categories || [])[0] || 'Other',
-                   sold_at: s.sold_at, qty: s.qty, unit_price: s.unit_price, channel: s.channel || null,
-                   unit_cost: g.perUnitTotal,
-                   revenue: r2(revenue), fees: r2(s.fees), cost: r2(cost), profit: r2(revenue - s.fees - cost) });
+                   sold_at: s.sold_at, qty: mine.qty, unit_price: s.unit_price, channel: s.channel || null,
+                   unit_cost: g.perUnitTotal, shared: parts.length > 1,
+                   revenue: r2(mine.revenue), fees: r2(mine.fees), cost: r2(mine.cost), profit: r2(mine.revenue - mine.fees - mine.cost) });
     }
   }
   // Claims: open ones (money waiting to come back), refunds, write-offs.
@@ -1493,15 +1559,47 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
   }
   claims.toPickUpUnits = groups.reduce((a, g) => a + (g.toPickUp || 0), 0);
   // What's still unsold, at landed cost, and where it is.
+  const ownerStock = owner => groups.reduce((a, g) => {
+    const x = (g.stockByOwner || {})[owner]; return x ? { units: a.units + x.units, cost: a.cost + x.cost } : a; }, { units: 0, cost: 0 });
+  const myStock = ownerStock(0);
   const stockTotals = {
-    unitsInHand: groups.reduce((a, g) => a + (g.unitsLeft || 0), 0),
-    inHandCost:  r2(groups.reduce((a, g) => a + (g.stockAtCost || 0), 0)),
+    unitsInHand: groups.reduce((a, g) => a + (g.unitsLeft || 0), 0),      // every unit on your shelf
+    inHandCost:  r2(groups.some(g => g.stockByOwner) ? myStock.cost : groups.reduce((a, g) => a + (g.stockAtCost || 0), 0)),  // yours
+    partnerUnits: groups.reduce((a, g) => a + Object.entries(g.stockByOwner || {})
+      .filter(([k]) => Number(k)).reduce((b, [, x]) => b + x.units, 0), 0),   // on your shelf, but a partner's
     toPickUpCost: r2(groups.reduce((a, g) => a + (g.toPickUpCost || 0), 0)),
     onTheWayCost: r2(groups.reduce((a, g) => a + (g.onTheWayCost || 0), 0)),
     countLoss:   r2(groups.reduce((a, g) => a + (g.countLoss || 0), 0)),
   };
   for (const k of ['pending', 'refunded', 'writtenOff']) claims[k] = r2(claims[k]);
-  res.json({ orderFees, sales, claims, stock: stockTotals });
+
+  // ── Each partner's tab ──────────────────────────────────────────────────
+  let payouts = [];
+  try { payouts = db.prepare('SELECT * FROM bot_partner_payouts ORDER BY paid_at DESC, id DESC').all(); } catch (_) {}
+  const partners = partnersList.map(p => {
+    const mineOrders = orders.filter(o => o.partner_id === p.id);
+    const spent = mineOrders.reduce((a, o) => a + (Number(o.order_total) || 0) - (Number(o.refunded_amount) || 0), 0);
+    const fees  = allFees.filter(x => x.partner_id === p.id).reduce((a, x) => a + x.fee, 0);
+    const st    = ownerStock(p.id);
+    const ps    = partnerSales.filter(x => x.partner_id === p.id);
+    const sold  = ps.reduce((a, x) => a + x.qty, 0);
+    const salesNet = ps.reduce((a, x) => a + x.revenue - x.fees, 0);
+    const paid  = payouts.filter(x => x.partner_id === p.id).reduce((a, x) => a + (Number(x.amount) || 0), 0);
+    return {
+      id: p.id, name: p.name, emails: p.emails || '', names: p.names || '', note: p.note || '',
+      orders: mineOrders.length, spent: r2(spent), fees: r2(fees), totalIn: r2(spent + fees),
+      unitsInStock: st.units, stockCost: r2(st.cost),
+      unitsSold: sold, salesNet: r2(salesNet), costOfSold: r2(ps.reduce((a, x) => a + x.cost, 0)),
+      paid: r2(paid), owed: r2(salesNet - paid),
+      payouts: payouts.filter(x => x.partner_id === p.id),
+      orderList: mineOrders.map(o => ({ id: o.id, order_number: o.order_number, retailer: o.retailer, status: o.status,
+        order_date: o.order_date, total: Number(o.order_total) || 0, match: o.partner_match })),
+      sales: ps,
+    };
+  });
+  // Your SPENT card leaves their orders out: send which orders are theirs.
+  const partnerOrderIds = orders.filter(o => o.partner_id).map(o => o.id);
+  res.json({ orderFees, sales, claims, stock: stockTotals, partners, partnerOrderIds });
 });
 
 // ── Product catalog (see skuCatalog.js) ─────────────────────────────────────

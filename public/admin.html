@@ -578,6 +578,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <button class="btn btn-ghost btn-sm" id="bot-order-scan-btn" onclick="botScanOrder()"><i class="fa fa-search"></i> Scan Order</button>
       </div>
       <button class="btn btn-ghost btn-sm" id="bot-refresh-btn" onclick="botRefresh()"><i class="fa fa-sync"></i> Refresh</button>
+      <button class="btn btn-ghost btn-sm" id="bot-partners-btn" onclick="openPartners()"><i class="fa fa-handshake"></i> Partners</button>
       <button class="btn btn-primary btn-sm" onclick="showBotAddForm()"><i class="fa fa-plus"></i> Add Order</button>
     </div>
   </div>
@@ -931,6 +932,8 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Status</label>
         <select id="bot-edit-status" style="width:100%;"><option>Confirmed</option><option>Shipped</option><option>Delivered</option><option>Cancelled</option><option>Refunded</option></select></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Whose order</label>
+        <select id="bot-edit-owner" style="width:100%;"></select></div>
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Tracking #</label>
         <input type="text" id="bot-edit-tracking" placeholder="Tracking number" style="width:100%;"></div>
       <div class="form-group" style="margin:0;grid-column:span 2;"><label style="font-size:11px;">Notes</label>
@@ -1000,6 +1003,32 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <button class="btn btn-ghost btn-sm" onclick="closeBotItemEdit()">Cancel</button>
       <button class="btn btn-primary btn-sm" onclick="saveBotItemEdit()"><i class="fa fa-save"></i> Save</button>
     </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: PARTNERS ═══════════════════════════════════════════════════════ -->
+<div class="overlay" id="bot-partners-overlay" onclick="if(event.target.id==='bot-partners-overlay')closePartners()">
+  <div class="modal" style="width:760px;max-width:96vw;max-height:90vh;overflow:auto;">
+    <h2 style="margin-bottom:4px;"><i class="fa fa-handshake" style="color:var(--accent)"></i> Partners</h2>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Orders bought for someone else on their card. Their spend and fees go on their tab (not your cards); the units stay in your stock; their share of sales is owed back.</div>
+    <div id="pt-list"></div>
+    <div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted);margin-bottom:8px;" id="pt-form-title">ADD A PARTNER</div>
+      <input type="hidden" id="pt-id">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Name</label><input type="text" id="pt-name" style="width:100%;" placeholder="e.g. Alex"></div>
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Note (optional)</label><input type="text" id="pt-note" style="width:100%;"></div>
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">His account emails <span style="color:var(--muted);font-weight:400;">— one per line</span></label><textarea id="pt-emails" rows="3" style="width:100%;font-size:12px;"></textarea></div>
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Name(s) on his orders <span style="color:var(--muted);font-weight:400;">— one per line</span></label><textarea id="pt-names" rows="3" style="width:100%;font-size:12px;"></textarea></div>
+      </div>
+      <div id="pt-error" style="font-size:12px;color:#f87171;margin-top:6px;display:none;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
+        <button class="btn btn-ghost btn-sm" onclick="partnerFormReset()">Clear</button>
+        <button class="btn btn-primary btn-sm" id="pt-save" onclick="savePartner()"><i class="fa fa-save"></i> Save partner</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px;">An order is his when it went to one of his emails, or has his name on it. Fix any single order with ✎ → "Whose order". No card numbers needed.</div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px;"><button class="btn btn-ghost btn-sm" onclick="closePartners()">Close</button></div>
   </div>
 </div>
 
@@ -2160,7 +2189,8 @@ function botRenderMoneyCards(ordersInRange) {
   const se = document.getElementById('bs-stock');
   if (se) {
     se.textContent = st.unitsInHand || 0;
-    document.getElementById('bs-stock-sub').textContent = `${botMoneyFmt(st.inHandCost || 0)} at cost`;
+    document.getElementById('bs-stock-sub').textContent = `${botMoneyFmt(st.inHandCost || 0)} at cost` +
+      (st.partnerUnits ? ` · incl. ${st.partnerUnits} partner unit${st.partnerUnits === 1 ? '' : 's'}` : '');
   }
   if (botEffectiveView && botEffectiveView() === 'sold' && document.getElementById('bot-sold-wrap').style.display !== 'none') renderBotSold();
   const cl = _botMoney.claims || {};
@@ -2226,7 +2256,8 @@ function buildBotStats() {
   o.forEach(r => {
     const st = r.status === 'Unship' ? 'Confirmed' : r.status;
     if (counts[st] !== undefined) counts[st]++;
-    if (r.status !== 'Cancelled' && r.status !== 'Refunded') spent += (r.order_total||0) - (r.refunded_amount||0);
+    // A partner's orders are on his tab, not in your SPENT.
+    if (r.status !== 'Cancelled' && r.status !== 'Refunded' && !r.partner_id) spent += (r.order_total||0) - (r.refunded_amount||0);
   });
 
   const note = document.getElementById('bot-range-note');
@@ -2779,6 +2810,106 @@ function botApplyView(view) {
   if (view !== 'package') { _botPkgSelected.clear(); botRenderActionBar(); }
 }
 
+// ── Partners ────────────────────────────────────────────────────────────────
+const _ptOpen = new Set();      // partner ids whose order list is expanded
+async function openPartners() {
+  partnerFormReset();
+  document.getElementById('bot-partners-overlay').classList.add('open');
+  await botLoadMoney();
+  renderPartners();
+}
+function closePartners() { document.getElementById('bot-partners-overlay').classList.remove('open'); }
+function partnerFormReset() {
+  ['pt-id', 'pt-name', 'pt-note', 'pt-emails', 'pt-names'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('pt-form-title').textContent = 'ADD A PARTNER';
+  document.getElementById('pt-error').style.display = 'none';
+}
+function renderPartners() {
+  const ps = _botMoney.partners || [];
+  const m = botMoneyFmt;
+  document.getElementById('pt-list').innerHTML = ps.length ? ps.map(p => `
+    <div class="pt-card" data-id="${p.id}" style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <b style="font-size:14px;"><i class="fa fa-handshake" style="color:#c4b5fd;font-size:12px;"></i> ${esc(p.name)}</b>
+        <span style="font-size:11px;color:var(--muted);">${p.orders} order${p.orders === 1 ? '' : 's'}</span>
+        <span style="flex:1;"></span>
+        <button class="btn btn-ghost btn-sm" onclick="editPartner(${p.id})"><i class="fa fa-pen"></i> Edit</button>
+        <button class="btn btn-ghost btn-sm" onclick="deletePartner(${p.id})" style="color:#f87171;">Remove</button>
+      </div>
+      <div class="pt-tab" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:8px;font-size:12px;">
+        <div><div style="color:var(--muted);font-size:10px;">SPENT (orders)</div><b>${m(p.spent)}</b></div>
+        <div><div style="color:var(--muted);font-size:10px;">FEES</div><b>${m(p.fees)}</b></div>
+        <div><div style="color:var(--muted);font-size:10px;">TOTAL HE PUT IN</div><b class="pt-totalin">${m(p.totalIn)}</b></div>
+        <div><div style="color:var(--muted);font-size:10px;">IN YOUR STOCK</div><b>${p.unitsInStock}</b> <span style="color:var(--muted);">(${m(p.stockCost)})</span></div>
+        <div><div style="color:var(--muted);font-size:10px;">SOLD</div><b>${p.unitsSold}</b> <span style="color:var(--muted);">→ ${m(p.salesNet)}</span></div>
+        <div><div style="color:var(--muted);font-size:10px;">PAID TO HIM</div><b>${m(p.paid)}</b></div>
+        <div><div style="color:var(--muted);font-size:10px;">YOU OWE HIM</div><b class="pt-owed" style="color:${p.owed > 0 ? '#fbbf24' : '#4ade80'};">${m(p.owed)}</b></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;font-size:12px;">
+        Pay him <input type="number" class="pt-pay-amt" min="0" step="0.01" placeholder="0.00" style="width:90px;">
+        on <input type="date" class="pt-pay-date" value="${botLocalToday()}" style="font-size:12px;">
+        <button class="btn btn-ghost btn-sm pt-pay" onclick="addPayout(${p.id}, this)"><i class="fa fa-money-bill"></i> Record payment</button>
+        <span style="flex:1;"></span>
+        <a href="#" onclick="_ptOpen.has(${p.id}) ? _ptOpen.delete(${p.id}) : _ptOpen.add(${p.id}); renderPartners(); return false;" style="color:#60a5fa;">${_ptOpen.has(p.id) ? 'Hide' : 'Show'} his orders, sales & payments</a>
+      </div>
+      ${_ptOpen.has(p.id) ? `<div style="margin-top:8px;font-size:11px;">
+        ${p.orderList.map(o => `<div class="pt-order" style="display:flex;gap:10px;padding:3px 0;border-top:1px solid var(--border);">
+          <span style="width:130px;">${esc(o.order_number || '')}</span><span style="width:110px;color:var(--muted);">${esc(o.retailer || '')}</span>
+          <span style="width:80px;color:var(--muted);">${esc(o.status || '')}</span><span style="flex:1;color:var(--muted);">${o.match === 'manual' ? 'set by hand' : 'matched by ' + esc(o.match || '')}</span>
+          <span>${m(o.total)}</span></div>`).join('') || '<div style="color:var(--muted);">No orders yet.</div>'}
+        ${p.sales.length ? `<div style="margin-top:6px;font-weight:700;color:var(--muted);">SALES OF HIS UNITS</div>` + p.sales.map(x => `<div style="display:flex;gap:10px;padding:2px 0;">
+          <span style="width:90px;color:var(--muted);">${esc(botShortDate(x.sold_at || ''))}</span><span style="flex:1;">${esc(x.product)} ×${x.qty}</span><span>${m(x.revenue - x.fees)}</span></div>`).join('') : ''}
+        ${p.payouts.length ? `<div style="margin-top:6px;font-weight:700;color:var(--muted);">PAYMENTS TO HIM</div>` + p.payouts.map(x => `<div style="display:flex;gap:10px;padding:2px 0;">
+          <span style="width:90px;color:var(--muted);">${esc(x.paid_at || '')}</span><span style="flex:1;">${esc(x.note || '')}</span><span>${m(x.amount)}</span>
+          <button onclick="deletePayout(${x.id})" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button></div>`).join('') : ''}
+      </div>` : ''}
+    </div>`).join('') : '<div style="font-size:12px;color:var(--muted);">No partners yet — add one below.</div>';
+}
+function editPartner(id) {
+  const p = (_botMoney.partners || []).find(x => x.id === id); if (!p) return;
+  document.getElementById('pt-id').value = p.id;
+  document.getElementById('pt-name').value = p.name;
+  document.getElementById('pt-note').value = p.note || '';
+  document.getElementById('pt-emails').value = String(p.emails || '').split(/[,;]/).map(x => x.trim()).filter(Boolean).join('\n');
+  document.getElementById('pt-names').value = String(p.names || '').split(/[,;]/).map(x => x.trim()).filter(Boolean).join('\n');
+  document.getElementById('pt-form-title').textContent = 'EDIT ' + p.name.toUpperCase();
+}
+async function savePartner() {
+  const err = document.getElementById('pt-error');
+  const body = {
+    id: Number(document.getElementById('pt-id').value) || undefined,
+    name: document.getElementById('pt-name').value.trim(),
+    note: document.getElementById('pt-note').value.trim(),
+    emails: document.getElementById('pt-emails').value.split(/\n/).map(x => x.trim()).filter(Boolean).join(', '),
+    names:  document.getElementById('pt-names').value.split(/\n/).map(x => x.trim()).filter(Boolean).join(', '),
+  };
+  if (!body.name) { err.textContent = 'Give him a name.'; err.style.display = ''; return; }
+  if (!body.emails && !body.names) { err.textContent = 'Add at least one email or a name that appears on his orders.'; err.style.display = ''; return; }
+  const r = await api('POST', '/admin/bot-partners', body);
+  if (!r) { err.textContent = 'Could not save.'; err.style.display = ''; return; }
+  partnerFormReset();
+  await loadBotOrders();
+  renderPartners();
+}
+async function deletePartner(id) {
+  if (!confirm('Remove this partner? His orders become yours again (nothing is deleted).')) return;
+  await api('DELETE', '/admin/bot-partners/' + id);
+  await loadBotOrders(); renderPartners();
+}
+async function addPayout(id, btn) {
+  const card = btn.closest('.pt-card');
+  const amount = parseFloat(card.querySelector('.pt-pay-amt').value);
+  if (!(amount > 0)) { alert('Enter how much you paid him.'); return; }
+  const r = await api('POST', `/admin/bot-partners/${id}/payouts`, { amount, paid_at: card.querySelector('.pt-pay-date').value || botLocalToday() });
+  if (!r) { alert('Could not save the payment.'); return; }
+  await botLoadMoney(); renderPartners();
+}
+async function deletePayout(id) {
+  if (!confirm('Delete this payment?')) return;
+  await api('DELETE', '/admin/bot-partner-payouts/' + id);
+  await botLoadMoney(); renderPartners();
+}
+
 // ── House owners ────────────────────────────────────────────────────────────
 // Shown next to each main address; click to set/change. Stored on the server
 // (database only), matched by address so jig variations find the same owner.
@@ -2993,9 +3124,12 @@ function botShowStockCost(el) {
 // Name(s) printed on a box's label — what the house owner should expect to see.
 function botReceiverLine(p) {
   const names = [...new Set((p.orders || []).map(o => (o.shipping_name || '').trim()).filter(Boolean))];
-  return names.length
+  const partners = [...new Set((p.orders || []).map(o => o.partner_name).filter(Boolean))];
+  return (names.length
     ? `<div class="bot-recv" style="font-size:11px;color:var(--text);margin-top:2px;" data-tip="Name on the label"><i class="fa fa-user" style="font-size:9px;color:var(--muted);margin-right:4px;"></i>${esc(names.join(', '))}</div>`
-    : '';
+    : '') + (partners.length
+    ? `<div class="bot-partner-tag" style="font-size:10px;margin-top:2px;"><span style="border:1px solid #6d28d9;color:#c4b5fd;border-radius:999px;padding:0 7px;"><i class="fa fa-handshake" style="font-size:9px;"></i> ${esc(partners.join(', '))}'s</span></div>`
+    : '');
 }
 
 function botDayTitle(day) {
@@ -4559,6 +4693,14 @@ function botEditRow(id) {
   document.getElementById('bot-edit-id').value = id;
   document.getElementById('bot-edit-ordnum').textContent = o.order_number ? '#'+o.order_number : '';
   document.getElementById('bot-edit-status').value = (o.status === 'Unship' ? 'Confirmed' : o.status) || 'Confirmed';
+  // Whose order: automatic match (shown), mine, or a partner — saved on Save.
+  const ownSel = document.getElementById('bot-edit-owner');
+  const ps = (_botMoney.partners || []);
+  const auto = o.partner_match && o.partner_match !== 'manual' ? `Auto — ${o.partner_name} (by ${o.partner_match})` : 'Auto — mine';
+  ownSel.innerHTML = `<option value="">${esc(auto)}</option><option value="0">Mine</option>` +
+    ps.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  ownSel.value = o.partner_override === null || o.partner_override === undefined ? '' : String(o.partner_override);
+  ownSel.dataset.was = ownSel.value;
   document.getElementById('bot-edit-tracking').value = o.tracking || '';
   document.getElementById('bot-edit-notes').value = o.notes || '';
   document.getElementById('bot-edit-total').value = o.order_total || '';
@@ -4602,6 +4744,10 @@ async function saveBotEdit() {
     finder_fee:  parseFloat(document.getElementById('bot-edit-finder').value) || null,
   };
   await api('PATCH', '/admin/bot-orders/'+id, payload);
+  const ownSel = document.getElementById('bot-edit-owner');
+  if (ownSel && ownSel.value !== ownSel.dataset.was) {
+    await api('PUT', '/admin/bot-orders/' + id + '/owner', { partner_id: ownSel.value === '' ? null : Number(ownSel.value) });
+  }
   closeBotEdit();
   await loadBotOrders();
 }

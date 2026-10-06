@@ -216,6 +216,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
         }
         g.inHand += Math.max(0, qty - out);
         if (qty - out > 0) g._batches.push({ date: (checkedIn.get && checkedIn.get(order.id)) || null, qty: qty - out,
+                                             owner: order.partner_id || 0,
                                              c: { item: unitItem, tax: unitTax, ship: unitShip, fee: unitFinder } });
       } else if (order.status === 'Delivered' || order.tracking_status === 'Delivered') {
         g.toPickUp += qty;
@@ -240,7 +241,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
     if (!g._rawNames.has(rk)) g._rawNames.set(rk, k.got);
     g.qty        += k.qty;
     g.inHand     += k.qty;
-    g._batches.push({ date: null, qty: k.qty, c: { item: k.unitItem, tax: k.unitTax, ship: k.unitShip, fee: k.unitFinder } });
+    g._batches.push({ date: null, qty: k.qty, owner: k.order.partner_id || 0, c: { item: k.unitItem, tax: k.unitTax, ship: k.unitShip, fee: k.unitFinder } });
     g._sumItem   += k.unitItem   * k.qty;
     g._sumTax    += k.unitTax    * k.qty;
     g._sumShip   += k.unitShip   * k.qty;
@@ -336,23 +337,35 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
     const avgC = { item: _sumItem / qty, tax: _sumTax / qty, ship: _sumShip / qty, fee: _sumFinder / qty };
     const queue = [..._batches].sort((a, b) => String(a.date || '0000').localeCompare(String(b.date || '0000')))
       .map(b => ({ ...b }));
-    if (extraUnits) queue.push({ date: null, qty: extraUnits, c: avgC });
+    if (extraUnits) queue.push({ date: null, qty: extraUnits, owner: 0, c: avgC });
     const unitCost = c => c.item + c.tax + c.ship + c.fee + extra;
-    const take = n => {                      // cost of the next n units, oldest first
+    // Cost of the next n units, oldest first — and whose units they were
+    // (0 = yours, else a partner id), so a sale's money goes to its owner.
+    const take = n => {
       let cost = 0;
+      const parts = new Map();
+      const add = (owner, q, c) => { const x = parts.get(owner) || { qty: 0, cost: 0 }; x.qty += q; x.cost += c; parts.set(owner, x); };
       while (n > 0 && queue.length) {
-        const b = queue[0], t = Math.min(n, b.qty);
-        cost += t * unitCost(b.c); b.qty -= t; n -= t;
+        const b = queue[0], t = Math.min(n, b.qty), c = t * unitCost(b.c);
+        cost += c; add(b.owner || 0, t, c); b.qty -= t; n -= t;
         if (!b.qty) queue.shift();
       }
-      return cost + n * perUnitTotal;        // more sold than recorded in hand → average
+      if (n > 0) { cost += n * perUnitTotal; add(0, n, n * perUnitTotal); }   // more sold than in hand → average, yours
+      return { cost, parts };
+    };
+    const splitSale = (sl, parts) => {
+      // Revenue and selling fees follow the units: each owner gets their share.
+      sl.parts = [...parts.entries()].map(([owner, x]) => ({
+        owner, qty: x.qty, cost: round2(x.cost),
+        revenue: round2(x.qty * sl.unit_price), fees: round2(sl.qty ? sl.fees * x.qty / sl.qty : 0),
+      }));
     };
     if (tracked) {
       [...sales].sort((a, b) => String(a.sold_at || '').localeCompare(String(b.sold_at || '')) || (a.id || 0) - (b.id || 0))
-        .forEach(sl => { sl.cost = round2(take(sl.qty)); });
+        .forEach(sl => { const r = take(sl.qty); sl.cost = round2(r.cost); splitSale(sl, r.parts); });
       if (shortUnits) take(shortUnits);
     } else {
-      sales.forEach(sl => { sl.cost = round2(sl.qty * perUnitTotal); });
+      sales.forEach(sl => { sl.cost = round2(sl.qty * perUnitTotal); splitSale(sl, new Map([[0, { qty: sl.qty, cost: sl.qty * perUnitTotal }]])); });
     }
     const soldCost = sales.reduce((a, sl) => a + sl.cost, 0);
     const left = tracked ? queue.filter(b => b.qty > 0) : [];
@@ -366,6 +379,13 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
       total: round2(stockAtCost / leftUnits),
     } : null;
     const oldestInStock = unitsLeft && left.length ? left[0].date : null;
+    // Whose units are on the shelf: { owner: { units, cost } } (0 = yours).
+    const stockByOwner = {};
+    for (const b of left) {
+      const k = b.owner || 0;
+      stockByOwner[k] = stockByOwner[k] || { units: 0, cost: 0 };
+      stockByOwner[k].units += b.qty; stockByOwner[k].cost = round2(stockByOwner[k].cost + b.qty * unitCost(b.c));
+    }
     const asking     = Number(p.sale_price) || 0;
 
     return {
@@ -379,6 +399,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
       // At real cost — what's still unsold (FIFO), and where the rest is.
       stockAtCost:    round2(stockAtCost),
       stockUnit,
+      stockByOwner,
       toPickUpCost:   round2((g.toPickUp || 0) * perUnitTotal),
       onTheWayCost:   round2((g.onTheWay || 0) * perUnitTotal),
       claimValue: round2(_claimValue),

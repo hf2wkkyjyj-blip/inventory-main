@@ -327,6 +327,27 @@ console.log('\n── Real cost per unit, oldest first (the ETB $77 vs $91 repor
   eq('later sale: the next unit ($85)',      byId(9).cost, 85);
 }
 
+console.log('\n── Partner units: each sale\'s money goes to whose units were sold ──');
+{
+  const T = 'Test Pal Box';
+  const orders = [
+    { id: 1, retailer: 'Test', status: 'Delivered', order_total: 20, items: `["2x ${T} @ $10.00"]` },                  // mine, oldest
+    { id: 2, retailer: 'Test', status: 'Delivered', order_total: 60, items: `["3x ${T} @ $20.00"]`, partner_id: 7 },   // his
+  ];
+  const checkedIn = new Map([[1, '2026-09-01'], [2, '2026-09-05']]);
+  const run = sales => computeItemGroups(orders, [], undefined, sales, { checkedIn, issues: [] })[0];
+  const g0 = run([]);
+  eq('shelf: 2 mine, 3 his',                 [g0.stockByOwner[0].units, g0.stockByOwner[7].units].join(), '2,3');
+  eq('his stock at his cost',                g0.stockByOwner[7].cost, 60);
+  const g = run([{ id: 1, sku_key: T, qty: 3, unit_price: 30, fees: 3, sold_at: '2026-09-10' }]);
+  const parts = Object.fromEntries(g.sales[0].parts.map(x => [x.owner, x]));
+  eq('2 of mine + 1 of his sold (oldest first)', [parts[0].qty, parts[7].qty].join(), '2,1');
+  eq('his share of revenue',                 parts[7].revenue, 30);
+  eq('selling fees split by units',          [parts[0].fees, parts[7].fees].join(), '2,1');
+  eq('his unit at his cost',                 parts[7].cost, 20);
+  eq('left on shelf: 2 of his',              [g.stockByOwner[0] ? g.stockByOwner[0].units : 0, g.stockByOwner[7].units].join(), '0,2');
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

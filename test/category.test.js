@@ -32,7 +32,7 @@ function makeDb() {
   db.exec(`CREATE TABLE bot_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, email_id TEXT, category TEXT, retailer TEXT,
     order_number TEXT, tracking TEXT, status TEXT, tracking_status TEXT, expected_date TEXT, order_date TEXT,
     received_at TEXT, delivered_date TEXT, items TEXT, order_total REAL, tax_amount REAL, ship_cost REAL,
-    finder_fee REAL, shipping_name TEXT, shipping_address TEXT, status_changed_at TEXT, status_source TEXT, created_at TEXT)`);
+    finder_fee REAL, shipping_name TEXT, shipping_address TEXT, status_changed_at TEXT, status_source TEXT, account_email TEXT, created_at TEXT)`);
   ensureRawEmailTable(db);
   return db;
 }

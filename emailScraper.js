@@ -552,6 +552,8 @@ async function processEmail(parsed, db, opts = {}) {
   // order created from an email had no address.
   const shipName   = (P && P.shippingName)    || null;
   const shipAddr   = (P && P.shippingAddress) || null;
+  // The account this order belongs to (the email's To — kept when forwarded).
+  const toEmail    = (parsed.to?.value?.[0]?.address || '').trim().toLowerCase() || null;
   const orderTotal = financials.total    ?? financials.subtotal ?? null;
   const taxAmount  = financials.tax      ?? null;
   const shipCost   = financials.shipping ?? null;
@@ -598,6 +600,7 @@ async function processEmail(parsed, db, opts = {}) {
     // come from the buying bot or been fixed by hand).
     if (shipAddr && !existing.shipping_address)            { updates.push('shipping_address=?'); vals.push(shipAddr); }
     if (shipName && !existing.shipping_name)               { updates.push('shipping_name=?');    vals.push(shipName); }
+    if (toEmail && !existing.account_email)                { updates.push('account_email=?');    vals.push(toEmail); }
     if (trackingStatus)                                    { updates.push('tracking_status=?');  vals.push(trackingStatus); }
     if (resolvedStatus === 'Delivered') {
       // Use the DELIVERY EMAIL's own date, not today's. Using new Date() meant
@@ -718,14 +721,14 @@ async function processEmail(parsed, db, opts = {}) {
     db.prepare(`INSERT OR IGNORE INTO bot_orders
       (category, retailer, order_number, tracking, status, tracking_status, expected_date,
        order_date, received_at, items, order_total, tax_amount, ship_cost, status_changed_at,
-       shipping_name, shipping_address, created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
+       shipping_name, shipping_address, account_email, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
       // NOTE: ?? not || for the money fields — a legitimate $0.00 shipping or tax
       // is falsy, and || would silently store it as null.
       .run([category, retailer, orderNumber, tracking||null, dbStatus, trackingStatus||null,
             expectedDate||null, orderDate, emailDate,
             itemsJson||null, orderTotal ?? null, taxAmount ?? null, shipCost ?? null, emailDate,
-            shipName, shipAddr]);
+            shipName, shipAddr, toEmail]);
     console.log(`   ➕ New: ${orderNumber} (${retailer}) — ${resolvedStatus}${itemStrings.length?' | '+itemStrings.length+' items':''}${expectedDate?' exp '+expectedDate:''}`);
     // This sender produced a real order, so remember it. Future runs can then
     // target it directly by FROM address instead of relying on the broad
@@ -1134,6 +1137,9 @@ function ensureRawEmailTable(db) {
     text        TEXT,
     created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+  // Which account the email was sent to (kept on forwarded mail) — tells whose
+  // order it is (partners). Added later, so older rows don't have it.
+  try { db.exec('ALTER TABLE raw_emails ADD COLUMN to_email TEXT'); } catch (_) {}
 }
 
 function saveRawEmail(db, parsed, html, text) {
@@ -1141,12 +1147,13 @@ function saveRawEmail(db, parsed, html, text) {
     ensureRawEmailTable(db);
     const msgId = parsed.messageId || `${parsed.date?.toISOString() || Date.now()}|${parsed.subject || ''}`;
     db.prepare(`INSERT OR REPLACE INTO raw_emails
-      (message_id, subject, from_email, email_date, html, text)
-      VALUES (?,?,?,?,?,?)`)
+      (message_id, subject, from_email, to_email, email_date, html, text)
+      VALUES (?,?,?,?,?,?,?)`)
       .run([
         msgId,
         parsed.subject || null,
         parsed.from?.value?.[0]?.address || null,
+        parsed.to?.value?.[0]?.address || null,
         parsed.date ? parsed.date.toISOString() : null,
         (html || '').slice(0, 400000),
         (text || '').slice(0, 100000),
@@ -1175,6 +1182,7 @@ async function reparseStoredEmails(db, { rebuildStatus = false } = {}) {
         messageId: r.message_id,
         subject:   r.subject || '',
         from:      { value: [{ address: r.from_email || '' }] },
+        to:        r.to_email ? { value: [{ address: r.to_email }] } : undefined,
         date:      r.email_date ? new Date(r.email_date) : new Date(),
         html:      r.html || '',
         text:      r.text || '',

@@ -76,6 +76,7 @@ function computePackages(orders, catalog, stock) {
       shipping_name: o.shipping_name || null, shipping_address: o.shipping_address || null,
       jig_address: o.jig_address || null,
       owner: o.owner || null,
+      partner_id: o.partner_id || null, partner_name: o.partner_name || null,
     });
 
     let arr; try { arr = JSON.parse(o.items || '[]'); } catch (_) { arr = []; }

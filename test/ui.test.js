@@ -1419,6 +1419,101 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     statusSel.value = ''; statusSel.dispatchEvent(new w.Event('change')); await tick(60);
   }
 
+  console.log('\n── Partners: his orders on his tab, units in your stock, what you owe him ──');
+  {
+    await w.loadBotOrders(); await tick(200);
+    const spent0 = cardMoney('bs-spent'), fees0 = cardMoney('bs-fees');
+    const ins = (num, email, name, items, total, fee, day) => {
+      const r = DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total, finder_fee, shipping_name, account_email)
+                            VALUES ('Pal Cat','Pal Test Shop',?,'Delivered',?,?,?,?,?)`).run([num, JSON.stringify(items), total, fee, name, email]);
+      const id = Number(r.lastInsertRowid);
+      DB.prepare('INSERT INTO bot_checkins (order_id, checked_at) VALUES (?,?)').run([id, day]);
+      return id;
+    };
+    const pt1 = ins('PT1', 'pal@example.test', 'Someone Else', ['3x Test Pal Card @ $10.00'], 30, 6, '2026-09-02');
+    const pt2 = ins('PT2', null, 'Pal Tester', ['1x Test Pal Card @ $10.00'], 10, 2, '2026-09-03');
+    const pt3 = ins('PT3', 'me@example.test', 'Test Buyer', ['2x Test Pal Card @ $10.00'], 20, 4, '2026-09-04');   // mine
+    await w.loadBotOrders(); await tick(200);
+    check('before a partner exists: all count as yours', Math.abs(cardMoney('bs-spent') - (spent0 + 60)) < 0.01, cardMoney('bs-spent'));
+
+    // Add him in the Partners dialog — by real typing and clicking.
+    d.getElementById('bot-partners-btn').click(); await tick(150);
+    check('Partners dialog opens',              isVisible(d.getElementById('bot-partners-overlay')));
+    d.getElementById('pt-save').click(); await tick(60);
+    check('no name → error, nothing saved',     d.getElementById('pt-error').style.display !== 'none' && !DB.prepare('SELECT COUNT(*) n FROM bot_partners').get().n);
+    d.getElementById('pt-name').value = 'Pal';
+    d.getElementById('pt-emails').value = 'pal@example.test';
+    d.getElementById('pt-names').value = 'Pal Tester';
+    d.getElementById('pt-save').click(); await tick(300);
+    const card = () => d.querySelector('#pt-list .pt-card');
+    check('partner card shown',                 !!card() && /Pal/.test(card().textContent));
+    check('his tab: 2 orders',                  card() && /2 orders/.test(card().textContent), card() && card().textContent.replace(/\s+/g, ' '));
+    check('total he put in = $40 + $8 fees',    card() && card().querySelector('.pt-totalin').textContent.trim() === '$48.00', card() && card().querySelector('.pt-totalin').textContent);
+    check('SPENT: his orders left out',         Math.abs(cardMoney('bs-spent') - (spent0 + 20)) < 0.01, cardMoney('bs-spent') + ' vs ' + (spent0 + 20));
+    check('FINDER FEES: his fees left out',     Math.abs(cardMoney('bs-fees') - (fees0 + 4)) < 0.01, cardMoney('bs-fees') + ' vs ' + (fees0 + 4));
+    check('IN STOCK still counts his units',    /incl\. 4 partner units/.test(d.getElementById('bs-stock-sub').textContent), d.getElementById('bs-stock-sub').textContent);
+
+    // His order list shows why each one is his.
+    [...card().querySelectorAll('a')].find(a => /Show his orders/.test(a.textContent)).click(); await tick(60);
+    const ol = [...card().querySelectorAll('.pt-order')].map(x => x.textContent.replace(/\s+/g, ' '));
+    check('order list: PT1 by email, PT2 by name', ol.length === 2 && ol.some(t => /PT1.*by email/.test(t)) && ol.some(t => /PT2.*by name/.test(t)), ol.join(' / '));
+
+    // Sell 5: oldest first → his 4, then 1 of yours.
+    await fakeFetch('/api/admin/bot-sales', { method: 'POST', body: JSON.stringify({ sku_key: 'test pal card', product_name: 'Test Pal Card', qty: 5, unit_price: 25, fees: 5, sold_at: '2026-09-10' }) });
+    const m2 = await (await fakeFetch('/api/admin/bot-money')).json();
+    const pal = m2.partners.find(p => p.name === 'Pal');
+    const mineSale = m2.sales.find(x => x.product === 'Test Pal Card');
+    check('sale key matched the product',       pal.unitsSold > 0, JSON.stringify(m2.partners));
+    check('his tab: 4 sold → $100 − $4 fees',   pal.unitsSold === 4 && pal.salesNet === 96, `${pal.unitsSold} ${pal.salesNet}`);
+    check('you owe him $96',                    pal.owed === 96);
+    check('your profit: only your 1 unit',      mineSale && mineSale.qty === 1 && mineSale.revenue === 25 && mineSale.shared, JSON.stringify(mineSale));
+    check('in stock: none of his left',         pal.unitsInStock === 0 && m2.stock.partnerUnits === 0, `${pal.unitsInStock} ${m2.stock.partnerUnits}`);
+
+    // Pay him part of it.
+    await w.openPartners(); await tick(200);
+    card().querySelector('.pt-pay-amt').value = '60';
+    card().querySelector('.pt-pay').click(); await tick(250);
+    check('after paying $60 → owe $36',         card().querySelector('.pt-owed').textContent.trim() === '$36.00', card().querySelector('.pt-owed').textContent);
+    const payId = DB.prepare('SELECT id FROM bot_partner_payouts').get().id;
+    await fakeFetch('/api/admin/bot-partner-payouts/' + payId, { method: 'DELETE' });
+    const m3 = await (await fakeFetch('/api/admin/bot-money')).json();
+    check('deleting the payment → owe $96 again', m3.partners[0].owed === 96);
+
+    // ✎ "Whose order": move PT3 to him, and PT1 back to you.
+    await w.loadBotOrders(); await tick(150);
+    w.botEditRow(pt3); await tick(60);
+    const sel = d.getElementById('bot-edit-owner');
+    check('editor shows Whose order (Auto — mine)', sel && /Auto — mine/.test(sel.options[0].textContent) && [...sel.options].some(o => o.textContent === 'Pal'));
+    sel.value = String(pal.id);
+    await w.saveBotEdit(); await tick(200);
+    w.botEditRow(pt1); await tick(60);
+    check('PT1 editor says matched by email',   /Pal \(by email\)/.test(d.getElementById('bot-edit-owner').options[0].textContent));
+    d.getElementById('bot-edit-owner').value = '0';
+    await w.saveBotEdit(); await tick(200);
+    const m4 = await (await fakeFetch('/api/admin/bot-money')).json();
+    const p4 = m4.partners[0];
+    check('override: PT3 his, PT1 mine',        p4.orderList.map(o => o.order_number + ':' + o.match).sort().join() === 'PT2:name,PT3:manual', p4.orderList.map(o => o.order_number + ':' + o.match).join());
+    check('his total in follows: $30 + $6',     p4.totalIn === 36, p4.totalIn);
+
+    // Box badge on his boxes.
+    const pk = await (await fakeFetch('/api/admin/bot-packages?category=Pal%20Cat')).json();
+    const flat = JSON.stringify(pk);
+    check('packages carry partner name',        /"partner_name":"Pal"/.test(flat));
+
+    // Removing him: his orders are yours again, nothing deleted.
+    await fakeFetch('/api/admin/bot-partners/' + pal.id, { method: 'DELETE' });
+    const m5 = await (await fakeFetch('/api/admin/bot-money')).json();
+    check('remove partner → orders kept, all yours', m5.partners.length === 0 && m5.partnerOrderIds.length === 0 &&
+          DB.prepare("SELECT COUNT(*) n FROM bot_orders WHERE order_number LIKE 'PT%'").get().n === 3 &&
+          DB.prepare("SELECT partner_override v FROM bot_orders WHERE order_number='PT3'").get().v === null);
+    w.closePartners();
+    // Clean up so the rest of the page tests see the old data.
+    DB.prepare("DELETE FROM bot_checkins WHERE order_id IN (?,?,?)").run([pt1, pt2, pt3]);
+    DB.prepare("DELETE FROM bot_orders WHERE order_number IN ('PT1','PT2','PT3')").run();
+    DB.prepare("DELETE FROM bot_sales WHERE product_name='Test Pal Card'").run();
+    await w.loadBotOrders(); await tick(150);
+  }
+
   console.log('\n── Orders table tracking links use the right carrier too ──');
   {
     await openOrderList();
