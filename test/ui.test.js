@@ -1643,6 +1643,46 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     await w.loadBotOrders(); await tick(150);
   }
 
+  console.log('\n── A fee or fix made anywhere shows everywhere; ✎ never writes old values back ──');
+  {
+    DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total, finder_fee, order_date)
+                VALUES ('Pokemon','Test Shop','SY1','Confirmed',?,40,0,'2026-12-30')`).run([JSON.stringify(['2x Test Sync Card @ $20.00'])]);
+    const sy = DB.prepare("SELECT id FROM bot_orders WHERE order_number='SY1'").get().id;
+    await openOrderList(); await w.loadBotOrders(); await tick(200);
+    const syRow = () => [...d.querySelectorAll('#bot-orders-body tr')].find(r => /SY1/.test(r.textContent));
+    check('SY1 listed, no fee yet',               syRow() && !syRow().querySelector('.bot-ol-fee'));
+    // A box fee saved from another card (page's own api call) → the order list updates by itself.
+    await w.api('POST', '/admin/bot-packages/fee', { orderIds: [sy], fee: 12 });
+    await tick(700);
+    check('box fee from another card → order list shows it', syRow() && syRow().querySelector('.bot-ol-fee') && /\$12\.00 fee/.test(syRow().querySelector('.bot-ol-fee').textContent),
+          syRow() && syRow().textContent.replace(/\s+/g, ' '));
+    // FEE / UNIT typed on the product → also shows on this order by itself.
+    await w.api('PATCH', '/admin/bot-items/sku', { sku: 'Test Sync Card', buyer_fee: 1, sale_price: 0 });
+    await tick(700);
+    check('FEE / UNIT on the product → order shows $14 fee', syRow() && /\$14\.00 fee/.test(syRow().querySelector('.bot-ol-fee').textContent), syRow() && syRow().textContent.replace(/\s+/g, ' '));
+    await w.api('PATCH', '/admin/bot-items/sku', { sku: 'Test Sync Card', buyer_fee: 0, sale_price: 0 });
+    await tick(600);
+
+    // Changed elsewhere (another device / the email scan) while this page still has the old copy.
+    DB.prepare("UPDATE bot_orders SET finder_fee=30, status='Shipped', tracking='1ZSYNC0000000001' WHERE id=?").run([sy]);
+    await w.botEditRow(sy); await tick(80);
+    check('✎ opens with the saved values, not the page\'s old copy', d.getElementById('bot-edit-finder').value === '30' && d.getElementById('bot-edit-status').value === 'Shipped',
+          [d.getElementById('bot-edit-finder').value, d.getElementById('bot-edit-status').value].join());
+    // Another change lands while the editor is open; you only edit the note.
+    DB.prepare("UPDATE bot_orders SET finder_fee=35 WHERE id=?").run([sy]);
+    d.getElementById('bot-edit-notes').value = 'checked';
+    await w.saveBotEdit(); await tick(200);
+    const r1 = DB.prepare('SELECT finder_fee, status, notes, status_source FROM bot_orders WHERE id=?').get([sy]);
+    check('saving only the note keeps the fee + status', r1.finder_fee === 35 && r1.status === 'Shipped' && r1.notes === 'checked' && r1.status_source !== 'manual', JSON.stringify(r1));
+    // Clearing a fee works now (it used to be impossible to set it back to 0).
+    await w.botEditRow(sy); await tick(80);
+    d.getElementById('bot-edit-finder').value = '';
+    await w.saveBotEdit(); await tick(200);
+    check('fee cleared to $0',                    DB.prepare('SELECT finder_fee f FROM bot_orders WHERE id=?').get([sy]).f === 0);
+    DB.prepare("DELETE FROM bot_orders WHERE order_number='SY1'").run();
+    await w.loadBotOrders(); await tick(150);
+  }
+
   console.log('\n── Orders table tracking links use the right carrier too ──');
   {
     await openOrderList();

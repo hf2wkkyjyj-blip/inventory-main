@@ -1247,8 +1247,33 @@ async function api(method, path, body) {
   if (res.status === 401) { doLogout(); return null; }
   const data = await res.json();
   if (!res.ok) return null;
+  // Any change to orders, fees, stock, sales, partners… → every card and list
+  // re-reads the same saved data (unless the caller already reloaded it).
+  if (method !== 'GET' && /^\/admin\/(bot-|scrape-emails)/.test(path) && !(body && body.dryRun)) botScheduleSync();
   return data;
 }
+
+// ── Keep every card in step ─────────────────────────────────────────────────
+// Each fee, status or check-in is saved ONCE, on the order (or the product for
+// FEE / UNIT). Every card and list reads that same saved value — so it doesn't
+// matter where you typed it. This makes sure what's on screen is re-read after
+// any change, and when you come back to the app (another device may have
+// changed something).
+let _botSyncTimer = null, _botWriteAt = 0, _botLoadedAt = 0, _botSyncing = false;
+function botScheduleSync() {
+  _botWriteAt = Date.now();
+  clearTimeout(_botSyncTimer);
+  _botSyncTimer = setTimeout(botSyncNow, 350);
+}
+async function botSyncNow() {
+  if (_botSyncing || _botLoadedAt > _botWriteAt) return;      // the page already reloaded after the change
+  if (!_botLoadedAt) return;                                  // bot orders never opened on this page
+  _botSyncing = true;
+  try { await loadBotOrders({ keepPage: true }); } finally { _botSyncing = false; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && TOKEN && Date.now() - _botLoadedAt > 30000) { _botWriteAt = Date.now(); botSyncNow(); }
+});
 
 if (TOKEN) {
   document.getElementById('login-screen').style.display = 'none';
@@ -2214,11 +2239,13 @@ function botRenderMoneyCards(ordersInRange) {
 }
 
 
-async function loadBotOrders() {
+async function loadBotOrders({ keepPage = false } = {}) {
+  const started = Date.now();
   const [orders] = await Promise.all([api('GET', '/admin/bot-orders'), botLoadMoney()]);
   if (!orders) return;
+  _botLoadedAt = started;
   _botOrders = orders;
-  _botPage = 0;
+  if (!keepPage) _botPage = 0;
   buildBotStats();
   buildBotCatTabs();
   buildBotRetailerFilter();
@@ -4887,8 +4914,12 @@ function botShowOrderCost(id, el) {
     (units ? `${units} unit${units === 1 ? '' : 's'} → $${(total / units).toFixed(2)}/unit` : '') + (items ? '<br>' + items : ''), 'LANDED COST · THIS ORDER');
 }
 
-function botEditRow(id) {
-  const o = _botOrders.find(x => Number(x.id) === Number(id));
+async function botEditRow(id) {
+  // Open from the database, not from the page's copy: a fee or status set on
+  // another card since the page loaded must not be written back over.
+  const fresh = await api('GET', '/admin/bot-orders/' + Number(id)).catch(() => null);
+  if (fresh) { const i = _botOrders.findIndex(x => Number(x.id) === Number(id)); if (i >= 0) _botOrders[i] = fresh; else _botOrders.push(fresh); }
+  const o = fresh || _botOrders.find(x => Number(x.id) === Number(id));
   // This used to return silently — a button that does nothing. Say so instead.
   if (!o) { alert('Could not open this order — try Refresh.'); return; }
   document.getElementById('bot-edit-id').value = id;
@@ -4916,7 +4947,17 @@ function botEditRow(id) {
   document.getElementById('bot-edit-overlay').dataset.qty = (o.landed && o.landed.units) || botTotalQty(o);
   document.getElementById('bot-edit-overlay').dataset.unitfee = (o.landed && o.landed.unitFee) || 0;
   document.getElementById('bot-edit-overlay').dataset.refunded = o.refunded_amount || 0;
+  document.getElementById('bot-edit-overlay').dataset.opened = JSON.stringify(botEditValues());
   botEditCalc();
+}
+// What the editor's fields say right now. Only fields you CHANGE are saved.
+function botEditValues() {
+  const v = id => document.getElementById(id).value;
+  const num = id => v(id).trim() === '' ? 0 : Math.round(parseFloat(v(id)) * 100) / 100;
+  return {
+    status: v('bot-edit-status'), tracking: v('bot-edit-tracking').trim() || null, notes: v('bot-edit-notes').trim() || null,
+    order_total: num('bot-edit-total'), tax_amount: num('bot-edit-tax'), ship_cost: num('bot-edit-ship'), finder_fee: num('bot-edit-finder'),
+  };
 }
 function closeBotEdit() {
   document.getElementById('bot-edit-overlay').classList.remove('open');
@@ -4938,16 +4979,14 @@ function botEditCalc() {
 }
 async function saveBotEdit() {
   const id = document.getElementById('bot-edit-id').value;
-  const payload = {
-    status:     document.getElementById('bot-edit-status').value,
-    tracking:   document.getElementById('bot-edit-tracking').value.trim() || null,
-    notes:      document.getElementById('bot-edit-notes').value.trim() || null,
-    order_total: parseFloat(document.getElementById('bot-edit-total').value) || null,
-    tax_amount:  parseFloat(document.getElementById('bot-edit-tax').value) || null,
-    ship_cost:   parseFloat(document.getElementById('bot-edit-ship').value) || null,
-    finder_fee:  parseFloat(document.getElementById('bot-edit-finder').value) || null,
-  };
-  await api('PATCH', '/admin/bot-orders/'+id, payload);
+  let opened = {};
+  try { opened = JSON.parse(document.getElementById('bot-edit-overlay').dataset.opened || '{}'); } catch (_) {}
+  const now = botEditValues();
+  // Send only what you changed — everything else stays exactly as saved
+  // (including a fee typed on another card). A fee can now be cleared to 0.
+  const payload = {};
+  for (const k of Object.keys(now)) if (JSON.stringify(now[k]) !== JSON.stringify(opened[k]) && !(Number.isNaN(now[k]))) payload[k] = now[k];
+  if (Object.keys(payload).length) await api('PATCH', '/admin/bot-orders/'+id, payload);
   const ownSel = document.getElementById('bot-edit-owner');
   if (ownSel && ownSel.value !== ownSel.dataset.was) {
     await api('PUT', '/admin/bot-orders/' + id + '/owner', { partner_id: ownSel.value === '' ? null : Number(ownSel.value) });

@@ -1808,7 +1808,9 @@ function unitFeesByOrder(groups) {
 // same way as everywhere else: what you paid (total, tax and shipping are IN
 // the total) + the order/box finder fee + any FEE / UNIT typed on its products.
 app.get('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
-  const orders = withMainAddress(db.prepare('SELECT * FROM bot_orders ORDER BY order_date DESC, received_at DESC, created_at DESC').all());
+  res.json(withLanded(withMainAddress(db.prepare('SELECT * FROM bot_orders ORDER BY order_date DESC, received_at DESC, created_at DESC').all())));
+});
+function withLanded(orders) {
   try {
     const catalog = SkuCatalog.loadCatalog(db);
     let pricingRows = [];
@@ -1827,8 +1829,8 @@ app.get('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
       delete o._lineCosts;
     }
   } catch (e) { console.error('bot-orders landed:', e.message); }
-  res.json(orders);
-});
+  return orders;
+}
 
 // Manual refresh: fires immediately, runs tracking check in background
 app.post('/api/admin/bot-orders/refresh-tracking', auth, adminOnly, (req, res) => {
@@ -2190,6 +2192,18 @@ setTimeout(autoUpdateTracking, 2 * 60 * 1000);
 setInterval(autoUpdateTracking, 24 * 60 * 60 * 1000);
 
 // ─── START ───────────────────────────────────────────────────────────────────
+// One order, fresh from the database — the ✎ editor opens from this, never
+// from a copy the page loaded earlier (a fee or status changed on another card
+// since then would otherwise be written back over).
+app.get('/api/admin/bot-orders/:id', auth, adminOnly, (req, res, next) => {
+  if (!/^\d+$/.test(req.params.id)) return next();
+  // Registered last so /bot-orders/refresh-status etc. are matched first.
+  const o = db.prepare('SELECT * FROM bot_orders WHERE id=?').get([Number(req.params.id)]);
+  if (!o) return res.status(404).json({ error: 'No such order' });
+  const all = withLanded(withMainAddress(db.prepare('SELECT * FROM bot_orders').all()));
+  res.json(all.find(x => x.id === o.id));
+});
+
 app.listen(PORT, () => {
   console.log(`\n✅ Inventory Site v2 running at http://localhost:${PORT}`);
   console.log(`   Admin panel: http://localhost:${PORT}/admin.html`);
