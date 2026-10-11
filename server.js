@@ -254,6 +254,16 @@ try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='Unship' AN
 // Hand-written September fixes. These used to OVERWRITE on every start, which
 // kept undoing tracking fixed with ✎ (see legacyFixes.js). Now fill-only.
 try { require('./legacyFixes').applyLegacyFixes(db); } catch (e) { console.error('⚠️  legacy fixes failed:', e.message); }
+// Finder fee on orders with none: your last fee per unit for that product at
+// that store (autoFees.js). 'auto' = filled by this; anything else = set by you.
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_source TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_set_at TEXT"); } catch(e) {}   // when you last typed its fee
+const nowIso = () => new Date().toISOString();
+const AutoFees = require('./autoFees');
+function runAutoFees() {
+  try { const n = AutoFees.applyAutoFees(db, SkuCatalog.loadCatalog(db)); if (n) console.log(`💲 auto finder fee on ${n} order(s)`); return n; }
+  catch (e) { console.error('auto fees failed:', e.message); return 0; }
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS members (
@@ -1396,7 +1406,9 @@ app.post('/api/admin/bot-packages/fee', auth, adminOnly, (req, res) => {
   split.unitFeeProducts = computeItemGroups(orders, pricingRows, catalog)
     .filter(g => g.perUnitFeeTyped > 0).map(g => ({ name: g.name, perUnit: g.perUnitFeeTyped }));
   if (!dryRun) {
-    for (const o of split.orders) db.prepare('UPDATE bot_orders SET finder_fee=? WHERE id=?').run([o.fee, o.id]);
+    const at = nowIso();
+    for (const o of split.orders) db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='manual', fee_set_at=? WHERE id=?").run([o.fee, at, o.id]);
+    runAutoFees();
   }
   res.json({ ...split, saved: !dryRun });
 });
@@ -1426,9 +1438,10 @@ app.post('/api/admin/bot-orders/bulk-fee', auth, adminOnly, (req, res) => {
   if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'Fee must be a number' });
   let updated = 0;
   for (const id of ids) {
-    const r = db.prepare('UPDATE bot_orders SET finder_fee=? WHERE id=?').run([Math.round(amount * 100) / 100, id]);
+    const r = db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='manual', fee_set_at=? WHERE id=?").run([Math.round(amount * 100) / 100, nowIso(), id]);
     if (r && r.changes) updated += Number(r.changes);
   }
+  runAutoFees();
   res.json({ updated });
 });
 
@@ -1620,7 +1633,7 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
         const total = (Number(o.order_total) || 0) - (Number(o.refunded_amount) || 0);
         return { id: o.id, order_number: o.order_number, retailer: o.retailer, status: o.status,
           order_date: o.order_date, shipping_name: o.shipping_name || null, account_email: o.account_email || null,
-          total: r2(total), fee: r2(fee), orderFee: r2(fx.orderFee || 0), unitFee: r2(fx.unitFee || 0),
+          total: r2(total), fee: r2(fee), orderFee: r2(fx.orderFee || 0), unitFee: r2(fx.unitFee || 0), feeAuto: o.fee_source === 'auto',
           landed: r2(total + fee), match: o.partner_match,
           lines: orderLines(o, catalog).map(l => ({ name: l.name, item_name: l.item_name, qty: l.qty, cost: l.cost })) };
       }),
@@ -1881,6 +1894,7 @@ function withLanded(orders) {
     try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch (_) {}
     const live = orders.filter(o => o.status !== 'Cancelled' && o.status !== 'Refunded');
     const unitFees = unitFeesByOrder(computeItemGroups(live, pricingRows, catalog));
+    const rates = AutoFees.feeRates(orders, catalog);
     attachLineCosts(orders, catalog);
     const r2 = n => Math.round(n * 100) / 100;
     for (const o of orders) {
@@ -1889,7 +1903,8 @@ function withLanded(orders) {
       const lines = orderLines(o, catalog).map(l => ({ name: l.name, item_name: l.item_name, qty: l.qty, cost: l.cost }));
       const units = lines.reduce((a, l) => a + l.qty, 0);
       o.landed = { paid: r2(paid), orderFee: r2(orderFee), unitFee, fee: r2(orderFee + unitFee), total: r2(paid + orderFee + unitFee),
-                   units, perUnit: units ? r2((paid + orderFee + unitFee) / units) : null, lines };
+                   units, perUnit: units ? r2((paid + orderFee + unitFee) / units) : null, lines,
+                   feeAuto: o.fee_source === 'auto', autoFee: AutoFees.autoFeeFor(o, rates, catalog) };
       delete o._lineCosts;
     }
   } catch (e) { console.error('bot-orders landed:', e.message); }
@@ -1915,6 +1930,7 @@ app.post('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
   const r = db.prepare(`INSERT INTO bot_orders (category,retailer,order_number,account_email,order_date,shipping_name,shipping_address,status,items,order_total,notes,received_at)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`)
     .run([category||'Other',retailer||null,order_number||null,account_email||null,order_date||null,shipping_name||null,shipping_address||null,status||'Confirmed',JSON.stringify(items||[]),parseFloat(order_total)||0,notes||null]);
+  runAutoFees();
   res.json({ id: r.lastInsertRowid });
 });
 
@@ -1932,6 +1948,10 @@ app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
     .run([o.category||null,o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||null,o.items?JSON.stringify(o.items):null,o.order_total!=null?o.order_total:null,o.refunded_amount!=null?o.refunded_amount:null,o.notes||null,o.tracking||null,o.tracking_status||null,o.expected_date||null,o.tax_amount!=null?o.tax_amount:null,o.ship_cost!=null?o.ship_cost:null,o.finder_fee!=null?o.finder_fee:null,req.params.id]);
   // A status you set by hand survives Repair Statuses (see status_source).
   if (o.status) db.prepare("UPDATE bot_orders SET status_source='manual' WHERE id=?").run([req.params.id]);
+  // A fee you type is yours (never auto-changed, even $0); fee_auto: true hands it back to the auto fee.
+  if (o.fee_auto === true)        db.prepare("UPDATE bot_orders SET fee_source='auto', finder_fee=0 WHERE id=?").run([req.params.id]);
+  else if (o.finder_fee != null)  db.prepare("UPDATE bot_orders SET fee_source='manual', fee_set_at=? WHERE id=?").run([nowIso(), req.params.id]);
+  runAutoFees();
   res.json({ success: true });
 });
 
@@ -1980,6 +2000,7 @@ async function scanAndHeal() {
   try {
     await healFromSavedEmails(db, d => reparseStoredEmails(d), { after: d => OrderMerge.reconcileDelivered(d) });
   } catch (e) { console.error('self-heal failed:', e.message); }
+  runAutoFees();                     // new orders get your usual fee
   return n;
 }
 
@@ -2040,6 +2061,7 @@ app.post('/api/admin/scrape-emails/reparse', auth, adminOnly, async (req, res) =
     }
     const result = await reparseStoredEmails(db, { rebuildStatus: req.body?.rebuildStatus === true });
     result.reconciled = OrderMerge.reconcileDelivered(db);
+    result.autoFees = runAutoFees();
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2268,6 +2290,7 @@ app.get('/api/admin/bot-orders/:id', auth, adminOnly, (req, res, next) => {
   res.json(all.find(x => x.id === o.id));
 });
 
+runAutoFees();                       // on start: fill orders that came in without a fee
 app.listen(PORT, () => {
   console.log(`\n✅ Inventory Site v2 running at http://localhost:${PORT}`);
   console.log(`   Admin panel: http://localhost:${PORT}/admin.html`);

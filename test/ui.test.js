@@ -845,34 +845,61 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     d.getElementById('bf-save').click(); await tick(200);
 
     const ov = d.getElementById('bot-fee-overlay');
-    check('D01 saved at $35',                    ffee('D01') === 35);
-    check('dialog stays open with matches',      isVisible(ov) && d.getElementById('bf-similar').style.display === 'block');
-    const listed = [...d.querySelectorAll('#bf-sim-list .bf-sim')].map(l => l.textContent.replace(/\s+/g, ' ').trim());
-    check('lists D02, D03, D04 only',            listed.length === 3 && ['D02', 'D03', 'D04'].every(n => listed.some(t => t.includes(n))), JSON.stringify(listed));
-    check('not: other qty / store / cancelled',  !listed.some(t => /D05|D06|D07/.test(t)));
+    const fsrc = n => DB.prepare('SELECT fee_source s FROM bot_orders WHERE order_number=?').get([n]).s;
+    check('D01 saved at $35, set by you',        ffee('D01') === 35 && fsrc('D01') === 'manual');
+    // Same product, same store, no fee of their own → they follow your new fee automatically.
+    check('auto: D02 + D03 follow at $35',       ffee('D02') === 35 && ffee('D03') === 35 && fsrc('D02') === 'auto' && fsrc('D03') === 'auto', [ffee('D02'), ffee('D03'), fsrc('D02')].join());
+    check('auto: D05 (1 unit) gets $17.50',      ffee('D05') === 17.5 && fsrc('D05') === 'auto', ffee('D05'));
+    check('D04 keeps the fee you set ($20)',      ffee('D04') === 20);
+    check('other store + cancelled untouched',    ffee('D06') === 0 && ffee('D07') === 0);
+    // The "same fee on similar orders" offer now only lists ones with a fee of their own.
+    check('offer lists only D04 (has its own fee)', isVisible(ov) && d.getElementById('bf-similar').style.display === 'block' &&
+          [...d.querySelectorAll('#bf-sim-list .bf-sim')].length === 1 && /D04/.test(d.querySelector('#bf-sim-list .bf-sim').textContent) &&
+          /has \$20\.00/.test(d.querySelector('#bf-sim-list .bf-sim').textContent));
     const box = n => [...d.querySelectorAll('#bf-sim-list .bf-sim')].find(l => l.textContent.includes(n)).querySelector('input');
-    check('same orders pre-checked',             box('D02').checked && box('D03').checked);
-    check('order with its own fee NOT checked',  !box('D04').checked && /has \$20\.00/.test(listed.find(t => t.includes('D04'))));
+    check('D04 not pre-checked',                 !box('D04').checked);
     const apply = d.getElementById('bf-sim-apply');
-    check('button says "Apply $35.00 to 2 orders"', /Apply \$35\.00 to 2 orders/.test(apply.textContent), apply.textContent);
-
-    box('D03').click(); await tick();
-    check('unchecking updates the count',        /to 1 order$/.test(apply.textContent.trim()), apply.textContent);
-    box('D03').click(); await tick();
+    box('D04').click(); await tick();
+    check('button says "Apply $35.00 to 1 order"', /Apply \$35\.00 to 1 order$/.test(apply.textContent.trim()), apply.textContent);
     apply.click(); await tick(200);
-    check('applied to D02 and D03',              ffee('D02') === 35 && ffee('D03') === 35);
-    check('D04 kept its own $20',                ffee('D04') === 20);
-    check('near-misses untouched',               ffee('D05') === 0 && ffee('D06') === 0 && ffee('D07') === 0);
+    check('D04 now $35 too',                     ffee('D04') === 35);
     check('dialog closed',                       !isVisible(ov));
-    check('rows now show $35.00',                ['D01', 'D02', 'D03'].every(n => /\$35\.00/.test(pkg(n).querySelector('button.bot-pkg-fee').textContent)));
-
-    // Next time, the ones already at $35 aren't offered again; only D04 is left.
-    pkg('D02').querySelector('button.bot-pkg-fee').click(); await tick();
+    check('rows now show $35.00',                ['D01', 'D02', 'D03', 'D04'].every(n => /\$35\.00/.test(pkg(n).querySelector('button.bot-pkg-fee').textContent)));
+    // Change your fee on one → every auto one follows; fees you set stay.
+    pkg('D01').querySelector('button.bot-pkg-fee').click(); await tick();
+    d.getElementById('bf-fee').value = '40'; d.getElementById('bf-fee').dispatchEvent(new w.Event('input'));
     d.getElementById('bf-save').click(); await tick(200);
-    const again = [...d.querySelectorAll('#bf-sim-list .bf-sim')].map(l => l.textContent);
-    check('already-$35 orders not offered again', again.length === 1 && /D04/.test(again[0]), JSON.stringify(again));
-    [...ov.querySelectorAll('button')].find(b => b.textContent.trim() === 'Skip').click(); await tick(100);
-    check('Skip closes without changing D04',    !isVisible(ov) && ffee('D04') === 20);
+    check('new rate: auto D02/D03 → $40, D05 → $20', ffee('D02') === 40 && ffee('D03') === 40 && ffee('D05') === 20, [ffee('D02'), ffee('D03'), ffee('D05')].join());
+    check('D04 (set by you) stays $35',          ffee('D04') === 35);
+    if (isVisible(ov)) { const sk = [...ov.querySelectorAll('button')].find(b => b.textContent.trim() === 'Skip'); sk && sk.click(); await tick(100); }
+    // ✎ on an auto order says so; typing a fee makes it yours; "↺ use auto fee" hands it back.
+    const d02 = DB.prepare("SELECT id FROM bot_orders WHERE order_number='D02'").get().id;
+    await w.botEditRow(d02); await tick(80);
+    check('✎: auto fee explained',               /auto/.test(d.getElementById('bot-edit-finder-hint').textContent) && /\$20\.00\/unit/.test(d.getElementById('bot-edit-finder-hint').textContent), d.getElementById('bot-edit-finder-hint').textContent);
+    d.getElementById('bot-edit-finder').value = '50'; d.getElementById('bot-edit-finder').dispatchEvent(new w.Event('input'));
+    await w.saveBotEdit(); await tick(200);
+    check('typed $50 → set by you',              ffee('D02') === 50 && fsrc('D02') === 'manual');
+    check('… and it\'s now your latest fee: auto D03 → $50', ffee('D03') === 50 && ffee('D05') === 25, [ffee('D03'), ffee('D05')].join());
+    // Set $40 again on D01 → that's the latest; D02 keeps your $50.
+    pkg('D01').querySelector('button.bot-pkg-fee').click(); await tick();
+    d.getElementById('bf-fee').value = '40'; d.getElementById('bf-fee').dispatchEvent(new w.Event('input'));
+    d.getElementById('bf-save').click(); await tick(200);
+    if (isVisible(ov)) { const sk = [...ov.querySelectorAll('button')].find(b => b.textContent.trim() === 'Skip'); sk && sk.click(); await tick(100); }
+    check('D03 back to $40, D02 keeps $50',      ffee('D03') === 40 && ffee('D02') === 50);
+    await w.botEditRow(d02); await tick(80);
+    const useAuto = d.getElementById('bot-edit-use-auto');
+    check('✎ offers ↺ use auto fee ($40)',        !!useAuto && /\$40\.00/.test(useAuto.textContent), d.getElementById('bot-edit-finder-hint').textContent);
+    useAuto.click(); await w.saveBotEdit(); await tick(200);
+    check('back to auto at $40',                 fsrc('D02') === 'auto' && ffee('D02') === 40, [fsrc('D02'), ffee('D02')].join());
+    // A new order of the same product at that store comes in with the fee already on it.
+    await fakeFetch('/api/admin/bot-orders', { method: 'POST', body: JSON.stringify({ category: 'Mattel', retailer: 'Test Drop Store', order_number: 'D08', status: 'Confirmed', items: ['2x Test Drop Car @ $32.50'], order_total: 65 }) });
+    check('new order D08 arrives with $40 auto', ffee('D08') === 40 && fsrc('D08') === 'auto');
+    DB.prepare("DELETE FROM bot_orders WHERE order_number='D08'").run();
+    // Put D02-D05 back as the old sections left them, so later totals don't move.
+    DB.prepare("UPDATE bot_orders SET finder_fee=35, fee_source='manual' WHERE order_number IN ('D01','D02','D03')").run();
+    DB.prepare("UPDATE bot_orders SET finder_fee=20, fee_source='manual' WHERE order_number='D04'").run();
+    DB.prepare("UPDATE bot_orders SET finder_fee=0, fee_source='manual' WHERE order_number='D05'").run();
+    await w.loadBotOrders(); await tick(150);
   }
 
   console.log('\n── Delivered-but-listed-as-Shipped gets fixed (real clicks) ──');

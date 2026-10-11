@@ -149,4 +149,4 @@ function orderLines(o, catalog) {
   return lines;
 }
 
-module.exports = { computePackages, addressKey, orderLines };
+module.exports = { computePackages, addressKey, orderLines, productNameFor };

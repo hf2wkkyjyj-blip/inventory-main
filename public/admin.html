@@ -951,7 +951,8 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <div class="form-group" style="margin:0;"><label style="font-size:11px;">Shipping ($) <span style="color:var(--muted);font-weight:400;">— already in the total</span></label>
           <input type="number" id="bot-edit-ship" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
         <div class="form-group" style="margin:0;"><label style="font-size:11px;">Finder Fee ($)</label>
-          <input type="number" id="bot-edit-finder" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
+          <input type="number" id="bot-edit-finder" step="0.01" placeholder="0.00" oninput="document.getElementById('bot-edit-overlay').dataset.feeauto='';botEditCalc()" style="width:100%;">
+          <div id="bot-edit-finder-hint" style="font-size:10px;color:var(--muted);margin-top:3px;"></div></div>
       </div>
       <!-- Landed cost summary -->
       <div id="bot-edit-summary" style="margin-top:12px;background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.2);border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
@@ -2667,7 +2668,7 @@ function renderBotOrders() {
       <td style="max-width:220px;"><div class="clip" data-tip="${esc(itemList.join('\n'))}">${esc(items||'—')}</div></td>
       <td style="text-align:right;font-variant-numeric:tabular-nums;">
         ${o.order_total?'$'+Number(o.order_total).toFixed(2):'—'}
-        ${o.landed && o.landed.fee ? `<div class="bot-ol-fee" style="font-size:10px;color:#fbbf24;margin-top:1px;">+ $${o.landed.fee.toFixed(2)} fee</div>` : ''}
+        ${o.landed && o.landed.fee ? `<div class="bot-ol-fee" style="font-size:10px;color:#fbbf24;margin-top:1px;">+ $${o.landed.fee.toFixed(2)} fee${o.fee_source === 'auto' ? ' <span style="color:#60a5fa;" data-tip="Filled from your last fee for this product at this store">· auto</span>' : ''}</div>` : ''}
         ${(()=>{const cpu=botLandedPerUnit(o);return cpu?`<div class="bot-ol-landed" onclick="botShowOrderCost(${Number(o.id)}, this)" data-tip="Click for the full breakdown" style="font-size:10px;color:#60a5fa;margin-top:1px;cursor:pointer;text-decoration:underline dotted;">$${cpu.toFixed(2)}/unit</div>`:''})()}
       </td>
       <td>${esc(o.shipping_name||'—')}</td>
@@ -2957,7 +2958,7 @@ function partnerShowFee(pid, oid, el) {
   const o = p && p.orderList.find(x => x.id === oid);
   if (!o) return;
   botCostPopover(el, '#' + (o.order_number || o.id), [
-    ['Finder fee (order/box)', o.orderFee || 0, true],
+    [o.feeAuto ? 'Finder fee <span style="color:#60a5fa;font-size:10px;">auto — your last fee for this product here</span>' : 'Finder fee (order/box)', o.orderFee || 0, true],
     ['FEE / UNIT on its products', o.unitFee || 0, true],
   ], o.fee, o.fee ? '' : 'No fee saved on this order. Add it with ✎ (Finder fee) or the box fee in By package.', 'FEES ON THIS ORDER');
 }
@@ -5022,7 +5023,7 @@ function botShowOrderCost(id, el) {
   const total = L.paid + L.orderFee + L.unitFee;
   const parts = [
     [`Paid <span style="font-size:10px;opacity:.75;">(items${o.tax_amount ? ` + tax $${Number(o.tax_amount).toFixed(2)}` : ' + tax'}${o.ship_cost ? ` + ship $${Number(o.ship_cost).toFixed(2)}` : ''})</span>`, L.paid, true],
-    ['Finder fee (order/box)', L.orderFee, true],
+    [o.fee_source === 'auto' ? 'Finder fee <span style="color:#60a5fa;font-size:10px;">auto</span>' : 'Finder fee (order/box)', L.orderFee, true],
     ['FEE / UNIT on its products', L.unitFee],
   ];
   const items = (L.lines || []).map(l => `${esc(l.name)} ×${l.qty}${l.cost ? ` · $${l.cost.total.toFixed(2)}/unit` : ''}`).join('<br>');
@@ -5065,6 +5066,24 @@ async function botEditRow(id) {
   document.getElementById('bot-edit-overlay').dataset.unitfee = (o.landed && o.landed.unitFee) || 0;
   document.getElementById('bot-edit-overlay').dataset.refunded = o.refunded_amount || 0;
   document.getElementById('bot-edit-overlay').dataset.opened = JSON.stringify(botEditValues());
+  document.getElementById('bot-edit-overlay').dataset.feeauto = '';
+  botEditFeeHint(o);
+  botEditCalc();
+}
+// Under the Finder Fee box: is it the auto fee, and can it go back to auto?
+function botEditFeeHint(o) {
+  const el = document.getElementById('bot-edit-finder-hint');
+  const a = o.landed && o.landed.autoFee;
+  const rate = a ? a.used.map(u => `${esc(u.name)} $${u.perUnit.toFixed(2)}/unit${u.from ? ' (from #' + esc(u.from) + ')' : ''}`).join(', ') : '';
+  if (o.fee_source === 'auto') {
+    el.innerHTML = `<span style="color:#60a5fa;">auto</span> — your last fee at ${esc(o.retailer || 'this store')}: ${rate}. Type a fee to set it yourself.`;
+  } else if (a && Math.abs((Number(o.finder_fee) || 0) - a.fee) > 0.004) {
+    el.innerHTML = `Set by you. <a href="#" id="bot-edit-use-auto" onclick="botEditUseAuto(${a.fee});return false;" style="color:#60a5fa;">↺ use auto fee ($${a.fee.toFixed(2)})</a>`;
+  } else el.innerHTML = '';
+}
+function botEditUseAuto(fee) {
+  document.getElementById('bot-edit-finder').value = fee.toFixed(2);
+  document.getElementById('bot-edit-overlay').dataset.feeauto = '1';
   botEditCalc();
 }
 // What the editor's fields say right now. Only fields you CHANGE are saved.
@@ -5103,6 +5122,8 @@ async function saveBotEdit() {
   // (including a fee typed on another card). A fee can now be cleared to 0.
   const payload = {};
   for (const k of Object.keys(now)) if (JSON.stringify(now[k]) !== JSON.stringify(opened[k]) && !(Number.isNaN(now[k]))) payload[k] = now[k];
+  // "↺ use auto fee": hand the fee back to the auto rule instead of fixing it.
+  if (document.getElementById('bot-edit-overlay').dataset.feeauto === '1') { delete payload.finder_fee; payload.fee_auto = true; }
   if (Object.keys(payload).length) await api('PATCH', '/admin/bot-orders/'+id, payload);
   const ownSel = document.getElementById('bot-edit-owner');
   if (ownSel && ownSel.value !== ownSel.dataset.was) {
