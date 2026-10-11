@@ -1478,6 +1478,29 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     [...card().querySelectorAll('a')].find(a => /Show his orders/.test(a.textContent)).click(); await tick(60);
     const ol = [...card().querySelectorAll('.pt-order')].map(x => x.textContent.replace(/\s+/g, ' '));
     check('order list: PT1 by email+name, PT2 by hand', ol.length === 2 && ol.some(t => /PT1.*by email\+name/.test(t)) && ol.some(t => /PT2.*set by hand/.test(t)), ol.join(' / '));
+    // Each order: its items, order total, fees, landed — and the per-unit breakdown on tap.
+    const row1 = [...card().querySelectorAll('.pt-order')].find(r => /PT1/.test(r.textContent));
+    const txt = el => row1.querySelector(el).textContent.trim();
+    check('PT1: items listed with landed/unit',  /Test Pal Card ×3\s*\$12\.00/.test(row1.querySelector('.pt-lines').textContent), row1.querySelector('.pt-lines').textContent);
+    check('PT1: $30 order + $6 fees = $36 landed', txt('.pt-o-total') === '$30.00' && txt('.pt-o-fee') === '$6.00' && txt('.pt-o-landed') === '$36.00',
+          [txt('.pt-o-total'), txt('.pt-o-fee'), txt('.pt-o-landed')].join(' '));
+    check('PT1: name + email shown to check',   /Pal Tester · pal@example\.test/.test(row1.textContent));
+    check('items add up → no warning',          !row1.querySelector('.pt-mismatch'));
+    check('sum row = his tab totals',           /2 orders\s*\$40\.00\s*\$8\.00\s*\$48\.00/.test(card().querySelector('.pt-o-sum').textContent.replace(/\s+/g, ' ')), card().querySelector('.pt-o-sum').textContent.replace(/\s+/g, ' '));
+    row1.querySelector('.pt-line').click(); await tick(60);
+    const lp = d.getElementById('landed-popover');
+    const lpt = lp ? lp.textContent.replace(/\s+/g, ' ') : '';
+    check('tap item → Item $10 + finder $2 = $12', /Item ?\$10\.00/.test(lpt) && /Finder fee \(order\/box\) ?\$2\.00/.test(lpt) && /Total ?\$12\.00/.test(lpt) && /3 units · \$36\.00 total · order PT1/.test(lpt), lpt);
+    lp && lp.remove();
+    // An order whose items don't add up to what it cost is flagged.
+    DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total, partner_override)
+                VALUES ('Pal Cat',?,'PT6','Confirmed',?,50,(SELECT id FROM bot_partners LIMIT 1))`).run([SHOP, JSON.stringify(['1x Test Pal Card @ $10.00'])]);
+    await w.openPartners(); await tick(200);
+    if (!card().querySelector('.pt-order')) { [...card().querySelectorAll('a')].find(a => /Show his orders/.test(a.textContent)).click(); await tick(60); }
+    const row6 = [...card().querySelectorAll('.pt-order')].find(r => /PT6/.test(r.textContent));
+    check('items not adding up → warning',      row6 && row6.querySelector('.pt-mismatch') && /\$10\.00, not \$50\.00/.test(row6.querySelector('.pt-mismatch').textContent), row6 && row6.textContent.replace(/\s+/g, ' '));
+    DB.prepare("DELETE FROM bot_orders WHERE order_number='PT6'").run();
+    await w.openPartners(); await tick(200);
 
     // Sell 5: oldest first → his 4 (PT1 Sep 2, PT2 Sep 3), then 1 of yours.
     await fakeFetch('/api/admin/bot-sales', { method: 'POST', body: JSON.stringify({ sku_key: 'test pal card', product_name: 'Test Pal Card', qty: 5, unit_price: 25, fees: 5, sold_at: '2026-09-10' }) });

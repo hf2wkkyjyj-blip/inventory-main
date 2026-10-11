@@ -2884,6 +2884,22 @@ async function partnerRefetch() {
   btn.disabled = false; btn.innerHTML = '<i class="fa fa-envelope"></i> Re-download old emails';
   await loadBotOrders(); await botLoadMoney(); renderPartners();
 }
+// Tap an item on his order → its landed cost per unit, same breakdown as yours.
+function partnerShowLineCost(el) {
+  const p = (_botMoney.partners || []).find(x => x.id === Number(el.dataset.pid));
+  const o = p && p.orderList.find(x => x.id === Number(el.dataset.oid));
+  const l = o && (o.lines || [])[Number(el.dataset.i)];
+  if (!l) return;
+  if (!l.cost) { botCostPopover(el, l.name, [], 0, 'No price or order total recorded for this order.'); return; }
+  const c = l.cost;
+  botCostPopover(el, l.name, [
+    ['Item', c.item, true],
+    [c.taxEstimated ? 'Tax <span style="font-size:10px;opacity:.7;">(est. from total)</span>' : 'Tax', c.tax, true],
+    ['Shipping', c.ship],
+    ['Finder fee (order/box)', c.orderFee],
+    ['Extra fee / unit', c.extraFee],
+  ], c.total, `${l.qty} unit${l.qty === 1 ? '' : 's'} · $${(c.total * l.qty).toFixed(2)} total · order ${esc(o.order_number || '')}`);
+}
 async function partnerSetOwner(orderId, partnerId) {
   await api('PUT', '/admin/bot-orders/' + orderId + '/owner', { partner_id: partnerId });
   await loadBotOrders(); await botLoadMoney(); renderPartners();
@@ -2927,11 +2943,32 @@ function renderPartners() {
           <button class="btn btn-ghost btn-sm pt-mine" onclick="partnerSetOwner(${o.id}, 0)">Mine</button></div>`).join('')}
       </div>` : ''}
       ${_ptOpen.has(p.id) ? `<div style="margin-top:8px;font-size:11px;">
-        ${p.orderList.map(o => `<div class="pt-order" style="display:flex;gap:10px;padding:3px 0;border-top:1px solid var(--border);">
-          <span style="width:130px;">${esc(o.order_number || '')}</span><span style="width:110px;color:var(--muted);">${esc(o.retailer || '')}</span>
-          <span style="width:80px;color:var(--muted);">${esc(o.status || '')}</span><span style="flex:1;color:var(--muted);">${o.match === 'manual' ? 'set by hand' : 'matched by ' + esc(o.match || '')}</span>
-          <button class="btn btn-ghost btn-sm pt-mine" onclick="partnerSetOwner(${o.id}, 0)" title="This one is mine">Mine</button>
-          <span>${m(o.total)}</span></div>`).join('') || '<div style="color:var(--muted);">No orders yet.</div>'}
+        ${p.orderList.length ? `<div style="display:flex;gap:10px;padding:2px 0;font-size:10px;letter-spacing:.05em;color:var(--muted);">
+          <span style="flex:1;">ORDER · ITEMS (tap an item for its landed cost)</span>
+          <span style="width:78px;text-align:right;">ORDER</span><span style="width:62px;text-align:right;">FEES</span><span style="width:84px;text-align:right;">LANDED</span><span style="width:52px;"></span></div>` : ''}
+        ${[...p.orderList].sort((x, y) => String(y.order_date || '').localeCompare(String(x.order_date || ''))).map(o => `<div class="pt-order" data-id="${o.id}" style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--border);">
+          <div style="flex:1;min-width:0;">
+            <div><b style="font-weight:600;">${esc(o.order_number || '')}</b>
+              <span style="color:var(--muted);margin-left:6px;">${esc(o.retailer || '')} · ${esc(o.status || '')}${o.order_date ? ' · ' + esc(botShortDate(o.order_date)) : ''}</span></div>
+            <div style="color:var(--muted);font-size:10px;margin-top:1px;">${[o.shipping_name, o.account_email].filter(Boolean).map(esc).join(' · ')}${(o.shipping_name || o.account_email) ? ' · ' : ''}${o.match === 'manual' ? 'set by hand' : 'matched by ' + esc(o.match || '')}</div>
+            <div class="pt-lines" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">${(o.lines || []).map((l, i) => `<span class="bot-pkg-tag pt-line" data-pid="${p.id}" data-oid="${o.id}" data-i="${i}" onclick="partnerShowLineCost(this)" data-tip="Click for landed cost" style="cursor:pointer;">${esc(l.name)} ×${l.qty}${l.cost ? ` <span style="color:#60a5fa;">${m(l.cost.total)}</span>` : ''}</span>`).join('') || '<span style="color:var(--muted);">no items read</span>'}</div>
+            ${(() => {   // items should add up to what the order cost him — flag when they don't
+              const ls = o.lines || [];
+              if (!ls.length || ls.some(l => !l.cost)) return '';
+              const sum = ls.reduce((a, l) => a + l.qty * l.cost.total, 0);
+              return Math.abs(sum - o.landed) > 0.05
+                ? `<div class="pt-mismatch" style="color:#fbbf24;font-size:10px;margin-top:3px;">⚠ items add up to ${m(sum)}, not ${m(o.landed)} — check the item prices on this order</div>` : '';
+            })()}
+          </div>
+          <span class="pt-o-total" style="width:78px;text-align:right;font-variant-numeric:tabular-nums;">${m(o.total)}</span>
+          <span class="pt-o-fee" style="width:62px;text-align:right;font-variant-numeric:tabular-nums;color:${o.fee ? 'var(--text)' : 'var(--muted)'};">${m(o.fee)}</span>
+          <b class="pt-o-landed" style="width:84px;text-align:right;font-variant-numeric:tabular-nums;color:#60a5fa;">${m(o.landed)}</b>
+          <button class="btn btn-ghost btn-sm pt-mine" onclick="partnerSetOwner(${o.id}, 0)" title="This one is mine" style="width:52px;">Mine</button>
+        </div>`).join('') || '<div style="color:var(--muted);">No orders yet.</div>'}
+        ${p.orderList.length ? `<div class="pt-o-sum" style="display:flex;gap:10px;padding:6px 0;border-top:2px solid var(--border);font-weight:700;">
+          <span style="flex:1;">${p.orderList.length} order${p.orderList.length === 1 ? '' : 's'}</span>
+          <span style="width:78px;text-align:right;">${m(p.spent)}</span><span style="width:62px;text-align:right;">${m(p.fees)}</span>
+          <span style="width:84px;text-align:right;color:#60a5fa;">${m(p.totalIn)}</span><span style="width:52px;"></span></div>` : ''}
         ${p.sales.length ? `<div style="margin-top:6px;font-weight:700;color:var(--muted);">SALES OF HIS UNITS</div>` + p.sales.map(x => `<div style="display:flex;gap:10px;padding:2px 0;">
           <span style="width:90px;color:var(--muted);">${esc(botShortDate(x.sold_at || ''))}</span><span style="flex:1;">${esc(x.product)} ×${x.qty}</span><span>${m(x.revenue - x.fees)}</span></div>`).join('') : ''}
         ${p.payouts.length ? `<div style="margin-top:6px;font-weight:700;color:var(--muted);">PAYMENTS TO HIM</div>` + p.payouts.map(x => `<div style="display:flex;gap:10px;padding:2px 0;">

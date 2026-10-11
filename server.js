@@ -15,7 +15,7 @@ const puppeteer = require('puppeteer-core');
 const { decomposeItem, parseItemName, splitItemParts, itemKey, shortenName } = require('./itemNames');
 const { computeItemGroups, orderLineCosts } = require('./itemView');
 const SkuCatalog = require('./skuCatalog');
-const { computePackages } = require('./packageView');
+const { computePackages, orderLines } = require('./packageView');
 const { splitBoxFee, orderSignature } = require('./feeSplit');
 const { buildAddressBook, addressKey, parseAddress } = require('./addresses');
 const { loadPartners, annotatePartners } = require('./partners');
@@ -1525,7 +1525,8 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
   try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch (_) {}
   try { salesRows = db.prepare('SELECT * FROM bot_sales').all(); } catch (_) {}
   const stock  = loadStock();
-  const groups = computeItemGroups(orders, pricingRows, SkuCatalog.loadCatalog(db), salesRows, stock);
+  const catalog = SkuCatalog.loadCatalog(db);
+  const groups = computeItemGroups(orders, pricingRows, catalog, salesRows, stock);
   const r2 = n => Math.round(n * 100) / 100;
 
   const unitFees = new Map();
@@ -1613,8 +1614,15 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
       unitsSold: sold, salesNet: r2(salesNet), costOfSold: r2(ps.reduce((a, x) => a + x.cost, 0)),
       paid: r2(paid), owed: r2(salesNet - paid),
       payouts: payouts.filter(x => x.partner_id === p.id),
-      orderList: mineOrders.map(o => ({ id: o.id, order_number: o.order_number, retailer: o.retailer, status: o.status,
-        order_date: o.order_date, total: Number(o.order_total) || 0, match: o.partner_match })),
+      // Each order with what's in it and its landed cost — to check his tab line by line.
+      orderList: (attachLineCosts(mineOrders, catalog), mineOrders).map(o => {
+        const fee = (allFees.find(x => x.id === o.id) || {}).fee || 0;
+        const total = (Number(o.order_total) || 0) - (Number(o.refunded_amount) || 0);
+        return { id: o.id, order_number: o.order_number, retailer: o.retailer, status: o.status,
+          order_date: o.order_date, shipping_name: o.shipping_name || null, account_email: o.account_email || null,
+          total: r2(total), fee: r2(fee), landed: r2(total + fee), match: o.partner_match,
+          lines: orderLines(o, catalog).map(l => ({ name: l.name, item_name: l.item_name, qty: l.qty, cost: l.cost })) };
+      }),
       sales: ps,
     };
   });

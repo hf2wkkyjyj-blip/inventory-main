@@ -80,19 +80,12 @@ function computePackages(orders, catalog, stock) {
       partner_check_name: o.partner_check_name || null,
     });
 
-    let arr; try { arr = JSON.parse(o.items || '[]'); } catch (_) { arr = []; }
-    for (const part of (Array.isArray(arr) ? arr : [arr]).flatMap(splitItemParts)) {
-      const raw  = parseItemName(part);
-      if (!raw) continue;
-      const name = productNameFor(raw, catalog);
-      const k    = itemKey(name);
-      const lk   = itemKey(raw);
-      const ln   = lines.find(l => l.item_key === lk);
-      if (ln) ln.qty += parseQty(part);
-      else lines.push({ item_key: lk, item_name: raw, name, qty: parseQty(part), cost: (o._lineCosts && o._lineCosts[lk]) || null });
-      const c    = p._contents.get(k);
-      if (c) c.qty += parseQty(part);
-      else p._contents.set(k, { name, qty: parseQty(part) });
+    for (const l of orderLines(o, catalog)) {
+      lines.push(l);
+      const k = itemKey(l.name);
+      const c = p._contents.get(k);
+      if (c) c.qty += l.qty;
+      else p._contents.set(k, { name: l.name, qty: l.qty });
     }
   }
 
@@ -139,4 +132,20 @@ function computePackages(orders, catalog, stock) {
   return out;
 }
 
-module.exports = { computePackages, addressKey };
+// One order's item lines: product name, qty and (if attached) landed cost/unit.
+function orderLines(o, catalog) {
+  const lines = [];
+  let arr; try { arr = JSON.parse(o.items || '[]'); } catch (_) { arr = []; }
+  for (const part of (Array.isArray(arr) ? arr : [arr]).flatMap(splitItemParts)) {
+    const raw = parseItemName(part);
+    if (!raw) continue;
+    const lk = itemKey(raw);
+    const ln = lines.find(l => l.item_key === lk);
+    if (ln) ln.qty += parseQty(part);
+    else lines.push({ item_key: lk, item_name: raw, name: productNameFor(raw, catalog), qty: parseQty(part),
+                      cost: (o._lineCosts && o._lineCosts[lk]) || null });
+  }
+  return lines;
+}
+
+module.exports = { computePackages, addressKey, orderLines };
