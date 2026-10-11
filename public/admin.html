@@ -4927,7 +4927,7 @@ function botEditCalc() {
   const finder= parseFloat(document.getElementById('bot-edit-finder').value) || 0;
   const ov    = document.getElementById('bot-edit-overlay').dataset;
   // Tax and shipping are part of the total — not added again.
-  const landed = total + (parseFloat(document.getElementById('bot-edit-tax').value) || 0) + finder;
+  const landed = total - (parseFloat(ov.refunded) || 0) + finder + (parseFloat(ov.unitfee) || 0);
   const perUnit = landed / qty;
   const el = document.getElementById('bot-edit-perunit');
   if (landed > 0) {
