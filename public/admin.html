@@ -1006,6 +1006,28 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   </div>
 </div>
 
+<!-- ══ MODAL: PRESELL (Mattel) ═══════════════════════════════════════════════ -->
+<div class="overlay" id="bot-presale-overlay" onclick="if(event.target.id==='bot-presale-overlay')closePresale()">
+  <div class="modal" style="width:560px;max-width:96vw;max-height:90vh;overflow:auto;">
+    <h2 style="margin-bottom:2px;"><i class="fa fa-hand-holding-usd" style="color:#4ade80"></i> Presell <span id="ps-ordnum" style="color:var(--muted);font-weight:400;"></span></h2>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Sold before it arrived and you already have the money. It counts in SALES PROFIT on the day you got paid, at this order's own landed cost. When the box is checked in, these units go straight to sold — never into IN STOCK or the buyer list.</div>
+    <input type="hidden" id="ps-id">
+    <div id="ps-existing"></div>
+    <div id="ps-lines"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:10px;">
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Fees ($, total)</label><input type="number" id="ps-fees" min="0" step="0.01" placeholder="0.00" oninput="presalePreview()" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Buyer / where</label><input type="text" id="ps-channel" placeholder="e.g. FB – Tom" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Paid on</label><input type="date" id="ps-date" style="width:100%;"></div>
+    </div>
+    <div id="ps-preview" style="font-size:12px;margin-top:10px;color:var(--muted);"></div>
+    <div id="ps-error" style="font-size:12px;color:#f87171;margin-top:6px;display:none;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+      <button class="btn btn-ghost btn-sm" onclick="closePresale()">Close</button>
+      <button class="btn btn-primary btn-sm" id="ps-save" onclick="savePresale()"><i class="fa fa-save"></i> Save presale</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ MODAL: PARTNERS ═══════════════════════════════════════════════════════ -->
 <div class="overlay" id="bot-partners-overlay" onclick="if(event.target.id==='bot-partners-overlay')closePartners()">
   <div class="modal" style="width:760px;max-width:96vw;max-height:90vh;overflow:auto;">
@@ -2233,9 +2255,10 @@ function botRenderMoneyCards(ordersInRange) {
   document.getElementById('bs-claims-sub').textContent = cl.open || cl.refunded || cl.writtenOff
     ? `${cl.open || 0} open${cl.refunded ? ` · ${botMoneyFmt(cl.refunded)} refunded` : ''}${cl.writtenOff ? ` · ${botMoneyFmt(cl.writtenOff)} lost` : ''}`
     : 'none';
-  document.getElementById('bs-profit-sub').textContent = sales.length
+  const gone = (_botMoney.presales || []).filter(x => x.order_gone);
+  document.getElementById('bs-profit-sub').textContent = (sales.length
     ? `${units} sold · ${botMoneyFmt(revenue)} in${cost > 0 ? ` · ROI ${Math.round(profit / cost * 100)}%` : ''}`
-    : 'no sales yet';
+    : 'no sales yet') + (gone.length ? ` · ⚠ ${gone.length} presale${gone.length === 1 ? '' : 's'} on a cancelled order — refund the buyer` : '');
 }
 
 
@@ -2652,6 +2675,7 @@ function renderBotOrders() {
       <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px;" title="${esc(o.shipping_address && o.shipping_address !== botMainAddr(o) ? 'On the label: ' + o.shipping_address : (o.shipping_address||''))}">${esc(botMainAddr(o)||'—')}</td>
       <td style="white-space:nowrap;">
         ${o.status==='Shipped'?`<button style="background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.3);color:#60a5fa;padding:2px 7px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:700;margin-right:4px;" onclick="markDelivered(${o.id})" title="Mark Delivered">✓ Del</button>`:''}
+        ${botPresellable(o) ? `<button class="bot-ol-presell" style="background:rgba(74,222,128,.08);border:1px solid #166534;color:#4ade80;height:26px;border-radius:6px;cursor:pointer;margin-right:4px;font-size:11px;padding:0 7px;" onclick="openPresale(${o.id})" title="Presell — sold before it arrives">$ Presell${botPresalesFor(o.id).length ? ' ✓' : ''}</button>` : ''}
         <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:4px;" onclick="botEditRow(${o.id})" title="Edit"><i class="fa fa-pen" style="font-size:11px;"></i></button>
         <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;" onclick="deleteBotOrder(${o.id})" title="Delete"><i class="fa fa-trash" style="font-size:11px;"></i></button>
       </td>
@@ -3154,7 +3178,97 @@ function botOrderEdits(p) {
   return `<div style="font-size:10px;color:var(--muted);margin-top:3px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">${p.orders.map(o => `
     <span style="white-space:nowrap;">${esc(o.order_number || '—')}
       <button class="bot-box-edit" onclick="botEditRow(${Number(o.id)})" data-tip="Edit order ${esc(o.order_number || '')}"
-        style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;width:22px;height:20px;font-size:9px;margin-left:2px;"><i class="fa fa-pen"></i></button></span>`).join('')}</div>`;
+        style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;width:22px;height:20px;font-size:9px;margin-left:2px;"><i class="fa fa-pen"></i></button>${botPresellable(o) ? `
+      <button class="bot-presell-btn" onclick="openPresale(${Number(o.id)})" data-tip="Presell — sold before it arrives"
+        style="background:none;border:1px solid #166534;border-radius:5px;color:#4ade80;cursor:pointer;height:20px;font-size:9px;margin-left:2px;padding:0 5px;">$ Presell</button>` : ''}</span>`).join('')}</div>`;
+}
+// ── Presell (Mattel only) ───────────────────────────────────────────────────
+const BOT_PRESALE_CATS = ['mattel'];
+function botPresellable(o) {
+  const full = (_botOrders || []).find(x => Number(x.id) === Number(o.id)) || o;
+  return BOT_PRESALE_CATS.includes(String(full.category || o.category || '').trim().toLowerCase())
+    && full.status !== 'Cancelled' && full.status !== 'Refunded';
+}
+function botPresalesFor(orderId) { return (_botMoney.presales || []).filter(x => Number(x.order_id) === Number(orderId)); }
+let _psOrder = null;
+async function openPresale(id) {
+  const o = await api('GET', '/admin/bot-orders/' + Number(id));
+  if (!o) { alert('Could not open this order — try Refresh.'); return; }
+  _psOrder = o;
+  document.getElementById('ps-id').value = o.id;
+  document.getElementById('ps-ordnum').textContent = '#' + (o.order_number || o.id);
+  document.getElementById('ps-fees').value = '';
+  document.getElementById('ps-channel').value = '';
+  document.getElementById('ps-date').value = botLocalToday();
+  document.getElementById('ps-error').style.display = 'none';
+  renderPresale();
+  document.getElementById('bot-presale-overlay').classList.add('open');
+}
+function closePresale() { document.getElementById('bot-presale-overlay').classList.remove('open'); }
+function renderPresale() {
+  const o = _psOrder; if (!o) return;
+  const have = botPresalesFor(o.id);
+  const done = name => have.filter(x => (x.item_name || '').toLowerCase() === String(name || '').toLowerCase()).reduce((a, x) => a + x.qty, 0);
+  document.getElementById('ps-existing').innerHTML = have.length ? `<div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px;">ALREADY PRESOLD</div>` +
+    have.map(x => `<div class="ps-have" style="display:flex;gap:8px;font-size:12px;padding:3px 0;border-top:1px solid var(--border);">
+      <span style="flex:1;">${esc(x.product)} ×${x.qty} @ ${botMoneyFmt(x.unit_price)}${x.channel ? ' · ' + esc(x.channel) : ''}</span>
+      <span style="color:var(--muted);">${esc(botShortDate(x.sold_at || ''))}</span>
+      <button class="ps-del" onclick="deletePresale(${x.id})" data-tip="Delete this presale" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button></div>`).join('') + '<div style="height:8px;"></div>' : '';
+  const lines = (o.landed && o.landed.lines) || [];
+  document.getElementById('ps-lines').innerHTML = lines.map((l, i) => {
+    const left = Math.max(0, l.qty - done(l.item_name));
+    return `<div class="ps-line" data-i="${i}" style="display:grid;grid-template-columns:1fr 90px 110px;gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--border);font-size:12px;">
+      <div>${esc(l.name)}<div style="font-size:10px;color:var(--muted);">landed ${l.cost ? botMoneyFmt(l.cost.total) : '—'}/unit · ${left} of ${l.qty} left to presell</div></div>
+      <label style="font-size:10px;color:var(--muted);">Units<input type="number" class="ps-qty" min="0" max="${left}" step="1" value="${left}" ${left ? '' : 'disabled'} oninput="presalePreview()" style="width:100%;"></label>
+      <label style="font-size:10px;color:var(--muted);">Price / unit<input type="number" class="ps-price" min="0" step="0.01" placeholder="0.00" ${left ? '' : 'disabled'} oninput="presalePreview()" style="width:100%;"></label></div>`;
+  }).join('') || '<div style="color:var(--muted);font-size:12px;">No items read on this order.</div>';
+  presalePreview();
+}
+function presalePreview() {
+  const o = _psOrder; if (!o) return;
+  const lines = (o.landed && o.landed.lines) || [];
+  let rev = 0, cost = 0, units = 0;
+  document.querySelectorAll('#ps-lines .ps-line').forEach(div => {
+    const l = lines[Number(div.dataset.i)];
+    const q = parseInt(div.querySelector('.ps-qty').value) || 0, pr = parseFloat(div.querySelector('.ps-price').value) || 0;
+    if (!q) return;
+    units += q; rev += q * pr; cost += q * ((l.cost && l.cost.total) || 0);
+  });
+  const fees = parseFloat(document.getElementById('ps-fees').value) || 0;
+  const profit = rev - fees - cost;
+  document.getElementById('ps-preview').innerHTML = units
+    ? `${units} unit${units === 1 ? '' : 's'} · ${botMoneyFmt(rev)} in − fees ${botMoneyFmt(fees)} − cost ${botMoneyFmt(cost)} = <b style="color:${profit >= 0 ? '#4ade80' : '#f87171'};">${profit >= 0 ? '+' : ''}${botMoneyFmt(profit)}</b>`
+    : '';
+}
+async function savePresale() {
+  const o = _psOrder; if (!o) return;
+  const err = document.getElementById('ps-error');
+  const bad = m => { err.textContent = m; err.style.display = ''; };
+  const lines = (o.landed && o.landed.lines) || [];
+  const body = { lines: [], fees: parseFloat(document.getElementById('ps-fees').value) || 0,
+                 channel: document.getElementById('ps-channel').value.trim(), sold_at: document.getElementById('ps-date').value || botLocalToday() };
+  for (const div of document.querySelectorAll('#ps-lines .ps-line')) {
+    const l = lines[Number(div.dataset.i)];
+    const q = parseInt(div.querySelector('.ps-qty').value) || 0;
+    if (!q) continue;
+    const pr = div.querySelector('.ps-price').value;
+    if (pr === '') return bad(`Enter the price you got for ${l.name}.`);
+    body.lines.push({ item_name: l.item_name, qty: q, unit_price: parseFloat(pr) });
+  }
+  if (!body.lines.length) return bad('Enter how many units you presold.');
+  const btn = document.getElementById('ps-save'); btn.disabled = true;
+  try {
+    const r = await api('POST', '/admin/bot-orders/' + o.id + '/presale', body);
+    if (!r) return bad('Could not save — check the units and price.');
+    closePresale();
+    await loadBotOrders({ keepPage: true });
+  } finally { btn.disabled = false; }
+}
+async function deletePresale(id) {
+  if (!confirm('Delete this presale? The units go back to normal (they\'ll count in stock when checked in).')) return;
+  await api('DELETE', '/admin/bot-sales/' + id);
+  await botLoadMoney();
+  renderPresale();
 }
 
 function botComingToggle(key, on) { on ? _botComingSel.add(key) : _botComingSel.delete(key); renderBotComing(); }
@@ -3284,13 +3398,16 @@ function botReceiverLine(p) {
   const names = [...new Set((p.orders || []).map(o => (o.shipping_name || '').trim()).filter(Boolean))];
   const partners = [...new Set((p.orders || []).map(o => o.partner_name).filter(Boolean))];
   const maybe = [...new Set((p.orders || []).filter(o => !o.partner_name).map(o => o.partner_check_name).filter(Boolean))];
+  const pre = (p.orders || []).flatMap(o => botPresalesFor(o.id));
+  const preU = pre.reduce((a, x) => a + x.qty, 0), preM = pre.reduce((a, x) => a + x.qty * x.unit_price, 0);
+  const preTag = pre.length ? `<div class="bot-presold-tag" style="font-size:10px;margin-top:2px;"><span style="border:1px solid #166534;background:rgba(74,222,128,.08);color:#4ade80;border-radius:999px;padding:0 7px;font-weight:700;">PRESOLD ${preU} · ${botMoneyFmt(preM)}</span>${pre.some(x => x.order_gone) ? ' <span style="color:#f87171;">⚠ order cancelled — refund the buyer</span>' : ''}</div>` : '';
   return (names.length
     ? `<div class="bot-recv" style="font-size:11px;color:var(--text);margin-top:2px;" data-tip="Name on the label"><i class="fa fa-user" style="font-size:9px;color:var(--muted);margin-right:4px;"></i>${esc(names.join(', '))}</div>`
     : '') + (partners.length
     ? `<div class="bot-partner-tag" style="font-size:10px;margin-top:2px;"><span style="border:1px solid #6d28d9;color:#c4b5fd;border-radius:999px;padding:0 7px;"><i class="fa fa-handshake" style="font-size:9px;"></i> ${esc(partners.join(', '))}'s</span></div>`
     : '') + (maybe.length
     ? `<div class="bot-partner-maybe" style="font-size:10px;margin-top:2px;" data-tip="Near-miss — check it in Partners"><span style="border:1px dashed #b45309;color:#fbbf24;border-radius:999px;padding:0 7px;"><i class="fa fa-handshake" style="font-size:9px;"></i> ${esc(maybe.join(', '))}'s?</span></div>`
-    : '');
+    : '') + preTag;
 }
 
 function botDayTitle(day) {
@@ -3662,7 +3779,7 @@ function renderBotSold() {
       <tbody>${rows.length ? rows.map(x => `
         <tr class="sold-row" style="border-top:1px solid var(--border);">
           <td style="padding:7px 8px 7px 12px;white-space:nowrap;color:var(--muted);">${esc(botShortDate(x.sold_at || ''))}</td>
-          <td style="max-width:280px;"><div class="clip" data-tip="${esc(x.product)}">${esc(x.product)}</div></td>
+          <td style="max-width:280px;"><div class="clip" data-tip="${esc(x.product)}">${esc(x.product)}</div>${x.presale ? `<div class="sold-presale" style="font-size:10px;color:#4ade80;">presold${x.order_gone ? ' · <span style="color:#f87171;">⚠ order cancelled — refund the buyer</span>' : ''}</div>` : ''}</td>
           <td style="text-align:center;">${x.qty}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;">$${(x.unit_price || 0).toFixed(2)}</td>
           <td style="text-align:right;color:var(--muted);">${x.fees ? '$' + x.fees.toFixed(2) : '—'}</td>

@@ -78,6 +78,7 @@ function computePackages(orders, catalog, stock) {
       owner: o.owner || null,
       partner_id: o.partner_id || null, partner_name: o.partner_name || null,
       partner_check_name: o.partner_check_name || null,
+      category: o.category || null,
     });
 
     for (const l of orderLines(o, catalog)) {

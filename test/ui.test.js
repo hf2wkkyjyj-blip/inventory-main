@@ -1683,6 +1683,80 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     await w.loadBotOrders(); await tick(150);
   }
 
+  console.log('\n── Presell (Mattel): sold before it arrives, straight to sold on check-in ──');
+  {
+    const insO = (num, cat, status, items, total, tax, fee) => {
+      DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total, tax_amount, finder_fee, order_date, shipping_name, shipping_address)
+                  VALUES (?,?,?,?,?,?,?,?,'2026-10-04','Test Buyer','1 Presale Test Rd, Testville')`).run([cat, cat === 'Mattel' ? 'Mattel Creations' : 'Test Shop', num, status, JSON.stringify(items), total, tax, fee]);
+      return DB.prepare('SELECT id FROM bot_orders WHERE order_number=?').get([num]).id;
+    };
+    const mp1 = insO('MP1', 'Mattel', 'Confirmed', ['3x Test Mattel Car @ $20.00'], 64.80, 4.80, 6);
+    const np1 = insO('NP1', 'Pokemon', 'Confirmed', ['1x Test Not Mattel @ $10.00'], 10, 0, 0);
+    // An older box of the same car at a different cost, already on the shelf — so
+    // the presale's cost must be ITS order's ($23.60), not the average.
+    const mp0 = insO('MP0', 'Mattel', 'Delivered', ['1x Test Mattel Car @ $30.00'], 30, 0, 0);
+    DB.prepare("INSERT INTO bot_checkins (order_id, checked_at) VALUES (?, '2026-10-01')").run([mp0]);
+    d.getElementById('bot-filter-status').value = ''; d.getElementById('bot-filter-retailer').value = '';
+    w.botShowOrderList(false); await tick(150);          // All tab, product side (not the order list)
+    await w.loadBotOrders(); await tick(200);
+    d.getElementById('bsc-Confirmed').click(); await tick(250);
+    const box = num => [...d.querySelectorAll('.bot-ordered-box')].find(b => new RegExp(num).test(b.textContent));
+    check('Confirmed: Mattel order has $ Presell',     box('MP1') && !!box('MP1').querySelector('.bot-presell-btn'));
+    check('… other orders don\'t',                      box('NP1') && !box('NP1').querySelector('.bot-presell-btn'));
+    box('MP1').querySelector('.bot-presell-btn').click(); await tick(150);
+    check('Presell dialog opens',                       isVisible(d.getElementById('bot-presale-overlay')));
+    const ln = d.querySelector('#ps-lines .ps-line');
+    check('line: landed $23.60/unit, 3 of 3 left',      ln && /landed \$23\.60\/unit · 3 of 3 left/.test(ln.textContent), ln && ln.textContent.replace(/\s+/g, ' '));
+    ln.querySelector('.ps-qty').value = '2';
+    d.getElementById('ps-save').click(); await tick(60);
+    check('no price → error, nothing saved',            d.getElementById('ps-error').style.display !== 'none' && !DB.prepare('SELECT COUNT(*) n FROM bot_sales WHERE order_id=?').get([mp1]).n);
+    ln.querySelector('.ps-price').value = '45'; d.getElementById('ps-fees').value = '3';
+    d.getElementById('ps-channel').value = 'FB test'; d.getElementById('ps-date').value = '2026-10-05';
+    w.presalePreview();
+    check('preview: $90 − $3 − $47.20 = +$39.80',       /\+\$39\.80/.test(d.getElementById('ps-preview').textContent), d.getElementById('ps-preview').textContent);
+    d.getElementById('ps-save').click(); await tick(300);
+    const ps = DB.prepare('SELECT * FROM bot_sales WHERE order_id=?').all([mp1]);
+    check('saved: 2 @ $45, fees $3, paid Oct 5',        ps.length === 1 && ps[0].qty === 2 && ps[0].unit_price === 45 && ps[0].fees === 3 && ps[0].sold_at === '2026-10-05' && ps[0].channel === 'FB test', JSON.stringify(ps));
+    const m1 = await (await fakeFetch('/api/admin/bot-money')).json();
+    const s1 = m1.sales.find(x => x.presale);
+    check('SALES PROFIT: counted on the paid day at the order\'s cost', s1 && s1.sold_at === '2026-10-05' && s1.qty === 2 && s1.cost === 47.2 && s1.profit === 39.8, JSON.stringify(s1));
+    check('box tagged PRESOLD 2 · $90',                 box('MP1') && /PRESOLD 2 · \$90\.00/.test(box('MP1').textContent), box('MP1') && box('MP1').textContent.replace(/\s+/g, ' '));
+    // Can't presell more than the order has, or a non-Mattel order.
+    const over = await fakeFetch(`/api/admin/bot-orders/${mp1}/presale`, { method: 'POST', body: JSON.stringify({ lines: [{ item_name: 'Test Mattel Car', qty: 2, unit_price: 45 }] }) });
+    const notM = await fakeFetch(`/api/admin/bot-orders/${np1}/presale`, { method: 'POST', body: JSON.stringify({ lines: [{ item_name: 'Test Not Mattel', qty: 1, unit_price: 20 }] }) });
+    check('server: only 1 left → refused; Pokemon → refused', over.status === 400 && notM.status === 400, [over.status, notM.status].join());
+    d.getElementById('bsc-Confirmed').click(); await tick(150);
+    // Not arrived yet: nothing in stock. Arrives + checked in: 1 in stock, 2 straight to sold.
+    const item = async () => (await (await fakeFetch('/api/admin/bot-items?category=Mattel')).json()).find(g => g.name === 'Test Mattel Car');
+    let it = await item();
+    check('before arrival: only the older car in stock, 2 sold', it && it.unitsLeft === 1 && it.soldQty === 2 && it.presoldQty === 2, it && [it.unitsLeft, it.soldQty].join());
+    DB.prepare("UPDATE bot_orders SET status='Delivered' WHERE id=?").run([mp1]);
+    DB.prepare("INSERT INTO bot_checkins (order_id, checked_at) VALUES (?, '2026-10-08')").run([mp1]);
+    it = await item();
+    check('checked in: 2 in stock (2 went straight to sold)', it && it.unitsLeft === 2 && it.stockAtCost === 53.6, it && [it.unitsLeft, it.stockAtCost].join());
+    await fakeFetch('/api/admin/bot-sales', { method: 'POST', body: JSON.stringify({ sku_key: it.skuKey, product_name: 'Test Mattel Car', qty: 1, unit_price: 40, sold_at: '2026-10-09' }) });
+    it = await item();
+    const normal = it.sales.find(x => !x.presale), pre = it.sales.find(x => x.presale);
+    check('a normal sale takes the oldest unit ($30)', it.unitsLeft === 1 && normal && normal.cost === 30, JSON.stringify(it.sales));
+    check('presale still at its order\'s cost $47.20',  pre && pre.cost === 47.2, JSON.stringify(pre));
+    // The order gets cancelled → flagged: refund the buyer.
+    DB.prepare("UPDATE bot_orders SET status='Cancelled' WHERE id=?").run([mp1]);
+    await w.loadBotOrders(); await tick(200);
+    check('cancelled presold order → ⚠ on SALES PROFIT', /presale on a cancelled order — refund the buyer/.test(d.getElementById('bs-profit-sub').textContent), d.getElementById('bs-profit-sub').textContent);
+    // Delete it from the dialog.
+    DB.prepare("UPDATE bot_orders SET status='Delivered' WHERE id=?").run([mp1]);
+    await w.loadBotOrders(); await tick(150);
+    await w.openPresale(mp1); await tick(150);
+    check('dialog lists the presale, 1 of 3 left',      d.querySelectorAll('#ps-existing .ps-have').length === 1 && /1 of 3 left/.test(d.querySelector('#ps-lines .ps-line').textContent));
+    d.querySelector('#ps-existing .ps-del').click(); await tick(250);
+    check('deleted → back to normal',                   !DB.prepare('SELECT COUNT(*) n FROM bot_sales WHERE order_id=?').get([mp1]).n && !d.querySelector('#ps-existing .ps-have'));
+    w.closePresale();
+    DB.prepare('DELETE FROM bot_checkins WHERE order_id IN (?,?)').run([mp1, mp0]);
+    DB.prepare("DELETE FROM bot_sales WHERE product_name='Test Mattel Car'").run();
+    DB.prepare("DELETE FROM bot_orders WHERE order_number IN ('MP0','MP1','NP1')").run();
+    await w.loadBotOrders(); await tick(150);
+  }
+
   console.log('\n── Orders table tracking links use the right carrier too ──');
   {
     await openOrderList();

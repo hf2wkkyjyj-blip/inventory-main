@@ -146,6 +146,18 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
   const OPEN = new Set(['open', 'claim_filed']);
   const kept = [];                             // wrong items kept after a denied claim
 
+  // ── Presales (sold before it arrived — Mattel) ───────────────────────────
+  // A presale is tied to ONE order line (order_id + that line's store title).
+  // Its units never enter stock: when the box is checked in they go straight
+  // to sold, and the sale's cost is that order's own landed cost.
+  const presoldAt = new Map();                 // "orderId|itemKey" → units presold
+  for (const r of salesRows || []) {
+    if (!r || r.order_id == null) continue;
+    const k = `${r.order_id}|${itemKey(r.sku_key)}`;
+    presoldAt.set(k, (presoldAt.get(k) || 0) + (Number(r.qty) || 0));
+  }
+  const presaleLine = new Map();               // same key → { c, owner } of that order line
+
   for (const order of orders) {
     const lines = orderLineCosts(order);
     if (!lines.length) continue;
@@ -202,6 +214,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
         g.inHand += qty;
       } else if (order.id != null && checkedIn.has(order.id)) {
         let out = 0;
+        const pre = presoldAt.get(`${order.id}|${rk}`) || 0;
         for (const is of issuesAt.get(`${order.id}|${rk}`) || []) {
           const n = Math.min(Number(is.qty) || 0, qty - out);
           if (n <= 0) continue;
@@ -214,15 +227,20 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
             kept.push({ got: is.got_item, qty: n, unitItem, unitTax, unitShip, unitFinder, unitTotal, order });
           }
         }
-        g.inHand += Math.max(0, qty - out);
-        if (qty - out > 0) g._batches.push({ date: (checkedIn.get && checkedIn.get(order.id)) || null, qty: qty - out,
-                                             owner: order.partner_id || 0,
-                                             c: { item: unitItem, tax: unitTax, ship: unitShip, fee: unitFinder } });
+        // Presold units arrived: straight to sold, never on the shelf.
+        const shelf = Math.max(0, qty - out - pre);
+        g.inHand += shelf;
+        if (shelf > 0) g._batches.push({ date: (checkedIn.get && checkedIn.get(order.id)) || null, qty: shelf,
+                                         owner: order.partner_id || 0,
+                                         c: { item: unitItem, tax: unitTax, ship: unitShip, fee: unitFinder } });
       } else if (order.status === 'Delivered' || order.tracking_status === 'Delivered') {
         g.toPickUp += qty;
       } else {
         g.onTheWay += qty;
       }
+
+      if (order.id != null) presaleLine.set(`${order.id}|${rk}`, { owner: order.partner_id || 0,
+        c: { item: unitItem, tax: unitTax, ship: unitShip, fee: unitFinder } });
 
       const st = order.status || 'Confirmed';
       g.statuses[st] = (g.statuses[st] || 0) + qty;
@@ -308,6 +326,8 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
       .map(r => ({
         id: r.id ?? null, qty: Number(r.qty) || 0, unit_price: Number(r.unit_price) || 0,
         fees: Number(r.fees) || 0, channel: r.channel || null, sold_at: r.sold_at || null,
+        order_id: r.order_id ?? null, presale: r.order_id != null,
+        _line: r.order_id != null ? presaleLine.get(`${r.order_id}|${itemKey(r.sku_key)}`) || null : undefined,
       }))
       .sort((a, b) => String(b.sold_at || '').localeCompare(String(a.sold_at || '')) || (b.id || 0) - (a.id || 0));
     const soldQty    = sales.reduce((s, r) => s + r.qty, 0);
@@ -325,7 +345,9 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
     const inHand     = tracked ? Math.max(0, g.inHand + extraUnits - shortUnits) : g.inHand;
 
     // What you can still sell: units in hand (when pick-ups are tracked).
-    const unitsLeft  = Math.max(0, (tracked ? inHand : g.qty) - soldQty);
+    // Presold units were never added to the shelf, so only other sales count here.
+    const presoldQty = sales.filter(r => r.presale).reduce((s, r) => s + r.qty, 0);
+    const unitsLeft  = Math.max(0, (tracked ? inHand - (soldQty - presoldQty) : g.qty - soldQty));
 
     // ── Real cost per unit, oldest first (FIFO) ──────────────────────────────
     // Each checked-in box is a batch at ITS order's cost (item + tax + ship +
@@ -360,12 +382,22 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
         revenue: round2(x.qty * sl.unit_price), fees: round2(sl.qty ? sl.fees * x.qty / sl.qty : 0),
       }));
     };
+    // A presale's cost is its own order line's landed cost (whoever's card it was
+    // on owns it). Its order cancelled → no cost, flagged: refund the buyer.
+    for (const sl of sales.filter(x => x.presale)) {
+      const L = sl._line;
+      sl.order_gone = !L;
+      const cost = L ? sl.qty * unitCost(L.c) : 0;
+      sl.cost = round2(cost);
+      splitSale(sl, new Map([[L ? L.owner : 0, { qty: sl.qty, cost }]]));
+    }
+    for (const sl of sales) delete sl._line;
     if (tracked) {
-      [...sales].sort((a, b) => String(a.sold_at || '').localeCompare(String(b.sold_at || '')) || (a.id || 0) - (b.id || 0))
+      [...sales].filter(x => !x.presale).sort((a, b) => String(a.sold_at || '').localeCompare(String(b.sold_at || '')) || (a.id || 0) - (b.id || 0))
         .forEach(sl => { const r = take(sl.qty); sl.cost = round2(r.cost); splitSale(sl, r.parts); });
       if (shortUnits) take(shortUnits);
     } else {
-      sales.forEach(sl => { sl.cost = round2(sl.qty * perUnitTotal); splitSale(sl, new Map([[0, { qty: sl.qty, cost: sl.qty * perUnitTotal }]])); });
+      sales.filter(x => !x.presale).forEach(sl => { sl.cost = round2(sl.qty * perUnitTotal); splitSale(sl, new Map([[0, { qty: sl.qty, cost: sl.qty * perUnitTotal }]])); });
     }
     const soldCost = sales.reduce((a, sl) => a + sl.cost, 0);
     const left = tracked ? queue.filter(b => b.qty > 0) : [];
@@ -405,6 +437,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
       claimValue: round2(_claimValue),
       sales,
       soldQty,
+      presoldQty,
       soldGross:      round2(soldGross),
       soldFees:       round2(soldFees),
       avgSalePrice:   soldQty ? round2(soldGross / soldQty) : null,

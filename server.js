@@ -227,6 +227,7 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS bot_sales (
   id INTEGER PRIMARY KEY AUTOINCREMENT, sku_key TEXT NOT NULL, product_name TEXT,
   qty INTEGER NOT NULL, unit_price REAL NOT NULL, fees REAL DEFAULT 0, channel TEXT,
   sold_at TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
+try { db.exec("ALTER TABLE bot_sales ADD COLUMN order_id INTEGER"); } catch(e) {}   // presale: tied to this order
 try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='ordered'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE status='delivered' OR status='out_for_delivery'"); } catch(e) {}
@@ -1487,6 +1488,9 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
   try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch(_) {}
   let salesRows = [];
   try { salesRows = db.prepare('SELECT * FROM bot_sales ORDER BY sold_at DESC, id DESC').all(); } catch(_) {}
+  // A presale belongs to its order: only show it with that order on screen.
+  const shownIds = new Set(orders.map(o => o.id));
+  salesRows = salesRows.filter(r => r.order_id == null || shownIds.has(r.order_id));
   res.json(computeItemGroups(withMainAddress(orders, { replace: true }), pricingRows, SkuCatalog.loadCatalog(db), salesRows, loadStock()));
 });
 
@@ -1547,13 +1551,14 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
       // Only YOUR units of a sale count here; a partner's units go on his tab.
       const parts = s.parts || [{ owner: 0, qty: s.qty, revenue: s.qty * s.unit_price, fees: s.fees, cost: s.cost != null ? s.cost : s.qty * g.perUnitTotal }];
       for (const pt of parts.filter(x => x.owner)) {
-        partnerSales.push({ partner_id: pt.owner, id: s.id, product: g.name, sold_at: s.sold_at, ...pt });
+        partnerSales.push({ partner_id: pt.owner, id: s.id, product: g.name, sold_at: s.sold_at, presale: !!s.presale, ...pt });
       }
       const mine = parts.find(x => !x.owner);
       if (!mine || !mine.qty) continue;
       sales.push({ id: s.id, product: g.name, sku_key: g.skuKey, category: (g.categories || [])[0] || 'Other',
                    sold_at: s.sold_at, qty: mine.qty, unit_price: s.unit_price, channel: s.channel || null,
                    unit_cost: g.perUnitTotal, shared: parts.length > 1,
+                   presale: !!s.presale, order_id: s.order_id || null, order_gone: !!s.order_gone,
                    revenue: r2(mine.revenue), fees: r2(mine.fees), cost: r2(mine.cost), profit: r2(mine.revenue - mine.fees - mine.cost) });
     }
   }
@@ -1625,7 +1630,19 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
   // Your SPENT card leaves their orders out: send which orders are theirs.
   const partnerOrderIds = orders.filter(o => o.partner_id).map(o => o.id);
   const retailers = [...new Set(orders.map(o => o.retailer).filter(Boolean))].sort();
-  res.json({ orderFees, sales, claims, stock: stockTotals, partners, partnerOrderIds, retailers });
+  // Every presale (Mattel, sold before it arrived), with its order's state.
+  // Order cancelled/refunded or deleted → flagged: refund the buyer.
+  let presales = [];
+  try {
+    presales = db.prepare(`SELECT s.*, o.order_number, o.status AS order_status, o.category AS order_category
+                           FROM bot_sales s LEFT JOIN bot_orders o ON o.id = s.order_id
+                           WHERE s.order_id IS NOT NULL ORDER BY s.sold_at DESC, s.id DESC`).all()
+      .map(s => ({ id: s.id, order_id: s.order_id, order_number: s.order_number || null, order_status: s.order_status || null,
+                   item_name: s.sku_key, product: s.product_name || s.sku_key, qty: Number(s.qty) || 0,
+                   unit_price: Number(s.unit_price) || 0, fees: Number(s.fees) || 0, channel: s.channel || null, sold_at: s.sold_at,
+                   order_gone: !s.order_status || s.order_status === 'Cancelled' || s.order_status === 'Refunded' }));
+  } catch (_) {}
+  res.json({ orderFees, sales, claims, stock: stockTotals, partners, partnerOrderIds, retailers, presales });
 });
 
 // ── Product catalog (see skuCatalog.js) ─────────────────────────────────────
@@ -1704,6 +1721,53 @@ app.post('/api/admin/bot-sales', auth, adminOnly, (req, res) => {
     .run([b.sku_key, b.product_name || null, qty, Math.round(price * 100) / 100, Math.round(fees * 100) / 100,
           (b.channel || '').trim() || null, date]);
   res.json({ id: r && r.lastInsertRowid != null ? Number(r.lastInsertRowid) : null });
+});
+
+// ── Presell (Mattel): sold before it arrived, money already in ─────────────
+// One sale per order line: lines [{ item_name, qty, unit_price }], one fee
+// split by revenue, buyer/where, the day you got paid. Units go straight to
+// sold when the box is checked in — never into stock.
+const PRESALE_CATEGORIES = new Set(['mattel']);
+app.post('/api/admin/bot-orders/:id/presale', auth, adminOnly, (req, res) => {
+  const o = db.prepare('SELECT * FROM bot_orders WHERE id=?').get([Number(req.params.id)]);
+  if (!o) return res.status(404).json({ error: 'No such order' });
+  if (!PRESALE_CATEGORIES.has(String(o.category || '').trim().toLowerCase())) return res.status(400).json({ error: 'Presell is for Mattel orders' });
+  if (o.status === 'Cancelled' || o.status === 'Refunded') return res.status(400).json({ error: 'This order is ' + o.status.toLowerCase() });
+  const b = req.body || {};
+  const date = b.sold_at || new Date().toISOString().slice(0, 10);
+  if (!isIsoDate(date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  const fees = b.fees === undefined || b.fees === '' ? 0 : Number(b.fees);
+  if (!Number.isFinite(fees) || fees < 0) return res.status(400).json({ error: 'Fees must be a number' });
+  const catalog = SkuCatalog.loadCatalog(db);
+  const orderLn = orderLines(o, catalog);
+  const already = new Map();
+  db.prepare('SELECT sku_key, qty FROM bot_sales WHERE order_id=?').all([o.id])
+    .forEach(r => already.set(itemKey(r.sku_key), (already.get(itemKey(r.sku_key)) || 0) + (Number(r.qty) || 0)));
+  const rows = [];
+  for (const l of (Array.isArray(b.lines) ? b.lines : [])) {
+    const qty = Number(l.qty), price = Number(l.unit_price);
+    if (!qty) continue;
+    const ol = orderLn.find(x => x.item_key === itemKey(l.item_name));
+    if (!ol) return res.status(400).json({ error: `"${l.item_name}" isn't on this order` });
+    if (!Number.isInteger(qty) || qty < 1) return res.status(400).json({ error: 'Units must be a whole number' });
+    const left = ol.qty - (already.get(ol.item_key) || 0);
+    if (qty > left) return res.status(400).json({ error: `Only ${left} of ${ol.name} left to presell on this order` });
+    if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: 'Price must be a number' });
+    rows.push({ ol, qty, price: Math.round(price * 100) / 100 });
+  }
+  if (!rows.length) return res.status(400).json({ error: 'Enter how many units you presold' });
+  const gross = rows.reduce((a, r) => a + r.qty * r.price, 0);
+  let feeLeft = Math.round(fees * 100) / 100;
+  const ids = [];
+  rows.forEach((r, i) => {
+    const f = i === rows.length - 1 ? feeLeft : Math.round((gross ? fees * r.qty * r.price / gross : fees / rows.length) * 100) / 100;
+    feeLeft = Math.round((feeLeft - f) * 100) / 100;
+    const ins = db.prepare(`INSERT INTO bot_sales (sku_key, product_name, qty, unit_price, fees, channel, sold_at, order_id)
+                            VALUES (?,?,?,?,?,?,?,?)`)
+      .run([r.ol.item_name, r.ol.name, r.qty, r.price, f, String(b.channel || '').trim() || null, date, o.id]);
+    ids.push(Number(ins.lastInsertRowid));
+  });
+  res.json({ ids });
 });
 
 app.delete('/api/admin/bot-sales/:id', auth, adminOnly, (req, res) => {
@@ -1822,7 +1886,7 @@ function withLanded(orders) {
     for (const o of orders) {
       const paid = (Number(o.order_total) || 0) - (Number(o.refunded_amount) || 0);
       const orderFee = Number(o.finder_fee) || 0, unitFee = r2(unitFees.get(o.id) || 0);
-      const lines = orderLines(o, catalog).map(l => ({ name: l.name, qty: l.qty, cost: l.cost }));
+      const lines = orderLines(o, catalog).map(l => ({ name: l.name, item_name: l.item_name, qty: l.qty, cost: l.cost }));
       const units = lines.reduce((a, l) => a + l.qty, 0);
       o.landed = { paid: r2(paid), orderFee: r2(orderFee), unitFee, fee: r2(orderFee + unitFee), total: r2(paid + orderFee + unitFee),
                    units, perUnit: units ? r2((paid + orderFee + unitFee) / units) : null, lines };
