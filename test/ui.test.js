@@ -1492,6 +1492,10 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     const lpt = lp ? lp.textContent.replace(/\s+/g, ' ') : '';
     check('tap item → Item $10 + finder $2 = $12', /Item ?\$10\.00/.test(lpt) && /Finder fee \(order\/box\) ?\$2\.00/.test(lpt) && /Total ?\$12\.00/.test(lpt) && /3 units · \$36\.00 total · order PT1/.test(lpt), lpt);
     lp && lp.remove();
+    row1.querySelector('.pt-o-fee').click(); await tick(60);
+    const fp = d.getElementById('landed-popover');
+    check('tap FEES → where it comes from',      fp && /FEES ON THIS ORDER/.test(fp.textContent) && /Finder fee \(order\/box\) ?\$6\.00/.test(fp.textContent.replace(/\s+/g, ' ')), fp && fp.textContent.replace(/\s+/g, ' '));
+    fp && fp.remove();
     // An order whose items don't add up to what it cost is flagged.
     DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total, partner_override)
                 VALUES ('Pal Cat',?,'PT6','Confirmed',?,50,(SELECT id FROM bot_partners LIMIT 1))`).run([SHOP, JSON.stringify(['1x Test Pal Card @ $10.00'])]);
@@ -1576,6 +1580,66 @@ const saveBtn  = () => [...overlay().querySelectorAll('button')].find(b => /Save
     DB.prepare("DELETE FROM bot_checkins WHERE order_id IN (?,?,?,?,?)").run([pt1, pt2, pt3, pt4, pt5]);
     DB.prepare("DELETE FROM bot_orders WHERE order_number LIKE 'PT_'").run();
     DB.prepare("DELETE FROM bot_sales WHERE product_name='Test Pal Card'").run();
+    await w.loadBotOrders(); await tick(150);
+  }
+
+  console.log('\n── Confirmed + Shipped + Delivered totals add up to SPENT and FINDER FEES ──');
+  {
+    // One of Isaac-style partner orders on screen: shown as "not counted".
+    DB.prepare("INSERT INTO bot_partners (name, emails, names) VALUES ('Pal2','','')").run();
+    const pid = DB.prepare("SELECT id FROM bot_partners WHERE name='Pal2'").get().id;
+    DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total, finder_fee, partner_override)
+                VALUES ('Pokemon','Test Shop','PX1','Confirmed',?,99,9,?)`).run([JSON.stringify(['1x Test Pal Card @ $99.00']), pid]);
+    d.getElementById('bot-filter-status').value = ''; d.getElementById('bot-filter-retailer').value = '';
+    [...d.querySelectorAll('.btab')].find(b => /^All/.test(b.textContent.trim())).click(); await tick(150);
+    await w.loadBotOrders(); await tick(200);
+    const spent = cardMoney('bs-spent'), fees = cardMoney('bs-fees');
+    const read = async card => {
+      d.getElementById(card).click(); await tick(250);
+      const t = d.getElementById('bot-item-count').textContent;
+      d.getElementById(card).click(); await tick(150);       // clear the filter again
+      const m = t.match(/paid \$([\d,.]+) \+ fees \$([\d,.]+) = \$([\d,.]+)/);
+      return m ? { t, paid: +m[1].replace(/,/g, ''), fees: +m[2].replace(/,/g, ''), total: +m[3].replace(/,/g, '') } : { t, paid: NaN, fees: NaN, total: NaN };
+    };
+    const c = await read('bsc-Confirmed'), sh = await read('bsc-Shipped'), dl = await read('bsc-Delivered');
+    check('each tab shows paid + fees = total',   [c, sh, dl].every(x => Math.abs(x.paid + x.fees - x.total) < 0.01), [c.t, sh.t, dl.t].join(' | '));
+    check('paid: Confirmed + Shipped + Delivered = SPENT', Math.abs(c.paid + sh.paid + dl.paid - spent) < 0.01, `${c.paid} + ${sh.paid} + ${dl.paid} vs ${spent}`);
+    check('fees: Confirmed + Shipped + Delivered = FINDER FEES', Math.abs(c.fees + sh.fees + dl.fees - fees) < 0.01, `${c.fees} + ${sh.fees} + ${dl.fees} vs ${fees}`);
+    check('partner order on Confirmed: not counted, said so', /1 partner order not counted/.test(c.t), c.t);
+    // K03 is Delivered but sits in a box still marked Shipped: counted, and named.
+    check('Delivered: an order not listed is still counted, and named', /incl\. 1 order not listed below \(K03\)/.test(dl.t), dl.t);
+    // Per address: the money on each address row adds up to the tab.
+    d.getElementById('bsc-Confirmed').click(); await tick(250);
+    const addr = [...d.querySelectorAll('.bot-ordered-addr .bot-addr-money')].reduce((a, e) => a + parseFloat(e.textContent.replace(/[$,]/g, '')), 0);
+    check('address rows add up to the Confirmed total', Math.abs(addr - c.total) < 0.02, `${addr} vs ${c.total}`);
+    d.getElementById('bsc-Confirmed').click(); await tick(150);
+    DB.prepare("DELETE FROM bot_orders WHERE order_number='PX1'").run();
+    DB.prepare("DELETE FROM bot_partners WHERE name='Pal2'").run();
+    await w.loadBotOrders(); await tick(150);
+  }
+
+  console.log('\n── Order list: fee shown, landed = paid + fees (tax/shipping not added twice), tap for breakdown ──');
+  {
+    DB.prepare(`INSERT INTO bot_orders (category, retailer, order_number, status, items, order_total, tax_amount, ship_cost, finder_fee, order_date)
+                VALUES ('Pokemon','Test Shop','OL1','Confirmed',?,86.40,6.40,0,10,'2026-12-31')`).run([JSON.stringify(['2x Test Fee Card @ $40.00'])]);
+    await fakeFetch('/api/admin/bot-items/sku', { method: 'PATCH', body: JSON.stringify({ sku: 'Test Fee Card', buyer_fee: 1.5, sale_price: 0 }) });
+    const ol1 = DB.prepare("SELECT id FROM bot_orders WHERE order_number='OL1'").get().id;
+    await openOrderList(); await w.loadBotOrders(); await tick(200);
+    const row = [...d.querySelectorAll('#bot-orders-body tr')].find(r => /OL1/.test(r.textContent));
+    check('order list: OL1 listed',               !!row);
+    check('fee shown: $10 order + $3 FEE/UNIT',   row && row.querySelector('.bot-ol-fee') && /\+ \$13\.00 fee/.test(row.querySelector('.bot-ol-fee').textContent), row && row.textContent.replace(/\s+/g, ' '));
+    check('landed $99.40 / 2 = $49.70/unit (tax not added twice)', row && row.querySelector('.bot-ol-landed') && row.querySelector('.bot-ol-landed').textContent.trim() === '$49.70/unit',
+          row && row.querySelector('.bot-ol-landed') && row.querySelector('.bot-ol-landed').textContent);
+    row && row.querySelector('.bot-ol-landed').click(); await tick(60);
+    const op = d.getElementById('landed-popover'), opt = op ? op.textContent.replace(/\s+/g, ' ') : '';
+    check('tap → paid, finder fee, FEE/UNIT, total', /THIS ORDER/.test(opt) && /Paid \(items \+ tax \$6\.40\) ?\$86\.40/.test(opt) && /Finder fee \(order\/box\) ?\$10\.00/.test(opt) &&
+          /FEE \/ UNIT on its products ?\$3\.00/.test(opt) && /Total ?\$99\.40/.test(opt) && /2 units → \$49\.70\/unit/.test(opt) && /Test Fee Card ×2/.test(opt), opt);
+    op && op.remove();
+    w.botEditRow(ol1); await tick(60);
+    check('editor: same landed/unit',             d.getElementById('bot-edit-perunit').textContent.trim() === '$49.70 × 2 units', d.getElementById('bot-edit-perunit').textContent);
+    w.closeBotEdit();
+    DB.prepare("DELETE FROM bot_orders WHERE order_number='OL1'").run();
+    await fakeFetch('/api/admin/bot-items/sku', { method: 'PATCH', body: JSON.stringify({ sku: 'Test Fee Card', buyer_fee: 0, sale_price: 0 }) });
     await w.loadBotOrders(); await tick(150);
   }
 

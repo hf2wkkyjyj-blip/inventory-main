@@ -1529,16 +1529,10 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
   const groups = computeItemGroups(orders, pricingRows, catalog, salesRows, stock);
   const r2 = n => Math.round(n * 100) / 100;
 
-  const unitFees = new Map();
-  for (const g of groups) {
-    if (!g.perUnitFeeTyped) continue;
-    for (const l of g.orderLines) {
-      if (l.id == null) continue;
-      unitFees.set(l.id, (unitFees.get(l.id) || 0) + l.qty * g.perUnitFeeTyped);
-    }
-  }
+  const unitFees = unitFeesByOrder(groups);
   const allFees = orders
-    .map(o => ({ id: o.id, partner_id: o.partner_id, fee: r2((Number(o.finder_fee) || 0) + (unitFees.get(o.id) || 0)) }))
+    .map(o => ({ id: o.id, partner_id: o.partner_id, fee: r2((Number(o.finder_fee) || 0) + (unitFees.get(o.id) || 0)),
+                 orderFee: Number(o.finder_fee) || 0, unitFee: r2(unitFees.get(o.id) || 0) }))
     .filter(x => x.fee > 0);
   // Your FINDER FEES card: your orders only — a partner's fees are on his tab.
   const orderFees = allFees.filter(x => !x.partner_id).map(({ id, fee }) => ({ id, fee }));
@@ -1616,11 +1610,13 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
       payouts: payouts.filter(x => x.partner_id === p.id),
       // Each order with what's in it and its landed cost — to check his tab line by line.
       orderList: (attachLineCosts(mineOrders, catalog), mineOrders).map(o => {
-        const fee = (allFees.find(x => x.id === o.id) || {}).fee || 0;
+        const fx = allFees.find(x => x.id === o.id) || {};
+        const fee = fx.fee || 0;
         const total = (Number(o.order_total) || 0) - (Number(o.refunded_amount) || 0);
         return { id: o.id, order_number: o.order_number, retailer: o.retailer, status: o.status,
           order_date: o.order_date, shipping_name: o.shipping_name || null, account_email: o.account_email || null,
-          total: r2(total), fee: r2(fee), landed: r2(total + fee), match: o.partner_match,
+          total: r2(total), fee: r2(fee), orderFee: r2(fx.orderFee || 0), unitFee: r2(fx.unitFee || 0),
+          landed: r2(total + fee), match: o.partner_match,
           lines: orderLines(o, catalog).map(l => ({ name: l.name, item_name: l.item_name, qty: l.qty, cost: l.cost })) };
       }),
       sales: ps,
@@ -1794,9 +1790,44 @@ app.delete('/api/admin/bot-items/by-name', auth, adminOnly, (req, res) => {
   res.json({ deleted: toDelete.length });
 });
 
+// Fee typed per unit on a product (FEE / UNIT) × that order's units of it.
+function unitFeesByOrder(groups) {
+  const m = new Map();
+  for (const g of groups) {
+    if (!g.perUnitFeeTyped) continue;
+    for (const l of g.orderLines) {
+      if (l.id == null) continue;
+      m.set(l.id, (m.get(l.id) || 0) + l.qty * g.perUnitFeeTyped);
+    }
+  }
+  return m;
+}
+
+// Every order (no cap: the SPENT card adds these up, so a cap would quietly
+// drop the oldest orders from it). Each carries its landed cost, worked out the
+// same way as everywhere else: what you paid (total, tax and shipping are IN
+// the total) + the order/box finder fee + any FEE / UNIT typed on its products.
 app.get('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
-  const orders = db.prepare('SELECT * FROM bot_orders ORDER BY order_date DESC, received_at DESC, created_at DESC LIMIT 500').all();
-  res.json(withMainAddress(orders));
+  const orders = withMainAddress(db.prepare('SELECT * FROM bot_orders ORDER BY order_date DESC, received_at DESC, created_at DESC').all());
+  try {
+    const catalog = SkuCatalog.loadCatalog(db);
+    let pricingRows = [];
+    try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch (_) {}
+    const live = orders.filter(o => o.status !== 'Cancelled' && o.status !== 'Refunded');
+    const unitFees = unitFeesByOrder(computeItemGroups(live, pricingRows, catalog));
+    attachLineCosts(orders, catalog);
+    const r2 = n => Math.round(n * 100) / 100;
+    for (const o of orders) {
+      const paid = (Number(o.order_total) || 0) - (Number(o.refunded_amount) || 0);
+      const orderFee = Number(o.finder_fee) || 0, unitFee = r2(unitFees.get(o.id) || 0);
+      const lines = orderLines(o, catalog).map(l => ({ name: l.name, qty: l.qty, cost: l.cost }));
+      const units = lines.reduce((a, l) => a + l.qty, 0);
+      o.landed = { paid: r2(paid), orderFee: r2(orderFee), unitFee, fee: r2(orderFee + unitFee), total: r2(paid + orderFee + unitFee),
+                   units, perUnit: units ? r2((paid + orderFee + unitFee) / units) : null, lines };
+      delete o._lineCosts;
+    }
+  } catch (e) { console.error('bot-orders landed:', e.message); }
+  res.json(orders);
 });
 
 // Manual refresh: fires immediately, runs tracking check in background

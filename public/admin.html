@@ -944,11 +944,11 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:14px;">
       <div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.06em;margin-bottom:10px;">COST BREAKDOWN</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Order Subtotal ($)</label>
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Order total ($) <span style="color:var(--muted);font-weight:400;">— what you were charged</span></label>
           <input type="number" id="bot-edit-total" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
-        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Tax ($)</label>
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Tax ($) <span style="color:var(--muted);font-weight:400;">— already in the total</span></label>
           <input type="number" id="bot-edit-tax" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
-        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Shipping ($)</label>
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Shipping ($) <span style="color:var(--muted);font-weight:400;">— already in the total</span></label>
           <input type="number" id="bot-edit-ship" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
         <div class="form-group" style="margin:0;"><label style="font-size:11px;">Finder Fee ($)</label>
           <input type="number" id="bot-edit-finder" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
@@ -2617,7 +2617,8 @@ function renderBotOrders() {
       <td style="max-width:220px;"><div class="clip" data-tip="${esc(itemList.join('\n'))}">${esc(items||'—')}</div></td>
       <td style="text-align:right;font-variant-numeric:tabular-nums;">
         ${o.order_total?'$'+Number(o.order_total).toFixed(2):'—'}
-        ${(()=>{const cpu=botLandedPerUnit(o);return cpu?`<div style="font-size:10px;color:#60a5fa;margin-top:1px;">$${cpu.toFixed(2)}/unit</div>`:''})()}
+        ${o.landed && o.landed.fee ? `<div class="bot-ol-fee" style="font-size:10px;color:#fbbf24;margin-top:1px;">+ $${o.landed.fee.toFixed(2)} fee</div>` : ''}
+        ${(()=>{const cpu=botLandedPerUnit(o);return cpu?`<div class="bot-ol-landed" onclick="botShowOrderCost(${Number(o.id)}, this)" data-tip="Click for the full breakdown" style="font-size:10px;color:#60a5fa;margin-top:1px;cursor:pointer;text-decoration:underline dotted;">$${cpu.toFixed(2)}/unit</div>`:''})()}
       </td>
       <td>${esc(o.shipping_name||'—')}</td>
       <td style="white-space:nowrap;">${o.tracking ? `<a href="${botTrackingUrl(o.retailer, o.tracking)}" target="_blank" style="color:#60a5fa;font-size:12px;font-weight:600;">${esc(o.tracking)}</a>` : '<span style="color:var(--muted);">—</span>'}</td>
@@ -2900,6 +2901,15 @@ function partnerShowLineCost(el) {
     ['Extra fee / unit', c.extraFee],
   ], c.total, `${l.qty} unit${l.qty === 1 ? '' : 's'} · $${(c.total * l.qty).toFixed(2)} total · order ${esc(o.order_number || '')}`);
 }
+function partnerShowFee(pid, oid, el) {
+  const p = (_botMoney.partners || []).find(x => x.id === pid);
+  const o = p && p.orderList.find(x => x.id === oid);
+  if (!o) return;
+  botCostPopover(el, '#' + (o.order_number || o.id), [
+    ['Finder fee (order/box)', o.orderFee || 0, true],
+    ['FEE / UNIT on its products', o.unitFee || 0, true],
+  ], o.fee, o.fee ? '' : 'No fee saved on this order. Add it with ✎ (Finder fee) or the box fee in By package.', 'FEES ON THIS ORDER');
+}
 async function partnerSetOwner(orderId, partnerId) {
   await api('PUT', '/admin/bot-orders/' + orderId + '/owner', { partner_id: partnerId });
   await loadBotOrders(); await botLoadMoney(); renderPartners();
@@ -2961,7 +2971,7 @@ function renderPartners() {
             })()}
           </div>
           <span class="pt-o-total" style="width:78px;text-align:right;font-variant-numeric:tabular-nums;">${m(o.total)}</span>
-          <span class="pt-o-fee" style="width:62px;text-align:right;font-variant-numeric:tabular-nums;color:${o.fee ? 'var(--text)' : 'var(--muted)'};">${m(o.fee)}</span>
+          <span class="pt-o-fee" onclick="partnerShowFee(${p.id}, ${o.id}, this)" data-tip="Where this fee comes from" style="width:62px;text-align:right;font-variant-numeric:tabular-nums;cursor:pointer;text-decoration:underline dotted;color:${o.fee ? 'var(--text)' : 'var(--muted)'};">${m(o.fee)}</span>
           <b class="pt-o-landed" style="width:84px;text-align:right;font-variant-numeric:tabular-nums;color:#60a5fa;">${m(o.landed)}</b>
           <button class="btn btn-ghost btn-sm pt-mine" onclick="partnerSetOwner(${o.id}, 0)" title="This one is mine" style="width:52px;">Mine</button>
         </div>`).join('') || '<div style="color:var(--muted);">No orders yet.</div>'}
@@ -3180,7 +3190,7 @@ function botTags(p) {
      onclick="botShowBoxCost(this)" data-tip="Click for landed cost" style="cursor:pointer;">${esc(c.name)} ×${c.qty}</span>`).join('');
 }
 
-function botCostPopover(anchor, title, parts, total, foot) {
+function botCostPopover(anchor, title, parts, total, foot, sub = 'LANDED COST / UNIT') {
   document.getElementById('landed-popover')?.remove();
   const money = v => '$' + (Number(v) || 0).toFixed(2);
   const pop = document.createElement('div');
@@ -3188,7 +3198,7 @@ function botCostPopover(anchor, title, parts, total, foot) {
   pop.style.cssText = 'position:absolute;z-index:9999;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.5);min-width:220px;max-width:320px;';
   pop.innerHTML = `
     <div style="font-weight:700;margin-bottom:2px;font-size:12px;">${esc(title)}</div>
-    <div style="font-size:10px;letter-spacing:.06em;color:var(--muted);margin-bottom:6px;">LANDED COST / UNIT</div>
+    <div style="font-size:10px;letter-spacing:.06em;color:var(--muted);margin-bottom:6px;">${esc(sub)}</div>
     ${parts.filter(([, v, always]) => always || Number(v)).map(([label, v]) => `
       <div class="cost-line" style="display:flex;justify-content:space-between;gap:24px;padding:2px 0;">
         <span style="color:var(--muted);">${label}</span><span style="font-variant-numeric:tabular-nums;">${money(v)}</span></div>`).join('')}
@@ -3271,7 +3281,8 @@ function renderBotComing() {
   const groups = _botComingGroups = botComingModel(pk);
   const boxes = groups.reduce((a, g) => a + g.boxes, 0), units = groups.reduce((a, g) => a + g.units, 0);
   const shipTo = groups.filter(g => g.boxes).length;
-  document.getElementById('bot-item-count').textContent = `${boxes} box${boxes === 1 ? '' : 'es'} · ${units} unit${units === 1 ? '' : 's'} coming to ${shipTo} address${shipTo === 1 ? '' : 'es'}`;
+  document.getElementById('bot-item-count').textContent = `${boxes} box${boxes === 1 ? '' : 'es'} · ${units} unit${units === 1 ? '' : 's'} coming to ${shipTo} address${shipTo === 1 ? '' : 'es'}` +
+    botViewMoneyText(botTabMoney(BOT_TAB_STATUSES.coming, groups.flatMap(g => g.days.flatMap(d => d.boxes)), !!q));
   document.getElementById('bot-unlinked-banner').innerHTML = botOwnersLink();
   if (!groups.length) {
     wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">Nothing on the way.</div>`;
@@ -3292,7 +3303,7 @@ function renderBotComing() {
         <i class="fa fa-map-marker-alt" style="color:#60a5fa;"></i>
         <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${botOwnerChip(g.address, g.owner)}</div>
           <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
-        <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.boxes} box${g.boxes === 1 ? '' : 'es'} · ${g.units} unit${g.units === 1 ? '' : 's'}${g.notShipped.length ? ` · ${g.notShipped.length} not shipped yet` : ''}</span>
+        <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.boxes} box${g.boxes === 1 ? '' : 'es'} · ${g.units} unit${g.units === 1 ? '' : 's'}${g.boxes ? (m => ` · <span class="bot-addr-money" style="color:var(--text);">${botMoneyFmt(m.paid + m.fees)}</span>`)(botViewMoney(g.days.flatMap(d => d.boxes), BOT_TAB_STATUSES.coming)) : ''}${g.notShipped.length ? ` · ${g.notShipped.length} not shipped yet` : ''}</span>
         ${g.boxes && navigator.share ? `<button class="btn btn-primary btn-sm bot-owner-send" onclick="botSendOwnerMsg(${gi})" data-tip="Text it to the house owner"><i class="fa fa-paper-plane"></i> Send</button>` : ''}
         ${g.boxes ? `<button class="btn btn-ghost btn-sm bot-owner-copy" onclick="botCopyOwnerMsg(${gi}, this)" data-tip="Copy a message for the house owner: how many boxes, which days, which carriers"><i class="fa fa-copy"></i> Copy for house owner</button>` : ''}
       </div>
@@ -3314,6 +3325,51 @@ function renderBotComing() {
 }
 
 // ── Ordered (Confirmed card): not shipped yet, by address ──────────────────
+// Paid + fees for the orders on screen — same basis as the SPENT and FINDER
+// FEES cards (order total minus refunds; your orders only — a partner's are on
+// his tab). Confirmed + Shipped + Delivered add up to the cards (All time, no
+// store filter).
+const BOT_TAB_STATUSES = { ordered: ['Confirmed', 'Unship'], coming: ['Shipped', 'OFD'], delivered: ['Delivered'] };
+function botMoneyOf(orders) {
+  const byId = new Map((_botOrders || []).map(o => [o.id, o]));
+  const fee  = new Map((_botMoney.orderFees || []).map(x => [x.id, x.fee]));
+  const seen = new Set();
+  const r = { paid: 0, fees: 0, partner: 0, n: 0, ids: seen };
+  for (const po of orders) {
+    if (seen.has(po.id)) continue;
+    seen.add(po.id);
+    const o = byId.get(po.id) || po;
+    if (o.partner_id) { r.partner++; continue; }
+    r.paid += (Number(o.order_total) || 0) - (Number(o.refunded_amount) || 0);
+    r.fees += fee.get(po.id) || 0; r.n++;
+  }
+  return r;
+}
+// The orders in these boxes with one of these statuses.
+function botViewMoney(pkgs, statuses, keep = () => true) {
+  return botMoneyOf(pkgs.flatMap(p => (p.orders || []).filter(o => statuses.includes(o.status) && keep(o))));
+}
+// Tab header: EVERY order with that status (same as the cards), not only the
+// ones that fit a box on screen — and say so when some aren't listed (e.g. a
+// delivered order in a box still marked Shipped). With a search typed, it's
+// what's on screen.
+function botTabMoney(statuses, shownPkgs, searching) {
+  if (searching) return botViewMoney(shownPkgs, statuses);
+  const cat = botCurCat(), ret = document.getElementById('bot-filter-retailer').value;
+  const all = (_botOrders || []).filter(o => statuses.includes(o.status) && (!ret || o.retailer === ret) &&
+    (cat === 'All' || (cat === 'Other' ? (!o.category || o.category === 'Other') : o.category === cat)));
+  const m = botMoneyOf(all);
+  const shown = new Set(shownPkgs.flatMap(p => (p.orders || []).filter(o => statuses.includes(o.status)).map(o => o.id)));
+  m.unlisted = all.filter(o => !shown.has(o.id) && !o.partner_id);
+  return m;
+}
+function botViewMoneyText(m) {
+  const un = m.unlisted || [];
+  return ` · paid ${botMoneyFmt(m.paid)} + fees ${botMoneyFmt(m.fees)} = ${botMoneyFmt(m.paid + m.fees)}` +
+    (m.partner ? ` (${m.partner} partner order${m.partner === 1 ? '' : 's'} not counted)` : '') +
+    (un.length ? ` · incl. ${un.length} order${un.length === 1 ? '' : 's'} not listed below (${un.slice(0, 5).map(o => o.order_number || '#' + o.id).join(', ')}${un.length > 5 ? '…' : ''}) — its box has another status` : '');
+}
+
 function renderBotOrdered() {
   const wrap = document.getElementById('bot-coming-wrap');
   const q = (document.getElementById('bot-item-search').value || '').toLowerCase();
@@ -3323,7 +3379,8 @@ function renderBotOrdered() {
   const groups = _botComingGroups = botComingModel(pk);     // everything lands in notShipped
   const orders = groups.reduce((a, g) => a + g.notShipped.length, 0);
   const units = groups.reduce((a, g) => a + g.notShipped.reduce((b, p) => b + p.units, 0), 0);
-  document.getElementById('bot-item-count').textContent = `${orders} order${orders === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'} ordered, not shipped yet`;
+  document.getElementById('bot-item-count').textContent = `${orders} order${orders === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'} ordered, not shipped yet` +
+    botViewMoneyText(botTabMoney(BOT_TAB_STATUSES.ordered, groups.flatMap(g => g.notShipped), !!q));
   document.getElementById('bot-unlinked-banner').innerHTML = botOwnersLink();
   if (!groups.length) {
     wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">Nothing waiting to ship.</div>`;
@@ -3337,7 +3394,7 @@ function renderBotOrdered() {
         <i class="fa fa-map-marker-alt" style="color:#34d399;"></i>
         <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${botOwnerChip(g.address, g.owner)}</div>
           <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
-        <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.notShipped.length} order${g.notShipped.length === 1 ? '' : 's'} · ${u} unit${u === 1 ? '' : 's'}</span>
+        <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.notShipped.length} order${g.notShipped.length === 1 ? '' : 's'} · ${u} unit${u === 1 ? '' : 's'}${(m => ` · <span class="bot-addr-money" style="color:var(--text);">${botMoneyFmt(m.paid + m.fees)}</span>`)(botViewMoney(g.notShipped, BOT_TAB_STATUSES.ordered))}</span>
         ${navigator.share ? `<button class="btn btn-primary btn-sm bot-owner-send" onclick="botSendOwnerMsg(${gi})" data-tip="Text the house owner"><i class="fa fa-paper-plane"></i> Send</button>` : ''}
         <button class="btn btn-ghost btn-sm bot-owner-copy" onclick="botCopyOwnerMsg(${gi}, this)" data-tip="Copy a heads-up for the house owner"><i class="fa fa-copy"></i> Copy for house owner</button>
       </div>
@@ -3631,9 +3688,12 @@ function renderBotPickup() {
   _botPickRows = rows;
   const waiting = rows.filter(p => !picked(p));
   const units = waiting.reduce((a, p) => a + p.units, 0);
-  document.getElementById('bot-item-count').textContent = _botPickIncludePicked
+  // Delivered = every delivered order; To pick up = only those not checked in.
+  const pickKeep = _botPickIncludePicked ? () => true : o => !o.checked_in;
+  document.getElementById('bot-item-count').textContent = (_botPickIncludePicked
     ? `${rows.length} delivered box${rows.length === 1 ? '' : 'es'} · ${waiting.length} to pick up (${units} unit${units === 1 ? '' : 's'})`
-    : `${rows.length} box${rows.length === 1 ? '' : 'es'} · ${units} unit${units === 1 ? '' : 's'} to pick up`;
+    : `${rows.length} box${rows.length === 1 ? '' : 'es'} · ${units} unit${units === 1 ? '' : 's'} to pick up`) +
+    botViewMoneyText(_botPickIncludePicked ? botTabMoney(BOT_TAB_STATUSES.delivered, rows, !!q) : botViewMoney(rows, BOT_TAB_STATUSES.delivered, pickKeep));
   document.getElementById('bot-unlinked-banner').innerHTML = botOwnersLink();
   if (!rows.length) {
     wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">${_botPickIncludePicked ? 'No delivered boxes here.' : 'Nothing waiting — every delivered box is checked in.'}</div>`;
@@ -3670,7 +3730,7 @@ function renderBotPickup() {
           <i class="fa fa-map-marker-alt" style="color:#fbbf24;"></i>
           <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${botOwnerChip(g.address, g.owner)}</div>
             <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
-          <span style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.items.length} box${g.items.length === 1 ? '' : 'es'} · ${gUnits} unit${gUnits === 1 ? '' : 's'}${_botPickIncludePicked && selectable.length < g.items.length ? ` · ${g.items.length - selectable.length} picked up` : ''}</span>
+          <span style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.items.length} box${g.items.length === 1 ? '' : 'es'} · ${gUnits} unit${gUnits === 1 ? '' : 's'}${(m => ` · <span class="bot-addr-money" style="color:var(--text);">${botMoneyFmt(m.paid + m.fees)}</span>`)(botViewMoney(g.items.map(x => x.p), BOT_TAB_STATUSES.delivered, pickKeep))}${_botPickIncludePicked && selectable.length < g.items.length ? ` · ${g.items.length - selectable.length} picked up` : ''}</span>
         </div>
         ${g.items.map(({ p, i }) => `
           <div class="bot-pick-box" style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);font-size:12px;">
@@ -4802,12 +4862,29 @@ function botTotalQty(o) {
     return total || 1;
   } catch(_) { return 1; }
 }
+// Landed per unit = (what you paid + finder fee + FEE / UNIT) / units. Tax and
+// shipping are already inside the order total — they used to be added on top
+// again here, which put every order with stored tax a little too high.
 function botLandedPerUnit(o) {
-  const hasBreakdown = (o.tax_amount||0) + (o.ship_cost||0) + (o.finder_fee||0) > 0;
-  if (!o.order_total && !hasBreakdown) return null;
-  const qty = botTotalQty(o);
-  const total = (o.order_total||0) + (o.tax_amount||0) + (o.ship_cost||0) + (o.finder_fee||0);
-  return total / qty;
+  if (o.landed) return o.landed.perUnit || (o.landed.total ? o.landed.total / botTotalQty(o) : null);
+  const total = (o.order_total || 0) - (o.refunded_amount || 0) + (o.finder_fee || 0);
+  return total > 0 ? total / botTotalQty(o) : null;
+}
+// Order list: tap the landed cost → the whole order: paid, fees, landed, per item.
+function botShowOrderCost(id, el) {
+  const o = (_botOrders || []).find(x => Number(x.id) === Number(id));
+  if (!o) return;
+  const L = o.landed || { paid: (o.order_total || 0) - (o.refunded_amount || 0), orderFee: o.finder_fee || 0, unitFee: 0, lines: [] };
+  const total = L.paid + L.orderFee + L.unitFee;
+  const parts = [
+    [`Paid <span style="font-size:10px;opacity:.75;">(items${o.tax_amount ? ` + tax $${Number(o.tax_amount).toFixed(2)}` : ' + tax'}${o.ship_cost ? ` + ship $${Number(o.ship_cost).toFixed(2)}` : ''})</span>`, L.paid, true],
+    ['Finder fee (order/box)', L.orderFee, true],
+    ['FEE / UNIT on its products', L.unitFee],
+  ];
+  const items = (L.lines || []).map(l => `${esc(l.name)} ×${l.qty}${l.cost ? ` · $${l.cost.total.toFixed(2)}/unit` : ''}`).join('<br>');
+  const units = L.units || botTotalQty(o);
+  botCostPopover(el, '#' + (o.order_number || o.id), parts, total,
+    (units ? `${units} unit${units === 1 ? '' : 's'} → $${(total / units).toFixed(2)}/unit` : '') + (items ? '<br>' + items : ''), 'LANDED COST · THIS ORDER');
 }
 
 function botEditRow(id) {
@@ -4836,7 +4913,9 @@ function botEditRow(id) {
   // at opacity:0 / pointer-events:none, i.e. invisible and unclickable.
   document.getElementById('bot-edit-overlay').classList.add('open');
   // Store qty for calc
-  document.getElementById('bot-edit-overlay').dataset.qty = botTotalQty(o);
+  document.getElementById('bot-edit-overlay').dataset.qty = (o.landed && o.landed.units) || botTotalQty(o);
+  document.getElementById('bot-edit-overlay').dataset.unitfee = (o.landed && o.landed.unitFee) || 0;
+  document.getElementById('bot-edit-overlay').dataset.refunded = o.refunded_amount || 0;
   botEditCalc();
 }
 function closeBotEdit() {
@@ -4845,10 +4924,10 @@ function closeBotEdit() {
 function botEditCalc() {
   const qty   = parseInt(document.getElementById('bot-edit-overlay').dataset.qty) || 1;
   const total = parseFloat(document.getElementById('bot-edit-total').value) || 0;
-  const tax   = parseFloat(document.getElementById('bot-edit-tax').value) || 0;
-  const ship  = parseFloat(document.getElementById('bot-edit-ship').value) || 0;
   const finder= parseFloat(document.getElementById('bot-edit-finder').value) || 0;
-  const landed = total + tax + ship + finder;
+  const ov    = document.getElementById('bot-edit-overlay').dataset;
+  // Tax and shipping are part of the total — not added again.
+  const landed = total + (parseFloat(document.getElementById('bot-edit-tax').value) || 0) + finder;
   const perUnit = landed / qty;
   const el = document.getElementById('bot-edit-perunit');
   if (landed > 0) {
