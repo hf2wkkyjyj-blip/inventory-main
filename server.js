@@ -2043,6 +2043,25 @@ app.post('/api/admin/scrape-emails/refetch', auth, adminOnly, (req, res) => {
 app.get('/api/admin/scrape-emails/status', auth, adminOnly, (req, res) => {
   res.json(_scrapeProgress);
 });
+// TEMP DIAGNOSTIC — find why an order's status came out wrong. Remove after use.
+app.get('/api/admin/_debug/status-for-order', auth, adminOnly, (req, res) => {
+  const orderNumber = req.query.order_number;
+  if (!orderNumber) return res.status(400).json({ error: 'order_number required' });
+  const { __test } = require('./emailScraper');
+  const rows = db.prepare(
+    "SELECT message_id, subject, text, html, email_date FROM raw_emails WHERE text LIKE ? OR html LIKE ? ORDER BY email_date"
+  ).all(['%' + orderNumber + '%', '%' + orderNumber + '%']);
+  const out = rows.map(r => {
+    const status = __test.determineStatus(r.subject, r.text, { hasTracking: !!__test.findTracking(r.text, orderNumber) });
+    // Find the specific phrase that matched, if any, by testing each sub-pattern.
+    return {
+      subject: r.subject, email_date: r.email_date,
+      determinedStatus: status,
+      textSnippetAroundShipWords: (r.text || '').match(/.{0,60}(package|shipped|transit|on its way|on the way|left our)[^.]{0,60}/i)?.[0] || null,
+    };
+  });
+  res.json({ orderNumber, emailCount: rows.length, results: out });
+});
 app.post('/api/admin/scrape-emails/reset', auth, adminOnly, (req, res) => {
   const wipeOrders = req.body?.wipe === true;
   const days = parseInt(req.body?.days) || 180;
