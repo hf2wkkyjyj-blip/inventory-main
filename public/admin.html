@@ -519,6 +519,9 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   #bot-orders-table tbody tr:hover{background:var(--surface);}
 </style>
 
+<!-- Everything below is the normal order-tracker screen. Partners replaces it
+     entirely (full page, not a popup) via botOpenPartnersPage() / botClosePartnersPage(). -->
+<div id="bot-main-view">
   <!-- Stats Row -->
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px;margin-bottom:20px;" id="bot-stats-row">
     <div class="bot-stat"><div class="lbl">TOTAL</div><div class="val" id="bs-total">0</div></div>
@@ -578,7 +581,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <button class="btn btn-ghost btn-sm" id="bot-order-scan-btn" onclick="botScanOrder()"><i class="fa fa-search"></i> Scan Order</button>
       </div>
       <button class="btn btn-ghost btn-sm" id="bot-refresh-btn" onclick="botRefresh()"><i class="fa fa-sync"></i> Refresh</button>
-      <button class="btn btn-ghost btn-sm" id="bot-partners-btn" onclick="openPartners()"><i class="fa fa-handshake"></i> Partners</button>
+      <button class="btn btn-ghost btn-sm" id="bot-partners-btn" onclick="botOpenPartnersPage()"><i class="fa fa-handshake"></i> Partners</button>
       <button class="btn btn-primary btn-sm" onclick="showBotAddForm()"><i class="fa fa-plus"></i> Add Order</button>
     </div>
   </div>
@@ -710,6 +713,39 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   </div>
   </div><!-- /bot-orders-wrap -->
 
+</div><!-- /bot-main-view -->
+
+<!-- ══ PARTNERS PAGE (full screen, same tab as the order tracker) ═══════════ -->
+<div id="bot-partners-page" style="display:none;">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+    <button class="btn btn-ghost btn-sm" onclick="botClosePartnersPage()"><i class="fa fa-arrow-left"></i> Back to orders</button>
+    <h2 style="margin:0;"><i class="fa fa-handshake" style="color:var(--accent)"></i> Partners</h2>
+  </div>
+  <div style="font-size:12px;color:var(--muted);margin-bottom:16px;max-width:900px;">Orders bought for someone else on their card. Their spend and fees go on their tab (not your cards); the units stay in your stock; he gets his cost back plus his share of the profit — the rest is yours.</div>
+  <div id="pt-list"></div>
+  <div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;max-width:900px;">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted);margin-bottom:8px;" id="pt-form-title">ADD A PARTNER</div>
+    <input type="hidden" id="pt-id">
+    <div style="display:grid;grid-template-columns:1fr 1fr 140px;gap:10px;">
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Name</label><input type="text" id="pt-name" style="width:100%;" placeholder="e.g. Alex"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Note (optional)</label><input type="text" id="pt-note" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">His profit share %</label><input type="number" id="pt-split" min="0" max="100" step="1" value="50" style="width:100%;"></div>
+    </div>
+    <div style="font-size:11px;font-weight:700;color:var(--muted);margin:10px 0 4px;">HIS PROFILES, PER RETAILER</div>
+    <div id="pt-profiles"></div>
+    <button class="btn btn-ghost btn-sm" id="pt-add-profile" onclick="partnerAddProfile()"><i class="fa fa-plus"></i> Add a retailer</button>
+    <div id="pt-error" style="font-size:12px;color:#f87171;margin-top:6px;display:none;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
+      <button class="btn btn-ghost btn-sm" onclick="partnerFormReset()">Clear</button>
+      <button class="btn btn-primary btn-sm" id="pt-save" onclick="savePartner()"><i class="fa fa-save"></i> Save partner</button>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin-top:6px;">An order is his only when it's from <b>that retailer</b>, went to <b>one of his emails</b>, and (if you list names) has <b>one of his names</b>. Near-misses aren't moved — they show under "Check these" for you to decide. Tip: paste his profile rows (email ⇥ name ⇥ …) straight into the emails box; the names are filled in for you. No card numbers or phones needed.</div>
+  </div>
+  <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:12px;font-size:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;max-width:900px;">
+    <div style="flex:1;min-width:240px;color:var(--muted);">Older orders were read before the account email was saved, so they can't match yet. Re-download your old emails once to fill it in — nothing is overwritten or deleted.</div>
+    <select id="pt-refetch-days" style="font-size:12px;"><option value="90">last 90 days</option><option value="180" selected>last 180 days</option><option value="365">last year</option></select>
+    <button class="btn btn-ghost btn-sm" id="pt-refetch" onclick="partnerRefetch()"><i class="fa fa-envelope"></i> Re-download old emails</button>
+  </div>
 </div>
 
 <!-- ══ SETTINGS TAB ══════════════════════════════════════════════════════════ -->
@@ -1026,39 +1062,6 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <button class="btn btn-ghost btn-sm" onclick="closePresale()">Close</button>
       <button class="btn btn-primary btn-sm" id="ps-save" onclick="savePresale()"><i class="fa fa-save"></i> Save presale</button>
     </div>
-  </div>
-</div>
-
-<!-- ══ MODAL: PARTNERS ═══════════════════════════════════════════════════════ -->
-<div class="overlay" id="bot-partners-overlay" onclick="if(event.target.id==='bot-partners-overlay')closePartners()">
-  <div class="modal" style="width:1040px;max-width:96vw;max-height:92vh;overflow:auto;">
-    <h2 style="margin-bottom:4px;"><i class="fa fa-handshake" style="color:var(--accent)"></i> Partners</h2>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Orders bought for someone else on their card. Their spend and fees go on their tab (not your cards); the units stay in your stock; he gets his cost back plus his share of the profit — the rest is yours.</div>
-    <div id="pt-list"></div>
-    <div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted);margin-bottom:8px;" id="pt-form-title">ADD A PARTNER</div>
-      <input type="hidden" id="pt-id">
-      <div style="display:grid;grid-template-columns:1fr 1fr 140px;gap:10px;">
-        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Name</label><input type="text" id="pt-name" style="width:100%;" placeholder="e.g. Alex"></div>
-        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Note (optional)</label><input type="text" id="pt-note" style="width:100%;"></div>
-        <div class="form-group" style="margin:0;"><label style="font-size:11px;">His profit share %</label><input type="number" id="pt-split" min="0" max="100" step="1" value="50" style="width:100%;"></div>
-      </div>
-      <div style="font-size:11px;font-weight:700;color:var(--muted);margin:10px 0 4px;">HIS PROFILES, PER RETAILER</div>
-      <div id="pt-profiles"></div>
-      <button class="btn btn-ghost btn-sm" id="pt-add-profile" onclick="partnerAddProfile()"><i class="fa fa-plus"></i> Add a retailer</button>
-      <div id="pt-error" style="font-size:12px;color:#f87171;margin-top:6px;display:none;"></div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px;">
-        <button class="btn btn-ghost btn-sm" onclick="partnerFormReset()">Clear</button>
-        <button class="btn btn-primary btn-sm" id="pt-save" onclick="savePartner()"><i class="fa fa-save"></i> Save partner</button>
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:6px;">An order is his only when it's from <b>that retailer</b>, went to <b>one of his emails</b>, and (if you list names) has <b>one of his names</b>. Near-misses aren't moved — they show under "Check these" for you to decide. Tip: paste his profile rows (email ⇥ name ⇥ …) straight into the emails box; the names are filled in for you. No card numbers or phones needed.</div>
-    </div>
-    <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:12px;font-size:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-      <div style="flex:1;min-width:240px;color:var(--muted);">Older orders were read before the account email was saved, so they can't match yet. Re-download your old emails once to fill it in — nothing is overwritten or deleted.</div>
-      <select id="pt-refetch-days" style="font-size:12px;"><option value="90">last 90 days</option><option value="180" selected>last 180 days</option><option value="365">last year</option></select>
-      <button class="btn btn-ghost btn-sm" id="pt-refetch" onclick="partnerRefetch()"><i class="fa fa-envelope"></i> Re-download old emails</button>
-    </div>
-    <div style="display:flex;justify-content:flex-end;margin-top:12px;"><button class="btn btn-ghost btn-sm" onclick="closePartners()">Close</button></div>
   </div>
 </div>
 
@@ -2871,16 +2874,21 @@ function botApplyView(view) {
 }
 
 // ── Partners ────────────────────────────────────────────────────────────────
+// Full screen within the order tracker tab — swaps out bot-main-view, not a popup.
 const _ptOpen = new Set();      // partner ids whose order list is expanded
-async function openPartners() {
-  document.getElementById('bot-partners-overlay').classList.add('open');
+async function botOpenPartnersPage() {
+  document.getElementById('bot-main-view').style.display = 'none';
+  document.getElementById('bot-partners-page').style.display = '';
   // Default to expanded — his orders should be as easy to scan as your own.
   (_botMoney.partners || []).forEach(p => _ptOpen.add(p.id));
   await botLoadMoney();          // first: the retailer list comes with it
   partnerFormReset();
   renderPartners();
 }
-function closePartners() { document.getElementById('bot-partners-overlay').classList.remove('open'); }
+function botClosePartnersPage() {
+  document.getElementById('bot-partners-page').style.display = 'none';
+  document.getElementById('bot-main-view').style.display = '';
+}
 function partnerFormReset() {
   ['pt-id', 'pt-name', 'pt-note'].forEach(id => { document.getElementById(id).value = ''; });
   document.getElementById('pt-split').value = 50;
@@ -3015,7 +3023,7 @@ function renderPartners() {
       ${_ptOpen.has(p.id) ? `<div style="margin-top:8px;font-size:11px;">
         ${p.orderList.length ? `<div style="display:flex;gap:10px;padding:2px 0;font-size:10px;letter-spacing:.05em;color:var(--muted);">
           <span style="flex:1;">ORDER · ITEMS (tap an item for its landed cost)</span>
-          <span style="width:78px;text-align:right;">ORDER</span><span style="width:62px;text-align:right;">FEES</span><span style="width:84px;text-align:right;">LANDED</span><span style="width:52px;"></span></div>` : ''}
+          <span style="width:78px;text-align:right;">ORDER</span><span style="width:62px;text-align:right;">FEES</span><span style="width:84px;text-align:right;">LANDED</span><span style="width:118px;"></span></div>` : ''}
         ${[...p.orderList].sort((x, y) => String(y.order_date || '').localeCompare(String(x.order_date || ''))).map(o => `<div class="pt-order" data-id="${o.id}" style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--border);">
           <div style="flex:1;min-width:0;">
             <div><b style="font-weight:600;">${esc(o.order_number || '')}</b>
@@ -3033,12 +3041,16 @@ function renderPartners() {
           <span class="pt-o-total" style="width:78px;text-align:right;font-variant-numeric:tabular-nums;">${m(o.total)}</span>
           <span class="pt-o-fee" onclick="partnerShowFee(${p.id}, ${o.id}, this)" data-tip="Where this fee comes from" style="width:62px;text-align:right;font-variant-numeric:tabular-nums;cursor:pointer;text-decoration:underline dotted;color:${o.fee ? 'var(--text)' : 'var(--muted)'};">${m(o.fee)}</span>
           <b class="pt-o-landed" style="width:84px;text-align:right;font-variant-numeric:tabular-nums;color:#60a5fa;">${m(o.landed)}</b>
-          <button class="btn btn-ghost btn-sm pt-mine" onclick="partnerSetOwner(${o.id}, 0)" title="This one is mine" style="width:52px;">Mine</button>
+          <div style="width:118px;display:flex;gap:4px;justify-content:flex-end;">
+            <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;" onclick="botEditRow(${o.id})" title="Edit — status, tracking, costs, whose order"><i class="fa fa-pen" style="font-size:11px;"></i></button>
+            <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;" onclick="deleteBotOrder(${o.id})" title="Delete"><i class="fa fa-trash" style="font-size:11px;"></i></button>
+            <button class="btn btn-ghost btn-sm pt-mine" onclick="partnerSetOwner(${o.id}, 0)" title="This one is mine">Mine</button>
+          </div>
         </div>`).join('') || '<div style="color:var(--muted);">No orders yet.</div>'}
         ${p.orderList.length ? `<div class="pt-o-sum" style="display:flex;gap:10px;padding:6px 0;border-top:2px solid var(--border);font-weight:700;">
           <span style="flex:1;">${p.orderList.length} order${p.orderList.length === 1 ? '' : 's'}</span>
           <span style="width:78px;text-align:right;">${m(p.spent)}</span><span style="width:62px;text-align:right;">${m(p.fees)}</span>
-          <span style="width:84px;text-align:right;color:#60a5fa;">${m(p.totalIn)}</span><span style="width:52px;"></span></div>` : ''}
+          <span style="width:84px;text-align:right;color:#60a5fa;">${m(p.totalIn)}</span><span style="width:118px;"></span></div>` : ''}
         ${p.sales.length ? `<div style="margin-top:6px;font-weight:700;color:var(--muted);">SALES OF HIS UNITS</div>` + p.sales.map(x => `<div style="display:flex;gap:10px;padding:2px 0;">
           <span style="width:90px;color:var(--muted);">${esc(botShortDate(x.sold_at || ''))}</span><span style="flex:1;">${esc(x.product)} ×${x.qty}</span><span>${m(x.revenue - x.fees)}</span></div>`).join('') : ''}
         ${p.payouts.length ? `<div style="margin-top:6px;font-weight:700;color:var(--muted);">PAYMENTS TO HIM</div>` + p.payouts.map(x => `<div style="display:flex;gap:10px;padding:2px 0;">
@@ -5142,12 +5154,17 @@ async function saveBotEdit() {
   }
   closeBotEdit();
   await loadBotOrders();
+  // Editing from the Partners page shouldn't need a manual refresh to see it.
+  const ptPage = document.getElementById('bot-partners-page');
+  if (ptPage && ptPage.style.display !== 'none') renderPartners();
 }
 
 async function deleteBotOrder(id) {
   if (!confirm('Delete this order?')) return;
   await api('DELETE', '/admin/bot-orders/'+id);
   await loadBotOrders();
+  const ptPage = document.getElementById('bot-partners-page');
+  if (ptPage && ptPage.style.display !== 'none') renderPartners();
 }
 
 async function populateMemberDropdown(selectId, selectedId) {
