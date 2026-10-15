@@ -49,6 +49,20 @@ eq('refund policy in footer must not mean Refunded',
    determineStatus('Thanks for your order', `Your order has been placed. ${FOOTER}`, { hasTracking: false }),
    'Confirmed');
 
+console.log('\n── A confirmation mentioning "your package" is not Shipped ──');
+
+eq('"we\'ll email you when your package ships" is still Confirmed',
+   determineStatus('Thanks for your order', "Thank you for your order! We will email you as soon as your package ships. Track order | Cancel order", { hasTracking: false }),
+   'Confirmed');
+
+eq('"questions about your package" footer is still Confirmed',
+   determineStatus('Order Confirmation', 'Thanks for shopping with us. Questions about your package or delivery? Contact us.', { hasTracking: false }),
+   'Confirmed');
+
+eq('"your package has shipped" (a real shipping notice) is still Shipped',
+   determineStatus('Shipping update', 'Good news — your package has shipped and is on the way.', { hasTracking: true }),
+   'Shipped');
+
 console.log('\n── Real cancellations must still be caught ──');
 
 eq('subject says cancelled',

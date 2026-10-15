@@ -194,7 +194,12 @@ function determineStatus(subject, bodyText, opts = {}) {
   if (/\bout\s+for\s+delivery\b/.test(both)) return 'OFD';
 
   // ── Shipped ──────────────────────────────────────────────────────────────
-  const SHIPPED = /\b(?:has\s+shipped|has\s+been\s+shipped|order\s+shipped|now\s+shipping|on\s+its\s+way|on\s+the\s+way|in\s+transit|has\s+left\s+our|shipment\s+(?:confirm\w*|notice)|your\s+package)\b/;
+  // "your package" alone used to qualify, but it's generic boilerplate that
+  // shows up in plain order confirmations too ("we'll email you when your
+  // package ships", "questions about your package?") — none of which mean it
+  // actually shipped. Every phrase here states shipment as a fact; a stray
+  // mention of "your package" with no accompanying verb no longer counts.
+  const SHIPPED = /\b(?:has\s+shipped|has\s+been\s+shipped|order\s+shipped|now\s+shipping|on\s+its\s+way|on\s+the\s+way|in\s+transit|has\s+left\s+our|shipment\s+(?:confirm\w*|notice)|your\s+package\s+(?:has|is|was)\b)/;
   if (SHIPPED.test(subj) || SHIPPED.test(body)) return 'Shipped';
   // A tracking number with no contrary signal means it shipped.
   if (opts.hasTracking) return 'Shipped';
