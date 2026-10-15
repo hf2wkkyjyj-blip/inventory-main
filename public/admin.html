@@ -1031,16 +1031,17 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 
 <!-- ══ MODAL: PARTNERS ═══════════════════════════════════════════════════════ -->
 <div class="overlay" id="bot-partners-overlay" onclick="if(event.target.id==='bot-partners-overlay')closePartners()">
-  <div class="modal" style="width:760px;max-width:96vw;max-height:90vh;overflow:auto;">
+  <div class="modal" style="width:1040px;max-width:96vw;max-height:92vh;overflow:auto;">
     <h2 style="margin-bottom:4px;"><i class="fa fa-handshake" style="color:var(--accent)"></i> Partners</h2>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Orders bought for someone else on their card. Their spend and fees go on their tab (not your cards); the units stay in your stock; their share of sales is owed back.</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">Orders bought for someone else on their card. Their spend and fees go on their tab (not your cards); the units stay in your stock; he gets his cost back plus his share of the profit — the rest is yours.</div>
     <div id="pt-list"></div>
     <div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
       <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted);margin-bottom:8px;" id="pt-form-title">ADD A PARTNER</div>
       <input type="hidden" id="pt-id">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr 140px;gap:10px;">
         <div class="form-group" style="margin:0;"><label style="font-size:11px;">Name</label><input type="text" id="pt-name" style="width:100%;" placeholder="e.g. Alex"></div>
         <div class="form-group" style="margin:0;"><label style="font-size:11px;">Note (optional)</label><input type="text" id="pt-note" style="width:100%;"></div>
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">His profit share %</label><input type="number" id="pt-split" min="0" max="100" step="1" value="50" style="width:100%;"></div>
       </div>
       <div style="font-size:11px;font-weight:700;color:var(--muted);margin:10px 0 4px;">HIS PROFILES, PER RETAILER</div>
       <div id="pt-profiles"></div>
@@ -2873,6 +2874,8 @@ function botApplyView(view) {
 const _ptOpen = new Set();      // partner ids whose order list is expanded
 async function openPartners() {
   document.getElementById('bot-partners-overlay').classList.add('open');
+  // Default to expanded — his orders should be as easy to scan as your own.
+  (_botMoney.partners || []).forEach(p => _ptOpen.add(p.id));
   await botLoadMoney();          // first: the retailer list comes with it
   partnerFormReset();
   renderPartners();
@@ -2880,6 +2883,7 @@ async function openPartners() {
 function closePartners() { document.getElementById('bot-partners-overlay').classList.remove('open'); }
 function partnerFormReset() {
   ['pt-id', 'pt-name', 'pt-note'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('pt-split').value = 50;
   document.getElementById('pt-profiles').innerHTML = '';
   partnerAddProfile();
   document.getElementById('pt-form-title').textContent = 'ADD A PARTNER';
@@ -2970,25 +2974,29 @@ function renderPartners() {
   const ps = _botMoney.partners || [];
   const m = botMoneyFmt;
   document.getElementById('pt-list').innerHTML = ps.length ? ps.map(p => `
-    <div class="pt-card" data-id="${p.id}" style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;">
+    <div class="pt-card" data-id="${p.id}" style="border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin-bottom:16px;background:var(--surface);">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-        <b style="font-size:14px;"><i class="fa fa-handshake" style="color:#c4b5fd;font-size:12px;"></i> ${esc(p.name)}</b>
-        <span style="font-size:11px;color:var(--muted);">${p.orders} order${p.orders === 1 ? '' : 's'}</span>
+        <b style="font-size:18px;"><i class="fa fa-handshake" style="color:#c4b5fd;font-size:15px;"></i> ${esc(p.name)}</b>
+        <span style="font-size:12px;color:var(--muted);">${p.orders} order${p.orders === 1 ? '' : 's'}</span>
+        <span class="pt-split-badge" style="font-size:11px;font-weight:700;border:1px solid #6d28d9;color:#c4b5fd;border-radius:999px;padding:2px 9px;">${p.splitPct}% his · ${(100 - p.splitPct)}% yours</span>
         <span class="pt-prof-sum" style="font-size:11px;color:var(--muted);">${(p.profiles || []).map(x => `${esc(x.retailer)}: ${_ptLines(x.emails).length} email${_ptLines(x.emails).length === 1 ? '' : 's'}${_ptLines(x.names).length ? `, ${_ptLines(x.names).length} names` : ''}`).join(' · ') || '<span style="color:#fbbf24;">no retailer lists yet — Edit to add</span>'}</span>
         <span style="flex:1;"></span>
         <button class="btn btn-ghost btn-sm" onclick="editPartner(${p.id})"><i class="fa fa-pen"></i> Edit</button>
         <button class="btn btn-ghost btn-sm" onclick="deletePartner(${p.id})" style="color:#f87171;">Remove</button>
       </div>
-      <div class="pt-tab" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:8px;font-size:12px;">
-        <div><div style="color:var(--muted);font-size:10px;">SPENT (orders)</div><b>${m(p.spent)}</b></div>
-        <div><div style="color:var(--muted);font-size:10px;">FEES</div><b>${m(p.fees)}</b></div>
-        <div><div style="color:var(--muted);font-size:10px;">TOTAL HE PUT IN</div><b class="pt-totalin">${m(p.totalIn)}</b></div>
-        <div><div style="color:var(--muted);font-size:10px;">IN YOUR STOCK</div><b>${p.unitsInStock}</b> <span style="color:var(--muted);">(${m(p.stockCost)})</span></div>
-        <div><div style="color:var(--muted);font-size:10px;">SOLD</div><b>${p.unitsSold}</b> <span style="color:var(--muted);">→ ${m(p.salesNet)}</span></div>
-        <div><div style="color:var(--muted);font-size:10px;">PAID TO HIM</div><b>${m(p.paid)}</b></div>
-        <div><div style="color:var(--muted);font-size:10px;">YOU OWE HIM</div><b class="pt-owed" style="color:${p.owed > 0 ? '#fbbf24' : '#4ade80'};">${m(p.owed)}</b></div>
+      <div class="pt-tab" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:14px;">
+        <div class="bot-stat"><div class="lbl">SPENT (ORDERS)</div><div class="val" style="font-size:18px;">${m(p.spent)}</div></div>
+        <div class="bot-stat"><div class="lbl">FEES</div><div class="val" style="font-size:18px;">${m(p.fees)}</div></div>
+        <div class="bot-stat"><div class="lbl">TOTAL HE PUT IN</div><div class="val pt-totalin" style="font-size:18px;">${m(p.totalIn)}</div></div>
+        <div class="bot-stat"><div class="lbl">IN YOUR STOCK</div><div class="val" style="font-size:18px;">${p.unitsInStock}</div><div style="color:var(--muted);font-size:11px;margin-top:2px;">${m(p.stockCost)}</div></div>
+        <div class="bot-stat"><div class="lbl">SOLD</div><div class="val" style="font-size:18px;">${p.unitsSold}</div><div style="color:var(--muted);font-size:11px;margin-top:2px;">${m(p.salesNet)} net</div></div>
+        <div class="bot-stat"><div class="lbl">PROFIT ON HIS UNITS</div><div class="val" style="font-size:18px;color:${p.profit > 0 ? '#4ade80' : p.profit < 0 ? '#f87171' : 'inherit'};">${m(p.profit)}</div></div>
+        <div class="bot-stat"><div class="lbl">YOUR SHARE (${(100 - p.splitPct)}%)</div><div class="val" style="font-size:18px;color:#4ade80;">${m(p.yourShare)}</div></div>
+        <div class="bot-stat"><div class="lbl">HIS SHARE (${p.splitPct}%)</div><div class="val" style="font-size:18px;">${m(p.hisShare)}</div></div>
+        <div class="bot-stat"><div class="lbl">PAID TO HIM</div><div class="val" style="font-size:18px;">${m(p.paid)}</div></div>
+        <div class="bot-stat"><div class="lbl">YOU OWE HIM</div><div class="val pt-owed" style="font-size:18px;color:${p.owed > 0 ? '#fbbf24' : '#4ade80'};">${m(p.owed)}</div><div style="color:var(--muted);font-size:11px;margin-top:2px;">his cost back + his share</div></div>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;font-size:12px;">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;font-size:12px;">
         Pay him <input type="number" class="pt-pay-amt" min="0" step="0.01" placeholder="0.00" style="width:90px;">
         on <input type="date" class="pt-pay-date" value="${botLocalToday()}" style="font-size:12px;">
         <button class="btn btn-ghost btn-sm pt-pay" onclick="addPayout(${p.id}, this)"><i class="fa fa-money-bill"></i> Record payment</button>
@@ -3044,6 +3052,7 @@ function editPartner(id) {
   document.getElementById('pt-id').value = p.id;
   document.getElementById('pt-name').value = p.name;
   document.getElementById('pt-note').value = p.note || '';
+  document.getElementById('pt-split').value = p.splitPct == null ? 50 : p.splitPct;
   document.getElementById('pt-profiles').innerHTML = '';
   (p.profiles || []).forEach(x => partnerAddProfile(x));
   // The old single list (no retailer): offered back so you can pick its retailer.
@@ -3057,6 +3066,7 @@ async function savePartner() {
     id: Number(document.getElementById('pt-id').value) || undefined,
     name: document.getElementById('pt-name').value.trim(),
     note: document.getElementById('pt-note').value.trim(),
+    splitPct: Math.max(0, Math.min(100, Number(document.getElementById('pt-split').value) || 0)),
     profiles: [...document.querySelectorAll('#pt-profiles .pt-profile')].map(div => ({
       retailer: div.querySelector('.pt-ret').value,
       emails: _ptLines(div.querySelector('.pt-emails').value).join(', '),
@@ -3072,6 +3082,7 @@ async function savePartner() {
   if (!r) { err.textContent = 'Could not save.'; err.style.display = ''; return; }
   partnerFormReset();
   await loadBotOrders();
+  (_botMoney.partners || []).forEach(p => _ptOpen.add(p.id));
   renderPartners();
 }
 async function deletePartner(id) {

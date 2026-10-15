@@ -202,6 +202,8 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS bot_issues (
 try { db.exec(`CREATE TABLE IF NOT EXISTS bot_partners (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, emails TEXT, names TEXT, note TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
+// His cut of the profit on units he fronted (0-100). Rest is yours. Default 50/50.
+try { db.exec("ALTER TABLE bot_partners ADD COLUMN split_pct REAL DEFAULT 50"); } catch(e) {}
 try { db.exec(`CREATE TABLE IF NOT EXISTS bot_partner_payouts (
   id INTEGER PRIMARY KEY AUTOINCREMENT, partner_id INTEGER NOT NULL, amount REAL NOT NULL, paid_at TEXT, note TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
@@ -1152,9 +1154,12 @@ app.post('/api/admin/bot-partners', auth, adminOnly, (req, res) => {
   if (!profiles.length) return res.status(400).json({ error: 'Add at least one retailer with his account emails' });
   if (profiles.some(p => !p.retailer)) return res.status(400).json({ error: 'Pick the retailer for each list' });
   if (profiles.some(p => !p.emails))   return res.status(400).json({ error: 'Each retailer needs at least one of his account emails' });
+  let splitPct = Number(b.splitPct);
+  if (!Number.isFinite(splitPct)) splitPct = 50;
+  splitPct = Math.max(0, Math.min(100, splitPct));
   let id = Number(b.id) || 0;
-  if (id) db.prepare("UPDATE bot_partners SET name=?, note=?, emails='', names='' WHERE id=?").run([name, String(b.note || ''), id]);
-  else    id = Number(db.prepare("INSERT INTO bot_partners (name, emails, names, note) VALUES (?,'','',?)").run([name, String(b.note || '')]).lastInsertRowid);
+  if (id) db.prepare("UPDATE bot_partners SET name=?, note=?, split_pct=?, emails='', names='' WHERE id=?").run([name, String(b.note || ''), splitPct, id]);
+  else    id = Number(db.prepare("INSERT INTO bot_partners (name, emails, names, note, split_pct) VALUES (?,'','',?,?)").run([name, String(b.note || ''), splitPct]).lastInsertRowid);
   db.prepare('DELETE FROM bot_partner_profiles WHERE partner_id=?').run([id]);
   for (const p of profiles) {
     db.prepare('INSERT INTO bot_partner_profiles (partner_id, retailer, emails, names) VALUES (?,?,?,?)').run([id, p.retailer, p.emails, p.names]);
@@ -1611,9 +1616,16 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
     const ps    = partnerSales.filter(x => x.partner_id === p.id);
     const sold  = ps.reduce((a, x) => a + x.qty, 0);
     const salesNet = ps.reduce((a, x) => a + x.revenue - x.fees, 0);
+    const costOfSold = ps.reduce((a, x) => a + x.cost, 0);
+    // Profit on his units: revenue − selling fees − landed cost. He gets his
+    // cost back in full either way; the leftover profit is split by splitPct.
+    const profit = salesNet - costOfSold;
+    const splitPct = p.split_pct == null ? 50 : Number(p.split_pct);
+    const hisShare = profit * (splitPct / 100);
+    const yourShare = profit - hisShare;
     const paid  = payouts.filter(x => x.partner_id === p.id).reduce((a, x) => a + (Number(x.amount) || 0), 0);
     return {
-      id: p.id, name: p.name, note: p.note || '',
+      id: p.id, name: p.name, note: p.note || '', splitPct,
       // Old single list (before per-retailer lists) — not used for matching.
       emails: p.emails || '', names: p.names || '',
       profiles: (p.profiles || []).map(x => ({ retailer: x.retailer, emails: x.emails || '', names: x.names || '' })),
@@ -1623,8 +1635,9 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
         total: Number(o.order_total) || 0, why: o.partner_check_why })),
       orders: mineOrders.length, spent: r2(spent), fees: r2(fees), totalIn: r2(spent + fees),
       unitsInStock: st.units, stockCost: r2(st.cost),
-      unitsSold: sold, salesNet: r2(salesNet), costOfSold: r2(ps.reduce((a, x) => a + x.cost, 0)),
-      paid: r2(paid), owed: r2(salesNet - paid),
+      unitsSold: sold, salesNet: r2(salesNet), costOfSold: r2(costOfSold),
+      profit: r2(profit), hisShare: r2(hisShare), yourShare: r2(yourShare),
+      paid: r2(paid), owed: r2(costOfSold + hisShare - paid),
       payouts: payouts.filter(x => x.partner_id === p.id),
       // Each order with what's in it and its landed cost — to check his tab line by line.
       orderList: (attachLineCosts(mineOrders, catalog), mineOrders).map(o => {
