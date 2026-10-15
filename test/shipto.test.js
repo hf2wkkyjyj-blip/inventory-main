@@ -94,6 +94,23 @@ eq('name + address split at the house number',
    extractShipTo('| Shipping Address: Customer A 1 Test St apt 3f Springfield, MN 55001 US |'),
    { name: 'Customer A', address: '1 Test St apt 3f Springfield, MN 55001' });
 
+console.log('\n── Pokemon Center: billing block\'s "US" glued onto the next heading ──');
+const PKC_GLUED = `Payment & Shipping
+
+Billing Address:
+Sang M Nguyen
+7703-nj 118th Avenue North Apt-2-in
+Champlin, Mn 55316
+US Shipping Address:
+Sang M Nguyen
+7703-nj 118th Avenue North Apt-2-in
+Champlin, Mn 55316
+US
+
+Order Summary`;
+eq('name',    extractShipTo(PKC_GLUED).name, 'Sang M Nguyen');
+eq('address', extractShipTo(PKC_GLUED).address, '7703-nj 118th Avenue North Apt-2-in, Champlin, Mn 55316');
+
 console.log('\n── Things that are NOT a ship-to ──');
 eq('"Shipping $0.00" total line',  extractShipTo('Subtotal\n$59.98\nShipping\n$0.00\nTotal\n$65.09'), null);
 eq('heading with no street/zip',   extractShipTo('Ship to\nTest Buyer\nStore pickup'), null);

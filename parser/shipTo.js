@@ -18,7 +18,10 @@
 
 const HEADINGS = /^(shipping address|ship(ping)? to|delivery address|delivering to|deliver to|shipped to|shipment address|address)\s*:?\s*$/i;
 const ZIP      = /\b\d{5}(?:-\d{4})?\b/;
-const STREET   = /^0*\d+[a-z]?\s+\S/i;
+// A house number, optionally with a hyphenated suffix glued right after it
+// ("7703-B Main St", "7703-nj 118th Ave" — real USPS secondary-unit style),
+// then the rest of the street.
+const STREET   = /^0*\d+[a-z]?(?:-\S+)?\s+\S/i;
 // Lines that end an address block: country, links/buttons, and email-footer
 // words — past them comes the STORE's own address, which must never be taken.
 const JUNK     = /^(united states|usa|us|https?:|track|view|manage|edit|change|my account|account|help|contact|customer service|privacy|terms|unsubscribe|shop|community|membership|please|©|\(c\)|copyright)\b/i;
@@ -43,7 +46,16 @@ function splitNameFirst(line) {
  */
 function extractShipTo(text) {
   if (!text) return null;
-  const lines = String(text).split(/\r?\n/).map(clean).filter(Boolean);
+  // Pokemon Center's plain-text part (and maybe others') glues the billing
+  // block's trailing country code onto the very next heading with no line
+  // break — "...55316\nUS Shipping Address:\nName\n..." — which hides the
+  // heading from every pattern below (all require it alone on its own line).
+  // Split that one case back apart before anything else runs.
+  const normalized = String(text).replace(
+    /\b(US|USA|United States)\s+(?=(?:Shipping Address|Ship(?:ping)? To|Delivery Address|Deliver(?:s|ing)? to|Shipped to|Shipment Address)\b)/gi,
+    '$1\n'
+  );
+  const lines = normalized.split(/\r?\n/).map(clean).filter(Boolean);
 
   // 1 — "Delivers to:" (Target), value on the same line or the next.
   for (let i = 0; i < lines.length; i++) {
