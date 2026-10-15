@@ -1054,7 +1054,11 @@ async function runEmailScraper(db) {
 
 function fetchByOrderNumber(imap, orderNumber, db) {
   return new Promise((resolve, reject) => {
-    imap.openBox('INBOX', true, (err) => {
+    // Unlike the routine background sync (which defaults to INBOX for speed),
+    // this is a one-off manual search for ONE order someone is specifically
+    // chasing down — very likely because it's old and already archived. It
+    // always searches the whole account, overriding scraper_mailbox if set.
+    imap.openBox('[Gmail]/All Mail', true, (err) => {
       if (err) return reject(err);
 
       // TEXT searches headers + body — catches order number anywhere in the email
