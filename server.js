@@ -2043,6 +2043,15 @@ app.post('/api/admin/scrape-emails/refetch', auth, adminOnly, (req, res) => {
 app.get('/api/admin/scrape-emails/status', auth, adminOnly, (req, res) => {
   res.json(_scrapeProgress);
 });
+// TEMP DIAGNOSTIC — dump the archived email text for an order. Remove after use.
+app.get('/api/admin/_debug/raw-for-order', auth, adminOnly, (req, res) => {
+  const orderNumber = req.query.order_number;
+  if (!orderNumber) return res.status(400).json({ error: 'order_number required' });
+  const rows = db.prepare(
+    "SELECT subject, text, email_date FROM raw_emails WHERE text LIKE ? OR html LIKE ? ORDER BY email_date"
+  ).all(['%' + orderNumber + '%', '%' + orderNumber + '%']);
+  res.json(rows.map(r => ({ subject: r.subject, email_date: r.email_date, text: r.text })));
+});
 app.post('/api/admin/scrape-emails/reset', auth, adminOnly, (req, res) => {
   const wipeOrders = req.body?.wipe === true;
   const days = parseInt(req.body?.days) || 180;
