@@ -252,12 +252,17 @@ function findOrderFinancials(text) {
   if (taxM) result.tax = parseFloat(taxM[1].replace(/,/g,''));
   // shipping / delivery:
   //   "Delivery Free" / "Shipping: Free" → shipping = 0
-  //   "Shipping: $0.00" / "Retail Delivery Fee $0.50" → capture amount
+  //   "Shipping: $0.00" → capture amount
   // [\s:]+ as separator prevents shipCostM from spanning across "Delivery Free ... $3.41"
   const shipFreeM = text.match(/(?:^|\s)(?:shipping|delivery)[\s:]+free/im);
-  const shipCostM = text.match(/(?:retail\s+delivery(?:\s+fee)?|delivery(?:\s+fee)?|shipping)[\s:]+\$?([\d,]+\.\d{2})/i);
+  const shipCostM = text.match(/(?<!retail\s)(?:delivery(?:\s+fee)?|shipping)[\s:]+\$?([\d,]+\.\d{2})/i);
   if (shipFreeM && !shipCostM) result.shipping = 0;
   else if (shipCostM) result.shipping = parseFloat(shipCostM[1].replace(/,/g,''));
+  // Retail Delivery Fee (Target, Colorado, etc.) is a SEPARATE line from
+  // shipping, not an alias for it — "Retail Delivery Fee $0.50" plus its own
+  // "Shipping $0.00" line. Folded additively into shipping, never replacing it.
+  const deliveryFeeM = text.match(/retail\s+delivery(?:\s+fee)?[\s:]+\$?([\d,]+\.\d{2})/i);
+  if (deliveryFeeM) result.shipping = (result.shipping || 0) + parseFloat(deliveryFeeM[1].replace(/,/g,''));
   // order total — "Order Total $43.39", "Grand Total $X", standalone "Total $43.39"
   // (?<!\w)total negative lookbehind prevents matching "Sub**total**"
   const totM = text.match(/(?:order\s+total|grand\s+total|total\s+charged)[\s:]*\$?([\d,]+\.\d{2})/i)

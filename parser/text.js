@@ -30,7 +30,16 @@ const PATTERNS = {
     re(`\\b(?:estimated\\s+|sales\\s+|state\\s+|local\\s+)*tax(?:es)?${GAP}${PAREN}${GAP}${AMOUNT}`),
   ],
   shipping: [
-    re(`\\b(?:retail\\s+delivery(?:\\s+fee)?|delivery(?:\\s+fee)?|shipping(?:\\s*(?:&|and)\\s*handling)?|freight)${GAP}${AMOUNT}`),
+    re(`\\bshipping(?:\\s*(?:&|and)\\s*handling)?${GAP}${AMOUNT}`),
+    re(`\\b(?:delivery(?:\\s+fee)?|freight)${GAP}${AMOUNT}`),
+  ],
+  // A state-mandated charge some retailers (Target, Colorado...) bill
+  // ALONGSIDE shipping, not instead of it — "Retail Delivery Fee $0.50" plus
+  // a separate "Shipping $0.00" line. Matching it as "shipping" clobbered the
+  // real shipping amount with this unrelated fee. Captured on its own and
+  // added to shipping below instead.
+  retailDeliveryFee: [
+    re(`\\bretail\\s+delivery(?:\\s+fee)?${GAP}${AMOUNT}`),
   ],
   discount: [
     re(`\\b(?:discount|promotion|promo(?:\\s+code)?|coupon|savings|you\\s+saved)${GAP}-?${AMOUNT}`),
@@ -45,7 +54,7 @@ const PATTERNS = {
 const FREE_SHIPPING = /\b(?:shipping|delivery)(?:\s+fee)?[\s:.]*free\b/i;
 
 function extractTextFinancials(text) {
-  const out = { subtotal: null, tax: null, shipping: null, discount: null, total: null };
+  const out = { subtotal: null, tax: null, shipping: null, discount: null, total: null, retailDeliveryFee: null };
   if (!text) return out;
 
   for (const [field, patterns] of Object.entries(PATTERNS)) {
@@ -61,6 +70,12 @@ function extractTextFinancials(text) {
 
   // Free shipping only counts if we didn't already find a shipping charge.
   if (out.shipping === null && FREE_SHIPPING.test(text)) out.shipping = 0;
+
+  // Fold the delivery fee into shipping — they're both delivery-related costs
+  // and the schema has no field of its own for it. Additive, never a replacement,
+  // so a real (possibly $0) shipping line is never lost under it.
+  if (out.retailDeliveryFee !== null) out.shipping = (out.shipping || 0) + out.retailDeliveryFee;
+  delete out.retailDeliveryFee;
 
   return out;
 }
