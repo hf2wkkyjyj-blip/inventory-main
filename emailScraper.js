@@ -199,8 +199,17 @@ function determineStatus(subject, bodyText, opts = {}) {
   // package ships", "questions about your package?") — none of which mean it
   // actually shipped. Every phrase here states shipment as a fact; a stray
   // mention of "your package" with no accompanying verb no longer counts.
+  //
+  // A second trap: plain confirmations routinely explain what happens LATER
+  // — "Once your order has shipped, you'll get a shipping confirmation email
+  // with tracking." That sentence contains "has shipped" word-for-word while
+  // stating the opposite (it hasn't yet). Strip conditional/future clauses
+  // like that before testing, so only an unconditional statement counts.
+  const NOT_YET_SHIPPED = /\b(?:once|when|after|as soon as|until)\s+(?:your|the)\s+(?:order|package|preorder|items?)\s+(?:has\s+shipped|have\s+shipped|has\s+been\s+shipped|ships|is\s+shipped|are\s+shipped)\b/gi;
+  const subjForShip = subj.replace(NOT_YET_SHIPPED, ' ');
+  const bodyForShip = body.replace(NOT_YET_SHIPPED, ' ');
   const SHIPPED = /\b(?:has\s+shipped|has\s+been\s+shipped|order\s+shipped|now\s+shipping|on\s+its\s+way|on\s+the\s+way|in\s+transit|has\s+left\s+our|shipment\s+(?:confirm\w*|notice)|your\s+package\s+(?:has|is|was)\b)/;
-  if (SHIPPED.test(subj) || SHIPPED.test(body)) return 'Shipped';
+  if (SHIPPED.test(subjForShip) || SHIPPED.test(bodyForShip)) return 'Shipped';
   // A tracking number with no contrary signal means it shipped.
   if (opts.hasTracking) return 'Shipped';
 

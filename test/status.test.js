@@ -63,6 +63,20 @@ eq('"your package has shipped" (a real shipping notice) is still Shipped',
    determineStatus('Shipping update', 'Good news — your package has shipped and is on the way.', { hasTracking: true }),
    'Shipped');
 
+// determineStatus() itself returns null here (no positive status stated) —
+// processEmail() then falls back to 'Confirmed' because an order number was
+// found. null, not 'Shipped', is what matters: it must not trip the SHIPPED
+// branch just because "has shipped" appears inside a conditional clause.
+eq('"once your order has shipped, you\'ll get a confirmation" is not Shipped',
+   determineStatus('Thank you for shopping at PokemonCenter.com!',
+     'We are processing your order. Once your order has shipped, you will receive a shipping confirmation email with tracking information.',
+     { hasTracking: false }),
+   null);
+
+eq('an unconditional "has shipped" (no "once") is still Shipped',
+   determineStatus('Your order has shipped!', 'Great news — your order has shipped and is on the way.', { hasTracking: true }),
+   'Shipped');
+
 console.log('\n── Real cancellations must still be caught ──');
 
 eq('subject says cancelled',
