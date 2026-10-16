@@ -13,13 +13,13 @@
 <script src="/site.js"></script>
 <style>
   /* ── HERO (dark band) ── */
-  .hero { color: var(--ink-text); border-bottom: 3px solid var(--accent); }
+  .hero { border-bottom: 3px solid var(--accent); }
   .hero .wrap { position: relative; display: grid; grid-template-columns: 1.1fr .9fr; gap: clamp(28px, 5vw, 72px); align-items: center; padding-top: clamp(52px, 8vw, 100px); padding-bottom: clamp(52px, 8vw, 100px); }
-  .hero h1 { font-size: clamp(48px, 6.8vw, 100px); margin: 20px 0 22px; color: #fff; }
-  .hero h1 .ghost { color: transparent; -webkit-text-stroke: 2px var(--accent-on-ink); }
+  .hero h1 { font-size: clamp(48px, 6.8vw, 100px); margin: 20px 0 22px; }
+  .hero h1 .ghost { color: transparent; -webkit-text-stroke: 2px var(--accent); }
   .cta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 34px; }
 
-  .board { background: #fff; color: var(--text); border-radius: 10px; box-shadow: 0 24px 60px rgba(0,0,0,.35); overflow: hidden; }
+  .board { background: #fff; color: var(--text); border-radius: 10px; border: 1.5px solid var(--line); box-shadow: 0 16px 40px rgba(28,34,43,.14); overflow: hidden; }
   .board-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; background: var(--panel-2); border-bottom: 1px solid var(--line); font-weight: 700; font-size: 14px; letter-spacing: .06em; text-transform: uppercase; }
   .live { display: inline-flex; align-items: center; gap: 8px; color: var(--good); font-size: 13px; }
   .live::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--good); animation: pulse 2s infinite; }
@@ -77,10 +77,10 @@
   .perks { margin-top: 28px; display: grid; gap: 12px; }
   .perk { display: flex; gap: 16px; align-items: center; font-size: 17px; font-weight: 600; padding: 18px 20px; border: 1.5px solid var(--line); border-radius: var(--radius); background: var(--bg); }
   .perk i { color: var(--accent); width: 22px; text-align: center; font-size: 18px; }
-  .trade-card { background: var(--ink); color: var(--ink-text); border-radius: 12px; padding: clamp(28px, 4vw, 46px); border-top: 5px solid var(--accent); }
-  .trade-card .tag { font-weight: 700; font-size: 13.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent-on-ink); }
-  .trade-card h3 { font-size: clamp(36px, 4.4vw, 54px); margin: 14px 0 14px; color: #fff; }
-  .trade-card p { color: var(--ink-muted); margin-bottom: 26px; max-width: 40ch; font-size: 18px; }
+  .trade-card { background: var(--accent-soft); color: var(--text); border: 1.5px solid #bcd1f6; border-radius: 12px; padding: clamp(28px, 4vw, 46px); border-top: 5px solid var(--accent); }
+  .trade-card .tag { font-weight: 700; font-size: 13.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+  .trade-card h3 { font-size: clamp(36px, 4.4vw, 54px); margin: 14px 0 14px; }
+  .trade-card p { color: #3d4757; margin-bottom: 26px; max-width: 40ch; font-size: 18px; }
 
   /* ── QUOTE ── */
   .quote { display: grid; grid-template-columns: .9fr 1.1fr; gap: clamp(28px, 6vw, 80px); align-items: start; }
@@ -126,7 +126,7 @@
   </div>
 </nav>
 
-<header class="hero photo-band on-ink">
+<header class="hero photo-band">
   <div class="wrap">
     <div>
       <div class="eyebrow" id="hero-eyebrow">Local building materials</div>
@@ -195,7 +195,7 @@
         <div class="perk"><i class="fa fa-user-check"></i> One contact for the whole job</div>
       </div>
     </div>
-    <div class="trade-card on-ink">
+    <div class="trade-card">
       <div class="tag">Trade · Contractors · Builders</div>
       <h3>Get a quote back fast.</h3>
       <p>Send your material list and we'll confirm pricing and availability against live stock.</p>

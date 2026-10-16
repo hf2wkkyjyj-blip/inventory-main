@@ -19,7 +19,7 @@
   .crumbs span.sep { margin: 0 8px; opacity: .5; }
 
   .fhero { border-bottom: 3px solid var(--accent); padding: clamp(48px, 7vw, 88px) 0; }
-  .fhero h1 { font-size: clamp(42px, 5.6vw, 76px); color: #fff; margin: 14px 0 14px; max-width: 22ch; }
+  .fhero h1 { font-size: clamp(42px, 5.6vw, 76px); margin: 14px 0 14px; max-width: 22ch; }
   .fhero .cta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 28px; }
 
   .layout { display: grid; grid-template-columns: 340px 1fr; gap: 32px; align-items: start; padding: 40px 0 72px; }
@@ -86,10 +86,10 @@
 
   .empty { grid-column: 1/-1; background: var(--panel); border: 1.5px dashed var(--line-strong); border-radius: 12px; padding: 44px; text-align: center; color: var(--muted); font-size: 18px; }
 
-  .cta-band { background: var(--ink); color: var(--ink-text); padding: clamp(40px, 6vw, 64px) 0; border-top: 3px solid var(--accent); }
+  .cta-band { background: var(--panel-2); color: var(--text); padding: clamp(40px, 6vw, 64px) 0; border-top: 3px solid var(--accent); }
   .cta-band .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 22px; }
-  .cta-band h2 { font-size: clamp(34px, 4.6vw, 54px); color: #fff; max-width: 18ch; }
-  .cta-band p { color: var(--ink-muted); margin-top: 8px; font-size: 18px; max-width: 46ch; }
+  .cta-band h2 { font-size: clamp(34px, 4.6vw, 54px); max-width: 18ch; }
+  .cta-band p { color: var(--muted); margin-top: 8px; font-size: 18px; max-width: 46ch; }
 
   @media (max-width: 1040px) { .layout { grid-template-columns: 1fr; } .calc { position: static; } }
   @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } .fhero .cta-row .btn { width: 100%; } }
@@ -117,7 +117,7 @@
 
 <div class="crumbs"><div class="wrap"><a href="/">Home</a><span class="sep">/</span><a href="/materials.html">Materials</a><span class="sep">/</span><b>Flooring</b></div></div>
 
-<header class="fhero photo-band on-ink">
+<header class="fhero photo-band">
   <div class="wrap">
     <div class="eyebrow">Materials · Flooring</div>
     <h1>Flooring, stocked for the job.</h1>
@@ -161,7 +161,7 @@
   </section>
 </main>
 
-<section class="cta-band on-ink">
+<section class="cta-band">
   <div class="wrap">
     <div>
       <h2>Need something that's not listed?</h2>
