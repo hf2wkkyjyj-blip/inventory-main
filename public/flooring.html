@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flooring — Solids Supply</title>
+<meta name="description" content="Stocked flooring with a room calculator: enter your room size and see how many boxes you need and what it costs.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<link href="/site.css" rel="stylesheet">
+<style>
+  .crumbs { background: var(--panel); border-bottom: 1px solid var(--line); font-size: 15px; color: var(--muted); }
+  .crumbs .wrap { padding-top: 14px; padding-bottom: 14px; }
+  .crumbs a:hover { color: var(--accent); text-decoration: underline; }
+  .crumbs b { color: var(--text); font-weight: 600; }
+  .crumbs span.sep { margin: 0 8px; opacity: .5; }
+
+  .fhero { background: var(--ink); border-bottom: 3px solid var(--accent); padding: clamp(40px, 6vw, 72px) 0; }
+  .fhero h1 { font-size: clamp(42px, 5.6vw, 76px); color: #fff; margin: 14px 0 14px; max-width: 22ch; }
+  .fhero .cta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 28px; }
+
+  .layout { display: grid; grid-template-columns: 340px 1fr; gap: 32px; align-items: start; padding: 40px 0 72px; }
+
+  /* ── CALCULATOR ── */
+  .calc { position: sticky; top: 88px; background: var(--panel); border: 1.5px solid var(--line); border-top: 5px solid var(--accent); border-radius: 12px; padding: 24px 22px 22px; box-shadow: 0 10px 30px rgba(28,34,43,.08); }
+  .calc h2 { font-size: 34px; margin-bottom: 6px; }
+  .calc .sub { color: var(--muted); font-size: 15.5px; margin-bottom: 18px; }
+  .calc .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .calc label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .calc input, .calc select { width: 100%; background: #fff; border: 1.5px solid var(--line-strong); border-radius: 6px; padding: 13px 12px; font: 18px var(--body); color: var(--text); }
+  .calc input:focus, .calc select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(29,95,211,.18); }
+  .calc .field { margin-bottom: 12px; }
+  .calc .or { text-align: center; color: var(--muted); font-size: 14px; margin: 2px 0 10px; }
+  .calc-out { margin-top: 16px; padding: 16px; border-radius: 8px; background: var(--accent-soft); color: var(--text); font-size: 16px; display: none; }
+  .calc-out.on { display: block; }
+  .calc-out .big { font-family: var(--head); font-weight: 800; font-size: 34px; line-height: 1.05; color: var(--accent-dark); text-transform: uppercase; }
+  .calc-out .small { color: var(--muted); font-size: 14.5px; margin-top: 4px; }
+  .calc-hint { margin-top: 14px; font-size: 14.5px; color: var(--muted); }
+  .calc-hint i { color: var(--accent); margin-right: 6px; }
+
+  /* ── TOOLBAR ── */
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; margin-bottom: 22px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; flex: 1; }
+  .chip { background: var(--panel); border: 1.5px solid var(--line-strong); color: var(--text); font: 600 15px var(--body); padding: 10px 18px; border-radius: 999px; cursor: pointer; transition: .15s; }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .sort { background: var(--panel); border: 1.5px solid var(--line-strong); border-radius: 6px; padding: 10px 12px; font: 600 15px var(--body); color: var(--text); }
+  .count { font-size: 15px; color: var(--muted); margin-bottom: 14px; }
+
+  /* ── PRODUCT CARDS ── */
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
+  .card { background: var(--panel); border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; transition: box-shadow .2s, border-color .2s; }
+  .card:hover { border-color: var(--line-strong); box-shadow: 0 12px 28px rgba(28,34,43,.10); }
+  .photo { aspect-ratio: 4/3; background: var(--panel-2); display: grid; place-items: center; overflow: hidden; }
+  .photo img { width: 100%; height: 100%; object-fit: cover; }
+  .photo .none { color: #9a9283; text-align: center; font-size: 15px; }
+  .photo .none i { display: block; font-size: 40px; margin-bottom: 8px; }
+  .thumbs { display: flex; gap: 8px; padding: 10px 14px 0; }
+  .thumbs button { width: 58px; height: 46px; border: 2px solid transparent; border-radius: 6px; padding: 0; overflow: hidden; background: var(--panel-2); cursor: pointer; }
+  .thumbs button.on { border-color: var(--accent); }
+  .thumbs img { width: 100%; height: 100%; object-fit: cover; }
+  .body { padding: 16px 20px 20px; display: flex; flex-direction: column; flex: 1; }
+  .kind { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+  .name { font-family: var(--head); font-weight: 700; text-transform: uppercase; font-size: 26px; line-height: 1.08; margin: 6px 0 12px; }
+  .price-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; padding: 12px 0; border-block: 1px solid var(--line); }
+  .price { font-family: var(--head); font-weight: 800; font-size: 40px; line-height: 1; color: var(--accent-dark); }
+  .price small { font-family: var(--body); font-weight: 600; font-size: 16px; color: var(--muted); }
+  .boxline { font-size: 16px; color: var(--text); }
+  .boxline span { color: var(--muted); }
+  .sku { font-family: var(--mono); font-size: 13.5px; color: var(--muted); margin-top: 10px; }
+  .desc { margin-top: 10px; font-size: 16px; color: #3b4452; }
+  .desc.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .more { background: none; border: 0; color: var(--accent); font: 700 15px var(--body); cursor: pointer; padding: 6px 0 0; align-self: flex-start; }
+  .stockrow { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; margin-top: 14px; }
+  .onhand { font-size: 15px; color: var(--muted); }
+
+  .mine { display: none; margin-top: 14px; padding: 14px 16px; border-radius: 8px; background: var(--accent-soft); border: 1.5px solid #bcd1f6; }
+  .mine.on { display: block; }
+  .mine .l1 { font-weight: 700; font-size: 18px; color: var(--accent-dark); }
+  .mine .l2 { font-size: 15px; color: var(--muted); margin-top: 3px; }
+  .actions { margin-top: 16px; display: flex; gap: 10px; }
+  .actions .btn { flex: 1; }
+
+  .empty { grid-column: 1/-1; background: var(--panel); border: 1.5px dashed var(--line-strong); border-radius: 12px; padding: 44px; text-align: center; color: var(--muted); font-size: 18px; }
+
+  .cta-band { background: var(--ink); color: var(--ink-text); padding: clamp(40px, 6vw, 64px) 0; border-top: 3px solid var(--accent); }
+  .cta-band .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 22px; }
+  .cta-band h2 { font-size: clamp(34px, 4.6vw, 54px); color: #fff; max-width: 18ch; }
+  .cta-band p { color: var(--ink-muted); margin-top: 8px; font-size: 18px; max-width: 46ch; }
+
+  @media (max-width: 1040px) { .layout { grid-template-columns: 1fr; } .calc { position: static; } }
+  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } .fhero .cta-row .btn { width: 100%; } }
+</style>
+</head>
+<body>
+
+<nav class="top" aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="/"><span id="brand-name">Solids Supply</span><small id="brand-area">Local building materials</small></a>
+    <form class="nav-search" action="/materials.html" method="get" role="search">
+      <i class="fa fa-search" aria-hidden="true"></i>
+      <input type="search" name="q" placeholder="Search products…" aria-label="Search products">
+    </form>
+    <div class="links" id="links">
+      <a href="/materials.html">Materials</a>
+      <a href="/flooring.html" class="current">Flooring</a>
+      <a href="/#trade">Trade Accounts</a>
+      <a href="/#quote">Request a Quote</a>
+      <a href="/#contact">Contact</a>
+    </div>
+    <button class="menu-btn" id="menu-btn" aria-label="Menu" aria-expanded="false"><i class="fa fa-bars"></i></button>
+  </div>
+</nav>
+
+<div class="crumbs"><div class="wrap"><a href="/">Home</a><span class="sep">/</span><a href="/materials.html">Materials</a><span class="sep">/</span><b>Flooring</b></div></div>
+
+<header class="fhero on-ink">
+  <div class="wrap">
+    <div class="eyebrow">Materials · Flooring</div>
+    <h1>Flooring, stocked for the job.</h1>
+    <p class="lede">Vinyl plank, laminate and tile on the shelf. Enter your room size and we'll show how many boxes you need and what it'll cost.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#calc">Calculate my room <i class="fa fa-arrow-down"></i></a>
+      <a class="btn btn-outline" href="/#quote">Request a quote</a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap layout">
+  <aside class="calc" id="calc" aria-labelledby="calc-title">
+    <h2 id="calc-title">Room calculator</h2>
+    <p class="sub">Type your room size once — every floor below updates with boxes and price.</p>
+    <div class="grid2">
+      <div class="field"><label for="c-len">Length (ft)</label><input id="c-len" type="number" inputmode="decimal" min="0" step="0.1" placeholder="e.g. 14"></div>
+      <div class="field"><label for="c-wid">Width (ft)</label><input id="c-wid" type="number" inputmode="decimal" min="0" step="0.1" placeholder="e.g. 12"></div>
+    </div>
+    <div class="or">— or if you already know it —</div>
+    <div class="field"><label for="c-area">Total area (sq ft)</label><input id="c-area" type="number" inputmode="decimal" min="0" step="1" placeholder="e.g. 400"></div>
+    <div class="field">
+      <label for="c-waste">Extra for cuts &amp; waste</label>
+      <select id="c-waste"><option value="0">None (0%)</option><option value="5">5%</option><option value="10" selected>10% — typical</option><option value="15">15% — diagonal / tricky room</option></select>
+    </div>
+    <div class="calc-out" id="calc-out" aria-live="polite"></div>
+    <p class="calc-hint"><i class="fa fa-circle-info"></i>Boxes are whole boxes, rounded up. Prices are estimates — we confirm exact totals on your quote.</p>
+  </aside>
+
+  <section aria-label="Flooring products">
+    <div class="toolbar">
+      <div class="chips" id="chips"></div>
+      <select class="sort" id="sort" aria-label="Sort products">
+        <option value="featured">Featured first</option>
+        <option value="low">Price: low to high</option>
+        <option value="high">Price: high to low</option>
+      </select>
+    </div>
+    <div class="count" id="count"></div>
+    <div class="grid" id="grid"><div class="empty">Loading flooring…</div></div>
+  </section>
+</main>
+
+<section class="cta-band on-ink">
+  <div class="wrap">
+    <div>
+      <h2>Need something that's not listed?</h2>
+      <p>Tell us what you're after — we can often source it, and we'll quote the whole job in one go.</p>
+    </div>
+    <a class="btn btn-primary" href="/#quote">Request a quote <i class="fa fa-arrow-right"></i></a>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <span id="foot-copy">© Solids Supply</span>
+    <span><a href="/materials.html">Materials</a> · <a href="/flooring.html">Flooring</a> · <a href="/#quote">Request a quote</a> · <a href="/admin.html">Staff login</a></span>
+  </div>
+</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money = n => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const num = n => Number(n).toLocaleString('en-US', { maximumFractionDigits: 1 });
+
+$('menu-btn').onclick = () => {
+  const open = $('links').classList.toggle('open');
+  $('menu-btn').setAttribute('aria-expanded', open);
+};
+
+let products = [], activeType = 'All';
+
+// Box coverage: the admin field if filled in, otherwise read it from the product name,
+// e.g. "... (20.1 SQ. FT./CASE)" — the same rule the Materials page uses.
+function coverageOf(p) {
+  if (Number(p.coverage_sqft) > 0) return Number(p.coverage_sqft);
+  const m = String(p.name || '').match(/([\d.]+)\s*sq\.?\s*ft\.?[^)]*(?:case|box|carton|pack)/i);
+  return m ? parseFloat(m[1]) : null;
+}
+// Normalise to price per sq ft and price per box, whichever way the product is priced.
+function pricing(p) {
+  const cov = coverageOf(p), unit = String(p.price_unit || 'each').toLowerCase();
+  if (p.price == null) return { cov, sqft: null, box: null, unit };
+  if (/sq\.?\s*ft/.test(unit)) return { cov, sqft: Number(p.price), box: cov ? p.price * cov : null, unit };
+  return { cov, sqft: cov ? p.price / cov : null, box: Number(p.price), unit };
+}
+
+function roomArea() {
+  const area = parseFloat($('c-area').value), l = parseFloat($('c-len').value), w = parseFloat($('c-wid').value);
+  if (area > 0) return area;
+  if (l > 0 && w > 0) return l * w;
+  return 0;
+}
+function needed() { const a = roomArea(); return a * (1 + (parseFloat($('c-waste').value) || 0) / 100); }
+
+function statusClass(p) { return p.stock === 'out_stock' ? 'out' : p.stock === 'low_stock' ? 'low' : 'in'; }
+const STATUS = { in: 'In stock', low: 'Low stock', out: 'Out of stock' };
+const imagesOf = p => { try { return (JSON.parse(p.images || '[]') || []).filter(Boolean); } catch (e) { return []; } };
+
+function cardHtml(p, idx) {
+  const pr = pricing(p), imgs = imagesOf(p), st = statusClass(p);
+  const photo = imgs.length
+    ? `<img id="ph-${idx}" src="${esc(imgs[0])}" alt="${esc(p.name)}" loading="lazy" onerror="this.parentNode.innerHTML='<div class=none><i class=&quot;fa fa-image&quot;></i>No photo yet</div>'">`
+    : '<div class="none"><i class="fa fa-image"></i>No photo yet</div>';
+  const thumbs = imgs.length > 1 ? `<div class="thumbs">${imgs.slice(0, 5).map((s, i) =>
+    `<button type="button" class="${i === 0 ? 'on' : ''}" aria-label="Photo ${i + 1}" onclick="swapPhoto(${idx}, '${esc(s).replace(/'/g, '%27')}', this)"><img src="${esc(s)}" alt="" loading="lazy"></button>`).join('')}</div>` : '';
+  let priceHtml;
+  if (pr.sqft != null) {
+    priceHtml = `<div class="price">${money(pr.sqft)} <small>/ sq ft</small></div>` +
+      (pr.box != null && pr.cov ? `<div class="boxline">${money(pr.box)} / box <span>(${num(pr.cov)} sq ft per box)</span></div>` : '');
+  } else if (pr.box != null) {
+    priceHtml = `<div class="price">${money(pr.box)} <small>/ ${esc(pr.unit)}</small></div><div class="boxline"><span>Ask us for coverage per ${esc(pr.unit)}</span></div>`;
+  } else priceHtml = '<div class="boxline"><span>Call for price</span></div>';
+  const desc = String(p.description || '').trim();
+  const long = desc.length > 170;
+  const boxesOnHand = pr.cov && p.quantity > 0 ? `${p.quantity} box${p.quantity === 1 ? '' : 'es'} on hand` : '';
+  return `<article class="card" data-i="${idx}">
+    <div class="photo">${photo}</div>${thumbs}
+    <div class="body">
+      ${p.subcategory ? `<div class="kind">${esc(p.subcategory)}</div>` : ''}
+      <h3 class="name">${esc(p.name)}</h3>
+      <div class="price-row">${priceHtml}</div>
+      ${p.sku ? `<div class="sku">SKU ${esc(p.sku)}</div>` : ''}
+      ${desc ? `<div class="desc${long ? ' clamp' : ''}">${esc(desc)}</div>${long ? '<button type="button" class="more" onclick="toggleMore(this)">Read more</button>' : ''}` : ''}
+      <div class="stockrow"><span class="st ${st}">${STATUS[st]}</span><span class="onhand">${boxesOnHand}</span></div>
+      <div class="mine" id="mine-${idx}"></div>
+      <div class="actions"><a class="btn btn-primary btn-sm" id="q-${idx}" href="/#quote">Request a quote</a></div>
+    </div>
+  </article>`;
+}
+
+function swapPhoto(idx, src, btn) {
+  const img = $('ph-' + idx); if (img) img.src = src;
+  btn.parentNode.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+}
+function toggleMore(btn) {
+  const d = btn.previousElementSibling, open = d.classList.toggle('clamp');
+  btn.textContent = open ? 'Read more' : 'Show less';
+}
+
+let visible = [];
+function render() {
+  const types = ['All', ...new Set(products.map(p => p.subcategory).filter(Boolean))];
+  $('chips').innerHTML = types.length > 2 ? types.map(t => `<button type="button" class="chip${t === activeType ? ' on' : ''}" data-t="${esc(t)}">${t === 'All' ? 'All flooring' : esc(t)}</button>`).join('') : '';
+  document.querySelectorAll('.chip').forEach(c => c.onclick = () => { activeType = c.dataset.t; render(); });
+
+  visible = products.filter(p => activeType === 'All' || p.subcategory === activeType);
+  const sort = $('sort').value;
+  const key = p => { const s = pricing(p).sqft; return s == null ? Infinity : s; };
+  if (sort === 'low') visible.sort((a, b) => key(a) - key(b));
+  if (sort === 'high') visible.sort((a, b) => (key(b) === Infinity ? -1 : key(b)) - (key(a) === Infinity ? -1 : key(a)));
+
+  $('count').textContent = visible.length ? `${visible.length} floor${visible.length === 1 ? '' : 's'} in stock` : '';
+  $('grid').innerHTML = visible.length ? visible.map(cardHtml).join('')
+    : '<div class="empty">No flooring is listed right now. Tell us what you need and we\'ll find it.<br><br><a class="btn btn-primary" href="/#quote">Request a quote</a></div>';
+  updateCalc();
+}
+
+// Recompute the sidebar summary and every card's "your room" box.
+function updateCalc() {
+  const area = roomArea(), need = needed(), out = $('calc-out');
+  if (!area) {
+    out.classList.remove('on'); out.innerHTML = '';
+    visible.forEach((p, i) => { $('mine-' + i).classList.remove('on'); setQuoteLink(i, p, null); });
+    return;
+  }
+  const waste = parseFloat($('c-waste').value) || 0;
+  out.classList.add('on');
+  out.innerHTML = `<div class="big">${num(area)} sq ft</div>
+    <div class="small">${waste ? `Plus ${waste}% for cuts &amp; waste = <b>${num(need)} sq ft</b> to buy.` : 'No extra added — buy exactly this much.'}</div>`;
+  visible.forEach((p, i) => {
+    const pr = pricing(p), box = $('mine-' + i);
+    if (!pr.cov && pr.sqft != null) {
+      // Sold by the square foot with no box size on file: estimate by area.
+      box.classList.add('on');
+      box.innerHTML = `<div class="l1">About ${money(need * pr.sqft)} for ${num(need)} sq ft</div><div class="l2">Priced by the square foot — we'll confirm quantity on your quote</div>`;
+      setQuoteLink(i, p, { area, boxes: null, total: need * pr.sqft });
+      return;
+    }
+    if (!pr.cov) { box.classList.remove('on'); setQuoteLink(i, p, null); return; }
+    const boxes = Math.ceil(need / pr.cov), covers = boxes * pr.cov, left = covers - need;
+    const total = pr.box != null ? boxes * pr.box : null;
+    box.classList.add('on');
+    box.innerHTML = `<div class="l1">${boxes} box${boxes === 1 ? '' : 'es'}${total != null ? ` · about ${money(total)}` : ''}</div>
+      <div class="l2">Covers ${num(covers)} sq ft${left > 0.05 ? ` (${num(left)} sq ft left over)` : ''}</div>`;
+    setQuoteLink(i, p, { area, boxes, total });
+  });
+}
+function setQuoteLink(i, p, est) {
+  let msg = `I'd like a quote for ${p.name}${p.sku ? ' (SKU ' + p.sku + ')' : ''}.`;
+  if (est) msg += ` My room is about ${num(est.area)} sq ft` + (est.boxes != null ? `, so roughly ${est.boxes} box${est.boxes === 1 ? '' : 'es'}` : '') + (est.total != null ? ` (about ${money(est.total)})` : '') + '.';
+  $('q-' + i).href = '/?quote=' + encodeURIComponent(msg) + '#quote';
+}
+['c-len', 'c-wid', 'c-area', 'c-waste'].forEach(id => $(id).addEventListener('input', () => {
+  // Typing a total area clears length/width (and vice versa) so the two never fight.
+  if (id === 'c-area' && $('c-area').value) { $('c-len').value = ''; $('c-wid').value = ''; }
+  if ((id === 'c-len' || id === 'c-wid') && $(id).value) $('c-area').value = '';
+  updateCalc();
+}));
+$('sort').addEventListener('change', render);
+
+async function loadSettings() {
+  try {
+    const s = await (await fetch('/api/settings')).json();
+    const name = s.business_name || 'Solids Supply';
+    document.title = 'Flooring — ' + name;
+    $('brand-name').textContent = name;
+    if (s.service_area) $('brand-area').textContent = s.service_area;
+    $('foot-copy').textContent = '© ' + new Date().getFullYear() + ' ' + name;
+  } catch (e) {}
+}
+async function loadProducts() {
+  try {
+    products = await (await fetch('/api/products?category=Flooring')).json();
+    if (!Array.isArray(products)) products = [];
+  } catch (e) { products = []; }
+  render();
+}
+loadSettings();
+loadProducts();
+</script>
+</body>
+</html>

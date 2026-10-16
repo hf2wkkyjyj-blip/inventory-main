@@ -6,31 +6,24 @@
 <title>Solids Supply</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="/site.css" rel="stylesheet">
 <style>
+  /* Older names used throughout this page, mapped onto the shared light tokens in site.css */
   :root {
-    color-scheme: dark;
-    --bg: #0a0e13;
-    --surface: #10161e;
-    --card: #10161e;
-    --border: #202b38;
-    --accent: #3d8bff;
-    --accent-hover: #7db4ff;
-    --accent-light: rgba(61,139,255,.14);
-    --text: #e9eef5;
-    --muted: #8895a7;
+    --surface: var(--panel);
+    --card: var(--panel);
+    --border: var(--line);
+    --accent-hover: var(--accent-dark);
+    --accent-light: var(--accent-soft);
     --white: #ffffff;
-    --green: #34d17f;
-    --green-bg: rgba(52,209,127,.12);
-    --yellow: #f0b429;
-    --yellow-bg: rgba(240,180,41,.12);
-    --red: #ff7a7a;
-    --red-bg: rgba(255,107,107,.12);
-    --radius: 10px;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,.4);
-    --shadow-xl: 0 20px 40px -8px rgba(0,0,0,.55);
-    --head: 'Barlow Condensed', 'Arial Narrow', sans-serif;
-    --mono: 'IBM Plex Mono', ui-monospace, monospace;
-    --gutter: clamp(18px, 5vw, 64px);
+    --green: var(--good);
+    --green-bg: var(--good-soft);
+    --yellow: var(--warn);
+    --yellow-bg: var(--warn-soft);
+    --red: var(--bad);
+    --red-bg: var(--bad-soft);
+    --shadow-sm: 0 1px 3px rgba(28,34,43,.10);
+    --shadow-xl: 0 20px 40px -8px rgba(28,34,43,.25);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -520,33 +513,9 @@
     #product-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 14px; }
   }
 
-  /* ── SHARED NAV + PAGE HEADER (same as homepage) ── */
-  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 var(--gutter); }
-  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--accent-hover); display: flex; align-items: center; gap: 12px; }
-  .eyebrow::before { content: ''; width: 28px; height: 1px; background: var(--accent); }
-  nav.top { position: sticky; top: 0; z-index: 100; background: rgba(10,14,19,.88); backdrop-filter: blur(14px); border-bottom: 1px solid var(--border); }
-  nav.top .wrap { display: flex; align-items: center; gap: 22px; height: 64px; }
-  .brand { font-family: var(--head); font-weight: 800; font-size: 26px; text-transform: uppercase; letter-spacing: .02em; line-height: 1; display: flex; flex-direction: column; text-decoration: none; color: var(--text); }
-  .brand small { font-family: var(--mono); font-weight: 400; font-size: 9.5px; letter-spacing: .18em; color: var(--muted); margin-top: 3px; text-transform: uppercase; }
-  .nav-search { flex: 1; max-width: 300px; position: relative; }
-  .nav-search input { width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 9px 12px 9px 34px; font: 13px 'Inter', sans-serif; }
-  .nav-search input::placeholder { color: var(--muted); }
-  .nav-search i { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 12px; }
-  .links { margin-left: auto; display: flex; gap: 26px; font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; }
-  .links a { color: #c3ccd8; padding: 6px 0; border-bottom: 1px solid transparent; text-decoration: none; transition: .15s; }
-  .links a:hover { color: #fff; border-color: var(--accent); }
-  .menu-btn { display: none; margin-left: auto; background: none; border: 1px solid var(--border); color: var(--text); width: 40px; height: 40px; border-radius: 6px; font-size: 16px; cursor: pointer; }
-  .page-head { border-bottom: 1px solid var(--border); padding: clamp(40px, 6vw, 72px) 0 clamp(32px, 5vw, 56px);
-    background: radial-gradient(900px 300px at 80% 0%, rgba(61,139,255,.16), transparent 65%), var(--bg); }
-  .page-head h1 { font-family: var(--head); font-weight: 800; text-transform: uppercase; line-height: .98; font-size: clamp(44px, 7vw, 84px); margin: 14px 0 12px; }
-  .page-head .lede { color: var(--muted); max-width: 54ch; font-size: 17px; }
-  @media (max-width: 760px) {
-    .nav-search { display: none; }
-    .menu-btn { display: block; }
-    .links { display: none; position: absolute; top: 64px; left: 0; right: 0; flex-direction: column; gap: 0; background: var(--bg); border-bottom: 1px solid var(--border); padding: 8px var(--gutter) 16px; margin: 0; }
-    .links.open { display: flex; }
-    .links a { padding: 14px 0; border-bottom: 1px solid var(--border); }
-  }
+  /* ── PAGE HEADER ── */
+  .page-head { background: var(--ink); border-bottom: 3px solid var(--accent); padding: clamp(36px, 5vw, 60px) 0; }
+  .page-head h1 { font-family: var(--head); font-weight: 800; text-transform: uppercase; line-height: .98; font-size: clamp(44px, 6.4vw, 80px); margin: 12px 0 12px; color: #fff; }
 </style>
 </head>
 <body>
@@ -560,18 +529,19 @@
       <input type="search" id="search-input" placeholder="Search products…" aria-label="Search products" oninput="debounceLoad()">
     </div>
     <div class="links" id="links">
-      <a href="/">Home</a>
+      <a href="/materials.html" class="current">Materials</a>
+      <a href="/flooring.html">Flooring</a>
       <a href="/#trade">Trade Accounts</a>
       <a href="/#quote">Request a Quote</a>
-      <a id="site-phone" href="#contact"></a>
+      <a href="#contact">Contact</a>
     </div>
     <button class="menu-btn" id="menu-btn" aria-label="Menu" aria-expanded="false"><i class="fa fa-bars"></i></button>
   </div>
 </nav>
-<span id="site-hours" hidden></span>
+<span id="site-hours" hidden></span><span id="site-phone" hidden></span>
 
 <!-- PAGE HEADER -->
-<header class="page-head">
+<header class="page-head on-ink">
   <div class="wrap">
     <div class="eyebrow">Materials</div>
     <h1>What&rsquo;s on the shelf.</h1>
