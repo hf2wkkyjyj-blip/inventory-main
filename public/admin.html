@@ -273,6 +273,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   <div class="tab" id="tab-pl-nav" onclick="showTab('pl')"><i class="fa fa-chart-line"></i> P&amp;L</div>
   <div class="tab" id="tab-members-nav" onclick="showTab('members')"><i class="fa fa-users"></i> Members</div>
   <div class="tab" id="tab-bot-orders-nav" onclick="showTab('bot-orders')" style="display:none;"><i class="fa fa-shipping-fast"></i> BOT Order Tracker</div>
+  <div class="tab" id="tab-quotes-nav" onclick="showTab('quotes')"><i class="fa fa-inbox"></i> Quotes <span id="quotes-badge" style="display:none;background:#ef4444;color:#fff;border-radius:999px;font-size:10px;font-weight:700;padding:1px 7px;margin-left:4px;"></span></div>
   <div class="tab" onclick="showTab('settings')"><i class="fa fa-cog"></i> Business Info</div>
 </div>
 
@@ -746,6 +747,15 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <select id="pt-refetch-days" style="font-size:12px;"><option value="90">last 90 days</option><option value="180" selected>last 180 days</option><option value="365">last year</option></select>
     <button class="btn btn-ghost btn-sm" id="pt-refetch" onclick="partnerRefetch()"><i class="fa fa-envelope"></i> Re-download old emails</button>
   </div>
+</div>
+
+<!-- ══ QUOTES TAB ════════════════════════════════════════════════════════════ -->
+<div id="tab-quotes" style="display:none;">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+    <h3 style="font-size:15px;font-weight:700;"><i class="fa fa-inbox" style="color:var(--accent);margin-right:8px;"></i>Quote &amp; trade-account requests</h3>
+    <span style="font-size:12px;color:var(--muted);">From the forms on your website. Newest unhandled first.</span>
+  </div>
+  <div id="quotes-list"></div>
 </div>
 
 <!-- ══ SETTINGS TAB ══════════════════════════════════════════════════════════ -->
@@ -1262,8 +1272,10 @@ function applyRoleUI() {
     document.getElementById('tab-pl-nav').style.display = 'none';
     document.getElementById('tab-members-nav').style.display = 'none';
     document.getElementById('tab-bot-orders-nav').style.display = 'none';
+    document.getElementById('tab-quotes-nav').style.display = 'none';
   } else {
     document.getElementById('tab-bot-orders-nav').style.display = '';
+    loadQuoteBadge();
   }
 }
 
@@ -1311,14 +1323,14 @@ if (TOKEN) {
 
 // ── TABS ──────────────────────────────────────────────────────────────────────
 function showTab(name) {
-  ['products','expenses','pl','members','bot-orders','settings'].forEach(t => {
+  ['products','expenses','pl','members','bot-orders','quotes','settings'].forEach(t => {
     document.getElementById('tab-'+t).style.display = t===name ? 'block' : 'none';
   });
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  const namedNav = {'members':'tab-members-nav','pl':'tab-pl-nav','bot-orders':'tab-bot-orders-nav'};
+  const namedNav = {'members':'tab-members-nav','pl':'tab-pl-nav','bot-orders':'tab-bot-orders-nav','quotes':'tab-quotes-nav'};
   if (namedNav[name]) { document.getElementById(namedNav[name]).classList.add('active'); }
   else {
-    const idx = {products:0,expenses:1,settings:5};
+    const idx = {products:0,expenses:1,settings:6};
     const allTabs = document.querySelectorAll('.tab');
     if (allTabs[idx[name]]) allTabs[idx[name]].classList.add('active');
   }
@@ -1326,6 +1338,7 @@ function showTab(name) {
   if (name==='pl') { loadPL(); loadDashboard(); }
   if (name==='members') loadMembers();
   if (name==='bot-orders') loadBotOrders();
+  if (name==='quotes') loadQuotes();
 }
 
 // ── PRODUCTS ─────────────────────────────────────────────────────────────────
@@ -5261,6 +5274,49 @@ async function saveEmployeePassword() {
 }
 
 // ── UTILS ─────────────────────────────────────────────────────────────────────
+// ── Quotes (requests from the public website forms) ─────────────────────────
+function setQuoteBadge(n) {
+  const b = document.getElementById('quotes-badge');
+  if (!b) return;
+  b.textContent = n; b.style.display = n ? '' : 'none';
+}
+async function loadQuoteBadge() {
+  try { const list = await api('GET', '/admin/quotes'); setQuoteBadge((list || []).filter(q => !q.handled).length); } catch (_) {}
+}
+async function loadQuotes() {
+  const list = await api('GET', '/admin/quotes');
+  const box = document.getElementById('quotes-list');
+  if (!list) return;
+  setQuoteBadge(list.filter(q => !q.handled).length);
+  if (!list.length) {
+    box.innerHTML = '<div class="panel" style="padding:30px;color:var(--muted);text-align:center;">No requests yet. Quote and trade-account requests from your website will show up here.</div>';
+    return;
+  }
+  box.innerHTML = list.map(q => {
+    const when = new Date(String(q.created_at).replace(' ', 'T') + 'Z');
+    const trade = q.kind === 'trade';
+    return `<div class="panel quote-card" data-id="${q.id}" style="padding:16px 18px;margin-bottom:10px;${q.handled ? 'opacity:.55;' : ''}">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+        <b style="font-size:14px;">${esc(q.name)}</b>
+        <span style="font-size:10px;font-weight:700;letter-spacing:.06em;padding:2px 8px;border-radius:999px;border:1px solid ${trade ? '#6d28d9' : '#1e40af'};color:${trade ? '#c4b5fd' : '#93c5fd'};">${trade ? 'TRADE ACCOUNT' : 'QUOTE'}</span>
+        <span style="font-size:12px;color:var(--muted);">${esc(q.contact)}</span>
+        <span style="flex:1;"></span>
+        <span style="font-size:11px;color:var(--muted);">${isNaN(when) ? '' : when.toLocaleString()}</span>
+      </div>
+      <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;">${esc(q.message)}</div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button class="btn btn-ghost btn-sm" onclick="setQuoteHandled(${q.id}, ${q.handled ? 0 : 1})"><i class="fa fa-${q.handled ? 'rotate-left' : 'check'}"></i> ${q.handled ? 'Reopen' : 'Mark handled'}</button>
+        <button class="btn btn-ghost btn-sm" style="color:#f87171;" onclick="deleteQuote(${q.id})"><i class="fa fa-trash"></i> Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+async function setQuoteHandled(id, handled) { await api('PATCH', '/admin/quotes/' + id, { handled }); loadQuotes(); }
+async function deleteQuote(id) {
+  if (!confirm('Delete this request?')) return;
+  await api('DELETE', '/admin/quotes/' + id); loadQuotes();
+}
+
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function todayStr() { return new Date().toISOString().split('T')[0]; }
 function fmtDate(dt) {

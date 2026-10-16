@@ -214,6 +214,11 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS bot_partner_profiles (
 // ✎ "whose order": NULL = match automatically, 0 = mine, else a partner id.
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN partner_override INTEGER"); } catch(e) {}
 
+// Quote / trade-account requests from the public storefront forms.
+try { db.exec(`CREATE TABLE IF NOT EXISTS quote_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT DEFAULT 'quote', name TEXT NOT NULL, contact TEXT,
+  message TEXT NOT NULL, handled INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
+
 // House owners: the person whose house a main address is. One row per place.
 try { db.exec(`CREATE TABLE IF NOT EXISTS bot_address_owners (
   addr_key TEXT PRIMARY KEY, owner TEXT NOT NULL, address TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
@@ -476,6 +481,26 @@ app.get('/api/categories', (req, res) => {
   res.json(['All', ...cats]);
 });
 
+// Public quote / trade-account form. Unauthenticated write, so: trim and cap every
+// field, and allow only a few submissions per visitor per hour.
+const _quoteHits = new Map();   // ip -> [timestamps]
+app.post('/api/quote', (req, res) => {
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const now = Date.now();
+  const recent = (_quoteHits.get(ip) || []).filter(t => now - t < 3600e3);
+  if (recent.length >= 5) return res.status(429).json({ error: 'Too many requests — please call us instead' });
+  const b = req.body || {};
+  const name = String(b.name || '').trim().slice(0, 100);
+  const contact = String(b.contact || '').trim().slice(0, 200);
+  const message = String(b.message || '').trim().slice(0, 4000);
+  const kind = b.kind === 'trade' ? 'trade' : 'quote';
+  if (!name || !message) return res.status(400).json({ error: 'Name and message are required' });
+  if (!contact) return res.status(400).json({ error: 'A phone number or email is required' });
+  recent.push(now); _quoteHits.set(ip, recent);
+  db.prepare('INSERT INTO quote_requests (kind, name, contact, message) VALUES (?,?,?,?)').run([kind, name, contact, message]);
+  res.json({ ok: true });
+});
+
 // ─── ADMIN AUTH ───────────────────────────────────────────────────────────────
 app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
@@ -490,6 +515,19 @@ app.post('/api/admin/login', (req, res) => {
   if (!role) return res.status(401).json({ error: 'Wrong password' });
   const token = jwt.sign({ role }, JWT_SECRET, { expiresIn: '24h' });
   res.json({ token, role });
+});
+
+// ─── QUOTE REQUESTS (admin) ───────────────────────────────────────────────────
+app.get('/api/admin/quotes', auth, adminOnly, (req, res) => {
+  res.json(db.prepare('SELECT * FROM quote_requests ORDER BY handled ASC, id DESC LIMIT 500').all());
+});
+app.patch('/api/admin/quotes/:id', auth, adminOnly, (req, res) => {
+  db.prepare('UPDATE quote_requests SET handled=? WHERE id=?').run([req.body && req.body.handled ? 1 : 0, req.params.id]);
+  res.json({ ok: true });
+});
+app.delete('/api/admin/quotes/:id', auth, adminOnly, (req, res) => {
+  db.prepare('DELETE FROM quote_requests WHERE id=?').run([req.params.id]);
+  res.json({ ok: true });
 });
 
 // ─── ADMIN PRODUCT ROUTES ─────────────────────────────────────────────────────
