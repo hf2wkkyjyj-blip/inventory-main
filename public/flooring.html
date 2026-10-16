@@ -188,7 +188,16 @@ $('menu-btn').onclick = () => {
   $('menu-btn').setAttribute('aria-expanded', open);
 };
 
-let products = [], activeType = 'All';
+let products = [], activeType = '';   // '' = all; otherwise a lower-cased type key
+
+// Types are typed by hand in the admin, so "Laminate" and "laminate" must count as one.
+const typeKey = s => String(s || '').trim().toLowerCase();
+const tidy = s => { s = String(s || '').trim(); return /[A-Z]/.test(s) ? s : s.replace(/\b\w/g, c => c.toUpperCase()); };
+function typeLabels() {
+  const m = new Map();
+  products.forEach(p => { const k = typeKey(p.subcategory); if (k && !m.has(k)) m.set(k, tidy(p.subcategory)); });
+  return m;
+}
 
 // Box coverage: the admin field if filled in, otherwise read it from the product name,
 // e.g. "... (20.1 SQ. FT./CASE)" — the same rule the Materials page uses.
@@ -237,7 +246,7 @@ function cardHtml(p, idx) {
   return `<article class="card" data-i="${idx}">
     <div class="photo">${photo}</div>${thumbs}
     <div class="body">
-      ${p.subcategory ? `<div class="kind">${esc(p.subcategory)}</div>` : ''}
+      ${p.subcategory ? `<div class="kind">${esc(typeLabels().get(typeKey(p.subcategory)))}</div>` : ''}
       <h3 class="name">${esc(p.name)}</h3>
       <div class="price-row">${priceHtml}</div>
       ${p.sku ? `<div class="sku">SKU ${esc(p.sku)}</div>` : ''}
@@ -260,11 +269,13 @@ function toggleMore(btn) {
 
 let visible = [];
 function render() {
-  const types = ['All', ...new Set(products.map(p => p.subcategory).filter(Boolean))];
-  $('chips').innerHTML = types.length > 2 ? types.map(t => `<button type="button" class="chip${t === activeType ? ' on' : ''}" data-t="${esc(t)}">${t === 'All' ? 'All flooring' : esc(t)}</button>`).join('') : '';
+  const labels = typeLabels();
+  $('chips').innerHTML = labels.size > 1
+    ? [['', 'All flooring'], ...labels].map(([k, label]) => `<button type="button" class="chip${k === activeType ? ' on' : ''}" data-t="${esc(k)}">${esc(label)}</button>`).join('')
+    : '';
   document.querySelectorAll('.chip').forEach(c => c.onclick = () => { activeType = c.dataset.t; render(); });
 
-  visible = products.filter(p => activeType === 'All' || p.subcategory === activeType);
+  visible = products.filter(p => !activeType || typeKey(p.subcategory) === activeType);
   const sort = $('sort').value;
   const key = p => { const s = pricing(p).sqft; return s == null ? Infinity : s; };
   if (sort === 'low') visible.sort((a, b) => key(a) - key(b));

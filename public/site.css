@@ -90,8 +90,8 @@ footer.site { background: var(--ink); color: var(--ink-muted); padding: 40px 0 4
 footer.site .wrap { display: flex; flex-wrap: wrap; gap: 14px 32px; justify-content: space-between; }
 footer.site a:hover { color: #fff; text-decoration: underline; }
 
+@media (max-width: 1100px) { .nav-search { display: none; } }
 @media (max-width: 860px) {
-  .nav-search { display: none; }
   .menu-btn { display: block; }
   .links { display: none; position: absolute; top: 68px; left: 0; right: 0; flex-direction: column; gap: 0; background: var(--ink); border-bottom: 3px solid var(--accent); padding: 6px var(--gutter) 14px; margin: 0; }
   .links.open { display: flex; }
