@@ -10,6 +10,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <link href="/site.css" rel="stylesheet">
+<script src="/site.js"></script>
 <style>
   .crumbs { background: var(--panel); border-bottom: 1px solid var(--line); font-size: 15px; color: var(--muted); }
   .crumbs .wrap { padding-top: 14px; padding-bottom: 14px; }
@@ -17,7 +18,7 @@
   .crumbs b { color: var(--text); font-weight: 600; }
   .crumbs span.sep { margin: 0 8px; opacity: .5; }
 
-  .fhero { background: var(--ink); border-bottom: 3px solid var(--accent); padding: clamp(40px, 6vw, 72px) 0; }
+  .fhero { border-bottom: 3px solid var(--accent); padding: clamp(48px, 7vw, 88px) 0; }
   .fhero h1 { font-size: clamp(42px, 5.6vw, 76px); color: #fff; margin: 14px 0 14px; max-width: 22ch; }
   .fhero .cta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 28px; }
 
@@ -116,7 +117,7 @@
 
 <div class="crumbs"><div class="wrap"><a href="/">Home</a><span class="sep">/</span><a href="/materials.html">Materials</a><span class="sep">/</span><b>Flooring</b></div></div>
 
-<header class="fhero on-ink">
+<header class="fhero photo-band on-ink">
   <div class="wrap">
     <div class="eyebrow">Materials · Flooring</div>
     <h1>Flooring, stocked for the job.</h1>
@@ -347,6 +348,7 @@ async function loadProducts() {
   } catch (e) { products = []; }
   render();
 }
+bandPhoto('.fhero', '/hero-flooring.jpg');   // optional photo: public/hero-flooring.jpg
 loadSettings();
 loadProducts();
 </script>

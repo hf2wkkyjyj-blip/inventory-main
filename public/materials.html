@@ -7,6 +7,7 @@
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link href="/site.css" rel="stylesheet">
+<script src="/site.js"></script>
 <style>
   /* Older names used throughout this page, mapped onto the shared light tokens in site.css */
   :root {
@@ -514,7 +515,7 @@
   }
 
   /* ── PAGE HEADER ── */
-  .page-head { background: var(--ink); border-bottom: 3px solid var(--accent); padding: clamp(36px, 5vw, 60px) 0; }
+  .page-head { border-bottom: 3px solid var(--accent); padding: clamp(44px, 6.5vw, 84px) 0; }
   .page-head h1 { font-family: var(--head); font-weight: 800; text-transform: uppercase; line-height: .98; font-size: clamp(44px, 6.4vw, 80px); margin: 12px 0 12px; color: #fff; }
 </style>
 </head>
@@ -541,7 +542,7 @@
 <span id="site-hours" hidden></span><span id="site-phone" hidden></span>
 
 <!-- PAGE HEADER -->
-<header class="page-head on-ink">
+<header class="page-head photo-band on-ink">
   <div class="wrap">
     <div class="eyebrow">Materials</div>
     <h1>What&rsquo;s on the shelf.</h1>
@@ -634,6 +635,7 @@ document.getElementById('menu-btn').onclick = () => {
   const open = document.getElementById('links').classList.toggle('open');
   document.getElementById('menu-btn').setAttribute('aria-expanded', open);
 };
+bandPhoto('.page-head', '/hero-materials.jpg');   // optional photo: public/hero-materials.jpg
 let currentCat = 'All';
 let searchTimer = null;
 let settings = {};

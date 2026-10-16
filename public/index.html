@@ -10,14 +10,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <link href="/site.css" rel="stylesheet">
+<script src="/site.js"></script>
 <style>
   /* ── HERO (dark band) ── */
-  .hero { position: relative; overflow: hidden; background: var(--ink); color: var(--ink-text);
-    background-image: linear-gradient(180deg, rgba(27,32,39,.82), rgba(27,32,39,.94)), var(--hero-img, none);
-    background-size: cover; background-position: center; border-bottom: 3px solid var(--accent); }
-  .hero::before { content: ''; position: absolute; inset: 0; pointer-events: none;
-    background-image: linear-gradient(rgba(127,176,255,.06) 1px, transparent 1px), linear-gradient(90deg, rgba(127,176,255,.06) 1px, transparent 1px);
-    background-size: 56px 56px; }
+  .hero { color: var(--ink-text); border-bottom: 3px solid var(--accent); }
   .hero .wrap { position: relative; display: grid; grid-template-columns: 1.1fr .9fr; gap: clamp(28px, 5vw, 72px); align-items: center; padding-top: clamp(52px, 8vw, 100px); padding-bottom: clamp(52px, 8vw, 100px); }
   .hero h1 { font-size: clamp(48px, 6.8vw, 100px); margin: 20px 0 22px; color: #fff; }
   .hero h1 .ghost { color: transparent; -webkit-text-stroke: 2px var(--accent-on-ink); }
@@ -130,7 +126,7 @@
   </div>
 </nav>
 
-<header class="hero on-ink">
+<header class="hero photo-band on-ink">
   <div class="wrap">
     <div>
       <div class="eyebrow" id="hero-eyebrow">Local building materials</div>
@@ -355,12 +351,8 @@ $('qf').addEventListener('submit', async e => {
   } finally { $('q-submit').disabled = false; }
 });
 
-// Optional warehouse photo: save your own photo as public/hero.jpg and it appears behind the hero.
-(() => {
-  const im = new Image();
-  im.onload = () => document.querySelector('.hero').style.setProperty('--hero-img', "url('/hero.jpg')");
-  im.src = '/hero.jpg';
-})();
+// Optional photo behind the hero: save your own as public/hero.jpg.
+bandPhoto('.hero', '/hero.jpg');
 
 loadSettings();
 loadCatalog();

@@ -98,3 +98,18 @@ footer.site a:hover { color: #fff; text-decoration: underline; }
   .links a { padding: 16px 0; border-bottom: 1px solid #2f3945; font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } html { scroll-behavior: auto; } }
+
+/* ── PHOTO BANDS ──
+   Dark header areas (home hero, Materials header, Flooring header). They show a photo when
+   one exists — public/hero.jpg, hero-materials.jpg, hero-flooring.jpg — via bandPhoto() in
+   site.js. Without a photo they still get a blueprint-grid texture so they never look flat.
+   The gradient keeps the left side dark so headline text stays readable on any photo. */
+.photo-band { position: relative; overflow: hidden; background-color: var(--ink);
+  background-image: linear-gradient(90deg, rgba(27,32,39,.95) 0%, rgba(27,32,39,.82) 42%, rgba(27,32,39,.40) 100%), var(--band-img, none);
+  background-size: cover; background-position: center; }
+.photo-band::before { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(rgba(127,176,255,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(127,176,255,.08) 1px, transparent 1px);
+  background-size: 56px 56px; -webkit-mask-image: linear-gradient(90deg, #000 0%, transparent 75%); mask-image: linear-gradient(90deg, #000 0%, transparent 75%); }
+.photo-band::after { content: ''; position: absolute; right: -8%; top: -30%; width: 55%; height: 160%; pointer-events: none;
+  background: radial-gradient(closest-side, rgba(61,139,255,.20), transparent 70%); }
+.photo-band > .wrap { position: relative; z-index: 1; }
