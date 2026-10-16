@@ -54,6 +54,19 @@
   .arrow { display: inline-block; transition: transform .2s; }
   .cats-empty { grid-column: 1/-1; background: var(--panel); border: 1.5px dashed var(--line-strong); border-radius: var(--radius); padding: 40px; color: var(--muted); }
 
+  /* ── EXCLUSIVE LINE ── */
+  .ex-band { background: linear-gradient(180deg, #eef4fe, #fff); border-block: 1px solid var(--line); }
+  .ex-home { display: grid; grid-template-columns: .9fr 1.1fr; gap: clamp(28px, 6vw, 72px); align-items: center; }
+  .ex-tag { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #fff; font-weight: 700; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; padding: 7px 14px; border-radius: 999px; }
+  .ex-home .btn { margin-top: 26px; }
+  .ex-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .ex-sw { display: block; background: #fff; border: 1.5px solid var(--line); border-radius: 10px; overflow: hidden; transition: transform .15s, border-color .15s, box-shadow .15s; }
+  .ex-sw:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 10px 22px rgba(28,34,43,.12); }
+  .ex-sw .im { aspect-ratio: 1/1; background: var(--panel-2) center/cover no-repeat; }
+  .ex-sw .tx { padding: 10px 12px 12px; }
+  .ex-sw b { display: block; font-size: 16px; line-height: 1.2; }
+  .ex-sw span { color: var(--muted); font-size: 14px; }
+
   /* ── FEATURED ── */
   .featured { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-top: 44px; }
   .fcard { background: var(--bg); border: 1.5px solid var(--line); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; transition: transform .2s, box-shadow .2s, border-color .2s; }
@@ -92,7 +105,7 @@
   .contact-list a:hover { text-decoration: underline; }
 
   @media (max-width: 980px) {
-    .hero .wrap, .trade, .quote { grid-template-columns: 1fr; }
+    .hero .wrap, .trade, .quote, .ex-home { grid-template-columns: 1fr; }
     .cats { grid-template-columns: repeat(2, 1fr); }
     .featured { grid-template-columns: repeat(2, 1fr); }
     .steps { grid-template-columns: 1fr; }
@@ -101,6 +114,7 @@
   }
   @media (max-width: 560px) {
     .cats, .featured { grid-template-columns: 1fr; }
+    .ex-strip { grid-template-columns: repeat(2, 1fr); }
     .qf .row { grid-template-columns: 1fr; }
     .cta-row .btn { width: 100%; }
   }
@@ -159,6 +173,18 @@
     <h2 class="section">Materials for<br>the job ahead.</h2>
     <p class="lede">Pick a category to see what's on the shelf right now, with current prices.</p>
     <div class="cats" id="cats"><div class="cats-empty">Loading categories…</div></div>
+  </div>
+</section>
+
+<section class="block ex-band" id="exclusive-wrap" style="display:none;">
+  <div class="wrap ex-home">
+    <div>
+      <span class="ex-tag"><i class="fa fa-star"></i> Exclusive line</span>
+      <h2 class="section">DURAPLEX<br>flooring.</h2>
+      <p class="lede" id="ex-lede">Our exclusive waterproof vinyl plank. Click-lock install, underlayment already attached, and a 10-year limited residential wear warranty.</p>
+      <a class="btn btn-primary" href="/flooring.html#exclusive">See the colors &amp; calculator <i class="fa fa-arrow-right"></i></a>
+    </div>
+    <div class="ex-strip" id="ex-strip"></div>
   </div>
 </section>
 
@@ -316,6 +342,18 @@ async function loadCatalog() {
       <div class="foot"><span class="st ${st}">${STATUS_LABEL[st]}</span><span class="go">${/^flooring$/i.test(c) ? 'See flooring + calculator' : 'View inventory'} <span class="arrow">→</span></span></div>
     </a>`;
   }).join('') : '<div class="cats-empty">Our catalog is being updated. Request a quote and we\'ll help directly.</div>';
+
+  // Exclusive line (products whose source is "Duraplex"): shown only once they exist.
+  const ex = products.filter(p => /duraplex/i.test(p.source || '') && p.stock !== 'out_stock');
+  if (ex.length) {
+    $('exclusive-wrap').style.display = '';
+    $('ex-strip').innerHTML = ex.slice(0, 6).map(p => {
+      let img = ''; try { img = (JSON.parse(p.images || '[]') || [])[0] || ''; } catch (e) {}
+      const per = p.coverage_sqft > 0 && p.price != null && !/sq\.?\s*ft/i.test(p.price_unit || '') ? p.price / p.coverage_sqft : null;
+      return `<a class="ex-sw" href="/flooring.html#exclusive"><div class="im"${img ? ` style="background-image:url('${esc(img).replace(/'/g, '%27')}')"` : ''}></div>
+        <div class="tx"><b>${esc(String(p.name).replace(/^duraplex\s*/i, '').split(/\s+\d+\s*mil\b/i)[0])}</b><span>${per != null ? '$' + per.toFixed(2) + ' / sq ft' : ''}</span></div></a>`;
+    }).join('');
+  }
 
   // Featured strip: only if the owner has flagged products as featured.
   const feat = products.filter(p => p.featured && p.stock !== 'out_stock').slice(0, 4);

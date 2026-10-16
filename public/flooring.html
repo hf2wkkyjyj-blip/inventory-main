@@ -22,6 +22,20 @@
   .fhero h1 { font-size: clamp(42px, 5.6vw, 76px); margin: 14px 0 14px; max-width: 22ch; }
   .fhero .cta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 28px; }
 
+  /* ── EXCLUSIVE LINE ── */
+  .exclusive { background: linear-gradient(180deg, #eef4fe, #fff); border-bottom: 1px solid var(--line); padding: clamp(36px, 5vw, 60px) 0; }
+  .ex-tag { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #fff; font-weight: 700; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; padding: 7px 14px; border-radius: 999px; }
+  .exclusive h2 { font-size: clamp(36px, 5vw, 60px); margin: 14px 0 10px; }
+  .ex-facts { display: flex; flex-wrap: wrap; gap: 8px 10px; margin: 16px 0 26px; }
+  .ex-facts span { background: #fff; border: 1.5px solid #bcd1f6; color: var(--accent-dark); font-weight: 600; font-size: 14.5px; padding: 7px 14px; border-radius: 999px; }
+  .ex-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; margin-bottom: 26px; }
+  .ex-sw { background: #fff; border: 1.5px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; text-align: left; font: inherit; padding: 0; transition: transform .15s, border-color .15s, box-shadow .15s; }
+  .ex-sw:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 10px 22px rgba(28,34,43,.12); }
+  .ex-sw .im { aspect-ratio: 1/1; background: var(--panel-2) center/cover no-repeat; }
+  .ex-sw .tx { padding: 10px 12px 12px; }
+  .ex-sw b { display: block; font-size: 16px; line-height: 1.2; }
+  .ex-sw span { color: var(--muted); font-size: 14px; }
+  .badge-ex { position: absolute; top: 12px; left: 12px; z-index: 2; background: var(--accent); color: #fff; font-weight: 700; font-size: 12.5px; letter-spacing: .09em; text-transform: uppercase; padding: 6px 12px; border-radius: 999px; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
   .layout { display: grid; grid-template-columns: 340px 1fr; gap: 32px; align-items: start; padding: 40px 0 72px; }
 
   /* ── CALCULATOR ── */
@@ -54,7 +68,7 @@
   .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
   .card { background: var(--panel); border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; transition: box-shadow .2s, border-color .2s; }
   .card:hover { border-color: var(--line-strong); box-shadow: 0 12px 28px rgba(28,34,43,.10); }
-  .photo { aspect-ratio: 4/3; background: var(--panel-2); display: grid; place-items: center; overflow: hidden; }
+  .photo { position: relative; aspect-ratio: 4/3; background: var(--panel-2); display: grid; place-items: center; overflow: hidden; }
   .photo img { width: 100%; height: 100%; object-fit: cover; }
   .photo .none { color: #9a9283; text-align: center; font-size: 15px; }
   .photo .none i { display: block; font-size: 40px; margin-bottom: 8px; }
@@ -129,6 +143,17 @@
   </div>
 </header>
 
+<section class="exclusive" id="exclusive" style="display:none;">
+  <div class="wrap">
+    <span class="ex-tag"><i class="fa fa-star"></i> Exclusive line</span>
+    <h2>DURAPLEX waterproof vinyl plank</h2>
+    <p class="lede" id="ex-lede">Our exclusive flooring line: waterproof, scratch-resistant vinyl plank with a click-lock install and underlayment already attached.</p>
+    <div class="ex-facts" id="ex-facts"></div>
+    <div class="ex-strip" id="ex-strip"></div>
+    <button type="button" class="btn btn-primary" id="ex-shop">Shop DURAPLEX <i class="fa fa-arrow-down"></i></button>
+  </div>
+</section>
+
 <main class="wrap layout">
   <aside class="calc" id="calc" aria-labelledby="calc-title">
     <h2 id="calc-title">Room calculator</h2>
@@ -182,14 +207,16 @@
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money = n => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const num = n => Number(n).toLocaleString('en-US', { maximumFractionDigits: 1 });
+const num = n => Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });   // 2 so a 16.55 sq ft box never shows as 16.6
 
 $('menu-btn').onclick = () => {
   const open = $('links').classList.toggle('open');
   $('menu-btn').setAttribute('aria-expanded', open);
 };
 
-let products = [], activeType = '';   // '' = all; otherwise a lower-cased type key
+let products = [], activeType = '';   // '' = all; '__ex' = exclusive line; otherwise a lower-cased type key
+// The exclusive line is whatever has "Duraplex" as its source (set it in the admin to add more).
+const isEx = p => /duraplex/i.test(p.source || '');
 
 // Types are typed by hand in the admin, so "Laminate" and "laminate" must count as one.
 const typeKey = s => String(s || '').trim().toLowerCase();
@@ -245,7 +272,7 @@ function cardHtml(p, idx) {
   const long = desc.length > 170;
   const boxesOnHand = pr.cov && p.quantity > 0 ? `${p.quantity} box${p.quantity === 1 ? '' : 'es'} on hand` : '';
   return `<article class="card" data-i="${idx}">
-    <div class="photo">${photo}</div>${thumbs}
+    <div class="photo">${isEx(p) ? '<span class="badge-ex"><i class="fa fa-star"></i> Exclusive</span>' : ''}${photo}</div>${thumbs}
     <div class="body">
       ${p.subcategory ? `<div class="kind">${esc(typeLabels().get(typeKey(p.subcategory)))}</div>` : ''}
       <h3 class="name">${esc(p.name)}</h3>
@@ -270,15 +297,17 @@ function toggleMore(btn) {
 
 let visible = [];
 function render() {
-  const labels = typeLabels();
-  $('chips').innerHTML = labels.size > 1
-    ? [['', 'All flooring'], ...labels].map(([k, label]) => `<button type="button" class="chip${k === activeType ? ' on' : ''}" data-t="${esc(k)}">${esc(label)}</button>`).join('')
+  const labels = typeLabels(), hasEx = products.some(isEx);
+  $('chips').innerHTML = (labels.size > 1 || hasEx)
+    ? [['', 'All flooring'], ...(hasEx ? [['__ex', 'DURAPLEX · Exclusive']] : []), ...labels].map(([k, label]) => `<button type="button" class="chip${k === activeType ? ' on' : ''}" data-t="${esc(k)}">${esc(label)}</button>`).join('')
     : '';
   document.querySelectorAll('.chip').forEach(c => c.onclick = () => { activeType = c.dataset.t; render(); });
 
-  visible = products.filter(p => !activeType || typeKey(p.subcategory) === activeType);
+  visible = products.filter(p => !activeType || (activeType === '__ex' ? isEx(p) : typeKey(p.subcategory) === activeType));
   const sort = $('sort').value;
   const key = p => { const s = pricing(p).sqft; return s == null ? Infinity : s; };
+  // Exclusive line first whenever the list is in its default order.
+  if (sort === 'featured') visible.sort((a, b) => (isEx(b) ? 1 : 0) - (isEx(a) ? 1 : 0));
   if (sort === 'low') visible.sort((a, b) => key(a) - key(b));
   if (sort === 'high') visible.sort((a, b) => (key(b) === Infinity ? -1 : key(b)) - (key(a) === Infinity ? -1 : key(a)));
 
@@ -341,11 +370,31 @@ async function loadSettings() {
     $('foot-copy').textContent = '© ' + new Date().getFullYear() + ' ' + name;
   } catch (e) {}
 }
+function renderExclusive() {
+  const ex = products.filter(isEx);
+  $('exclusive').style.display = ex.length ? '' : 'none';
+  if (!ex.length) return;
+  const facts = [];
+  const one = f => { const v = new Set(ex.map(f).filter(Boolean)); return v.size === 1 ? [...v][0] : null; };
+  const cov = one(p => coverageOf(p));
+  if (cov) facts.push(num(cov) + ' sq ft per box');
+  facts.push('Waterproof', 'Click-lock install', 'Underlayment attached', '10-year limited residential wear warranty');
+  $('ex-facts').innerHTML = facts.map(f => `<span>${esc(f)}</span>`).join('');
+  $('ex-strip').innerHTML = ex.map(p => {
+    const pr = pricing(p), img = imagesOf(p)[0];
+    return `<button type="button" class="ex-sw" data-id="${p.id}"><div class="im"${img ? ` style="background-image:url('${esc(img).replace(/'/g, '%27')}')"` : ''}></div>
+      <div class="tx"><b>${esc(String(p.name).replace(/^duraplex\s*/i, '').split(/\s+\d+\s*mil\b/i)[0])}</b><span>${pr.sqft != null ? money(pr.sqft) + ' / sq ft' : ''}</span></div></button>`;
+  }).join('');
+  const go = () => { activeType = '__ex'; render(); $('grid').scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  $('ex-shop').onclick = go;
+  document.querySelectorAll('.ex-sw').forEach(b => b.onclick = go);
+}
 async function loadProducts() {
   try {
     products = await (await fetch('/api/products?category=Flooring')).json();
     if (!Array.isArray(products)) products = [];
   } catch (e) { products = []; }
+  renderExclusive();
   render();
 }
 bandPhoto('.fhero', '/hero-flooring.jpg');   // optional photo: public/hero-flooring.jpg
