@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Materials</title>
+<meta name="description" content="Live stock and pricing by category. Request a quote or pick up same day on in-stock items.">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link href="/site.css" rel="stylesheet">
@@ -579,6 +580,10 @@ async function init() {
   renderCatBar();
   renderOthers();
   loadProducts();
+  Site.reveal('#cat-hero .wrap > div:first-child > *', { stagger: 90 });
+  Site.reveal('#hero-card', { from: 'right', delay: 200 });
+  Site.reveal('.ocard', { stagger: 90 });
+  Site.reveal('.quotebar .wrap > *', { stagger: 100 });
 }
 
 function toneOf(c) { const i = ORDER.indexOf(c); return 'tone-' + ((i < 0 ? 0 : i) % Site.TONES); }
@@ -599,6 +604,8 @@ function renderHeader() {
   }
   const items = BY[currentCat] || [], cp = Site.copy(currentCat), live = Site.live(items);
   document.title = currentCat + ' – ' + (settings.business_name || 'Materials');
+  const md = document.querySelector('meta[name="description"]');
+  if (md) md.content = currentCat + ' in stock' + (live.length ? ' (' + live.length + ' items)' : '') + (Site.minPrice(items) != null ? ', from $' + Site.minPrice(items) : '') + '. Live pricing, same-day pickup on in-stock items. Request a quote.';
   document.getElementById('crumb').textContent = currentCat;
   document.getElementById('hero-eyebrow').textContent = 'Materials · ' + currentCat;
   document.getElementById('hero-h1').textContent = cp.head;
@@ -623,6 +630,8 @@ function renderHeader() {
   ];
   document.getElementById('specstrip-in').innerHTML = cells.map(c => '<div class="spec"><div class="n">' + c[0] + '</div><div class="l">' + esc(c[1]) + '</div></div>').join('');
   document.getElementById('specstrip').style.display = '';
+  document.querySelectorAll('#specstrip-in .n').forEach(n => { const t = n.textContent.trim(); if (/^\d+$/.test(t)) Site.countUp(n, +t); });
+  Site.reveal('.spec', { stagger: 90 });
 
   // Type filter from this category's own subcategories
   const sel = document.getElementById('subcat-filter');
@@ -674,6 +683,7 @@ async function loadProducts() {
       return;
     }
     grid.innerHTML = products.map(p => renderCard(p)).join('');
+    Site.reveal('.product-card', { stagger: 55 });
   } catch (e) {
     grid.innerHTML = '<div class="empty-state"><i class="fa fa-exclamation-triangle"></i><p>Could not load products.</p></div>';
   }

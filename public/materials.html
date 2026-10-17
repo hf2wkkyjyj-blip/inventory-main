@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Materials</title>
+<meta name="description" content="Browse building materials by category: flooring, vanities, appliances and more. Live stock and pricing, same-day pickup on in-stock items.">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link href="/site.css" rel="stylesheet">
@@ -25,6 +26,7 @@
   .mx-photo { position: relative; display: block; aspect-ratio: 4/3; border-radius: 14px; overflow: hidden; border: 1.5px solid var(--tone-line); background: #fff; box-shadow: 0 18px 44px rgba(28,34,43,.16); }
   .mx-photo .ph { position: absolute; inset: 0; background: #fff center/cover no-repeat; transition: transform .6s; display: grid; place-items: center; color: var(--tone-ink); font-size: 84px; }
   .mx-photo:hover .ph { transform: scale(1.04); }
+  .mx-photo.noimg .mx-num { -webkit-text-stroke-color: var(--tone-ink); filter: none; opacity: .5; }
   .mx-num { position: absolute; top: 6px; right: 22px; font-family: var(--head); font-weight: 800; font-size: clamp(80px, 11vw, 150px); line-height: 1; color: transparent; -webkit-text-stroke: 2px #fff; filter: drop-shadow(0 2px 8px rgba(28,34,43,.45)); pointer-events: none; }
   .mx .eyebrow { color: var(--tone-ink); }
   .mx .eyebrow::before { background: var(--tone-ink); }
@@ -174,8 +176,17 @@ async function init() {
     '<a class="' + toneOf(c) + '" href="#cat-' + Site.slug(c) + '" data-slug="' + Site.slug(c) + '"><i>' + String(i + 1).padStart(2, '0') + '</i>' + esc(c) + '</a>').join('');
 
   document.getElementById('sections').innerHTML = ORDER.map((c, i) => section(c, i)).join('');
-  document.querySelectorAll('.mx-photo .ph[data-cat]').forEach(el => Site.probe(el.dataset.cat, url => { el.innerHTML = ''; el.style.backgroundImage = "url('" + url + "')"; }));
+  document.querySelectorAll('.mx-photo .ph[data-cat]').forEach(el => Site.probe(el.dataset.cat, url => { el.parentElement.classList.remove('noimg'); el.innerHTML = ''; el.style.backgroundImage = "url('" + url + "')"; }));
   watchScroll();
+
+  // Motion: each section's photo slides in from its own side, then the text rises line by line.
+  Site.reveal('.page-head .wrap > *', { stagger: 90 });
+  document.querySelectorAll('.mx').forEach(sec => {
+    Site.reveal('#' + sec.id + ' .mx-photo', { from: sec.classList.contains('flip') ? 'right' : 'left' });
+    Site.reveal('#' + sec.id + ' .mx-grid > div:last-child > *', { stagger: 90, delay: 120 });
+  });
+  Site.reveal('.quotebar .wrap > *', { stagger: 100 });
+  Site.reveal('#contact .wrap > *', { stagger: 80 });
 }
 
 function section(c, i) {
@@ -192,7 +203,7 @@ function section(c, i) {
   const noun = Site.isFlooring(c) ? 'flooring' : c.toLowerCase();
   return '<section class="mx ' + toneOf(c) + (i % 2 ? ' flip' : '') + '" id="cat-' + Site.slug(c) + '">' +
     '<div class="wrap mx-grid">' +
-      '<a class="mx-photo" href="' + Site.href(c) + '" aria-label="' + esc(c) + '">' + ph + '<span class="mx-num">' + String(i + 1).padStart(2, '0') + '</span></a>' +
+      '<a class="mx-photo' + (img ? '' : ' noimg') + '" href="' + Site.href(c) + '" aria-label="' + esc(c) + '">' + ph + '<span class="mx-num">' + String(i + 1).padStart(2, '0') + '</span></a>' +
       '<div>' +
         '<div class="eyebrow">Category ' + String(i + 1).padStart(2, '0') + ' / ' + String(ORDER.length).padStart(2, '0') + '</div>' +
         '<h2>' + esc(c) + '</h2>' +

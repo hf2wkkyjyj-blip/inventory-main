@@ -126,3 +126,35 @@ footer.site a:hover { color: var(--text); text-decoration: underline; }
 .catbar a i { font: 500 12px var(--mono); font-style: normal; color: var(--tone-ink); }
 .catbar a:hover { color: var(--text); }
 .catbar a.on { color: var(--text); border-color: var(--tone-ink); }
+
+/* ── MOTION ── scroll reveals, the hero headline, and the plank-laying floor. Reduced-motion visitors get none of it. */
+.rv { opacity: 0; }
+.rv.in { opacity: 1; animation: rv-up .75s cubic-bezier(.2,.7,.2,1) backwards; }
+.rv.rv-l.in { animation-name: rv-left; }
+.rv.rv-r.in { animation-name: rv-right; }
+@keyframes rv-up    { from { opacity: 0; transform: translateY(28px); } }
+@keyframes rv-left  { from { opacity: 0; transform: translateX(-56px); } }
+@keyframes rv-right { from { opacity: 0; transform: translateX(56px); } }
+
+/* Planks: each slides in slightly off-angle and "clicks" into place. */
+.planks { position: absolute; inset: 0; overflow: hidden; pointer-events: none; transition: opacity .7s ease; }
+.planks.out { opacity: 0; }
+.planks .pl { position: absolute; display: block; opacity: 0; background:
+    repeating-linear-gradient(97deg, rgba(0,0,0,0) 0 9px, rgba(60,40,20,.05) 9px 10px),
+    linear-gradient(180deg, rgba(255,255,255,.16), rgba(0,0,0,.07)), var(--c, #c9a572);
+  box-shadow: inset 0 0 0 1px rgba(40,25,10,.16); }
+.planks .pl.t0 { --c: var(--t0); } .planks .pl.t1 { --c: var(--t1); } .planks .pl.t2 { --c: var(--t2); }
+.planks.play .pl { animation: plank-lay .85s cubic-bezier(.25,.8,.3,1) both; animation-delay: var(--d, 0s); }
+.planks.static .pl { opacity: 1; }
+@keyframes plank-lay {
+  0%   { opacity: 0; transform: translate(70px,-16px) rotate(-1.6deg); }
+  55%  { opacity: 1; transform: translate(-4px,1px) rotate(.2deg); }
+  75%  { transform: translate(2px,0); }
+  100% { opacity: 1; transform: none; }
+}
+.photo-band.has-video .planks { display: none; }
+
+@media (prefers-reduced-motion: reduce) { .rv { opacity: 1 !important; } }
+
+.motion-toggle { position: absolute; right: 16px; bottom: 16px; z-index: 3; width: 40px; height: 40px; border-radius: 50%; border: 1.5px solid var(--line-strong); background: rgba(255,255,255,.94); color: var(--text); font-size: 14px; cursor: pointer; display: grid; place-items: center; box-shadow: 0 2px 8px rgba(28,34,43,.15); }
+.motion-toggle:hover { border-color: var(--accent); color: var(--accent); }
