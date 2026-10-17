@@ -61,5 +61,8 @@ window.Site = (() => {
     tools:      { head: 'Tools for the job site.',          blurb: 'Hand and power tools in stock, priced live.' },
   };
   const copy = c => COPY[slug(c)] || { head: c + ', in stock now.', blurb: 'Everything we have on the shelf right now, with current prices. Need something else? Request a quote and we\'ll source it.' };
-  return { TONES, isFlooring, slug, href, live, sortCats, firstImg, photo, probe, minPrice, types, icon, copy };
+  // Centre a link inside the sticky category bar by scrolling the bar sideways only.
+  // (Never use scrollIntoView here: on a sticky bar it also scrolls the page, which fights the visitor's scrolling.)
+  const centerInBar = a => { const bar = a.parentElement; bar.scrollLeft = a.offsetLeft - (bar.clientWidth - a.offsetWidth) / 2; };
+  return { TONES, isFlooring, slug, href, live, sortCats, firstImg, photo, probe, minPrice, types, icon, copy, centerInBar };
 })();

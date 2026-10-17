@@ -633,7 +633,7 @@ function renderCatBar() {
   document.getElementById('catbar-in').innerHTML = ORDER.map((c, i) =>
     '<a class="' + toneOf(c) + (c === currentCat ? ' on' : '') + '" href="' + Site.href(c) + '"><i>' + String(i + 1).padStart(2, '0') + '</i>' + esc(c) + '</a>').join('');
   const on = document.querySelector('#catbar a.on');
-  if (on) on.scrollIntoView({ inline: 'center', block: 'nearest' });
+  if (on) Site.centerInBar(on);
 }
 
 function renderOthers() {

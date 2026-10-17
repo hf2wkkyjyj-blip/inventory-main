@@ -120,7 +120,7 @@ footer.site a:hover { color: var(--text); text-decoration: underline; }
 
 /* ── STICKY CATEGORY BAR (01 Flooring · 02 Vanity …) ── */
 .catbar { position: sticky; top: 71px; z-index: 50; background: #fff; border-bottom: 1px solid var(--line); box-shadow: 0 2px 8px rgba(28,34,43,.05); }
-.catbar .wrap { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.catbar .wrap { position: relative; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
 .catbar .wrap::-webkit-scrollbar { display: none; }
 .catbar a { flex: none; display: inline-flex; align-items: baseline; gap: 8px; padding: 15px 16px 13px; font-family: var(--head); font-weight: 700; font-size: 20px; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); border-bottom: 3px solid transparent; transition: color .15s, border-color .15s; }
 .catbar a i { font: 500 12px var(--mono); font-style: normal; color: var(--tone-ink); }
