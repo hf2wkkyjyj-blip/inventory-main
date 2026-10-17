@@ -197,29 +197,82 @@ Site.parseSpecs = text => {
   return rows.length >= 4 ? rows : null;
 };
 
-Site.descHtml = (text, esc) => {
-  text = String(text || '').trim();
-  if (!text) return '';
-  const rows = Site.parseSpecs(text);
-  if (!rows) {
-    return text.split(/\n\s*\n/).map(par => {
-      const ls = par.split('\n').map(l => l.trim()).filter(Boolean);
-      return '<p>' + ls.map(esc).join('<br>') + '</p>';
-    }).join('');
-  }
+// Pull the facts a buyer scans for out of ordinary description sentences ("measures 36.5 in. W x 18.75 in. D…",
+// "Each case covers 19.63 sq. ft., contains 8 planks…"). Only clear number+unit patterns are used, and the full
+// original text is always shown too, so nothing is lost if a pattern misses.
+Site.extractFacts = p => {
+  const name = String(p.name || ''), desc = String(p.description || '');
+  const t = desc + '\n' + name;
+  const out = [], add = (k, v) => { if (v != null && v !== '' && !out.some(r => r.k === k)) out.push({ k, v: String(v) }); };
+  const m = re => t.match(re);
+  const trim = n => String(n).replace(/\.0+$/, '');
+  let x;
+  // size
+  if ((x = m(/measures\s*([\d.]+)\s*in\.?\s*W\s*x\s*([\d.]+)\s*in\.?\s*D\s*x\s*([\d.]+)\s*in\.?\s*H/i))) { add('Width', trim(x[1]) + ' in'); add('Depth', trim(x[2]) + ' in'); add('Height', trim(x[3]) + ' in'); }
+  const pw = m(/([\d.]+)\s*in\.?\s*width/i) || m(/x\s*([\d.]+)\s*in\.?\s*W\b/i) || m(/([\d.]+)\s*in\.?\s*x\s*[\d.\-\/]+\s*in\.?\s*planks?/i);
+  const pl = m(/([\d.]+(?:-\d+\/\d+)?)\s*in\.?\s*length/i) || m(/x\s*([\d.]+(?:-\d+\/\d+)?)\s*in\.?\s*L\b/i) || m(/[\d.]+\s*in\.?\s*x\s*([\d.\-\/]+)\s*in\.?\s*planks?/i);
+  if (pw && pl) add('Plank size', trim(pw[1]) + ' × ' + pl[1] + ' in');
+  if ((x = m(/(\d+(?:\.\d+)?)\s*mm\.?\s*(?:thick|thickness)/i) || m(/(\d+(?:\.\d+)?)\s*mm\.?\s*T\b/i))) add('Thickness', trim(x[1]) + ' mm');
+  if ((x = m(/(\d+)\s*mil\s*wear\s*layer/i) || m(/\b(\d+)\s*MIL\b/i))) add('Wear layer', x[1] + ' mil');
+  if ((x = m(/\bAC\s?([1-5])\b/))) add('Durability rating', 'AC' + x[1]);
+  // coverage & packaging
+  const cov = p.coverage_sqft || ((x = m(/covers\s*([\d.]+)\s*sq/i) || m(/([\d.]+)\s*sq\.?\s*ft\.?\s*(?:per|\/)\s*(?:case|box|carton)/i)) ? parseFloat(x[1]) : null);
+  if (cov) add('Coverage per box', trim(cov) + ' sq ft');
+  if ((x = m(/contains\s*(\d+)\s*planks?/i) || m(/(\d+)\s*planks?\s*per\s*(?:box|case)/i) || m(/case quantity:?\s*(\d+)/i))) add('Planks per box', x[1]);
+  if ((x = m(/weighs\s*([\d.]+)\s*lbs?/i) || m(/case weight:?\s*([\d.]+)\s*lbs?/i))) add('Box weight', trim(x[1]) + ' lb');
+  // performance & install
+  if (/100%\s*waterproof/i.test(t)) add('Waterproof', '100%'); else if (/water[- ]resistant/i.test(t)) add('Water resistant', 'Yes');
+  if (/above[^.]*grade/i.test(t) && /below[^.]*grade/i.test(t)) add('Install', 'Above, on or below grade');
+  if ((x = m(/\b(floating|click[- ]lock|drop[- ]and[- ]lock|glue[- ]down)\b/i))) add('Installation', x[1].replace(/^./, c => c.toUpperCase()));
+  if (/(pre-)?attached underlayment/i.test(t)) add('Underlayment', 'Attached');
+  // vanity
+  if ((x = m(/with an?\s+([^,.]+),\s*([a-z\-]+)-style/i))) { add('Finish', Site.cap(x[1].trim())); add('Style', Site.cap(x[2])); }
+  else if ((x = m(/([a-z\-]+)-style design/i))) add('Style', Site.cap(x[1]));
+  if ((x = m(/(cultured marble|granite|quartz|engineered stone|marble|ceramic|porcelain|solid surface)\s*(?:vanity\s*)?top/i))) add('Top', Site.cap(x[1]));
+  if ((x = m(/predrilled for an?\s+([\d.]+)\s*in\.?\s*(centerset|single[- ]hole|widespread)?/i))) add('Faucet holes', trim(x[1]) + ' in' + (x[2] ? ' ' + x[2].toLowerCase() : ''));
+  if ((x = (name.match(/\b(single|double)\s+sink\b/i)))) add('Sinks', Site.cap(x[1].toLowerCase()));
+  // warranty (e.g. Duraplex)
+  if ((x = m(/(\d+)-year limited residential/i))) add('Residential warranty', x[1] + '-year limited');
+  if ((x = m(/(\d+)-year limited light commercial/i))) add('Commercial warranty', x[1] + '-year limited');
+  if ((x = m(/Color family:\s*([A-Za-z ]+?)\./i))) add('Color family', x[1].trim());
+  return out;
+};
+
+// One place that decides what to show for a listing: key facts, specification tables, and the written description.
+Site.productFacts = p => {
+  const desc = String(p.description || '').trim();
+  const rows = Site.parseSpecs(desc);
   const clean = k => k.replace(/\s*\((in|lb|ft|sq\.?\s*ft|mm|cm|lbs?)\.?\)\s*$/i, '');
-  const get = re => rows.find(r => re.test(clean(r.k)));
-  // Key facts: the handful of specs a buyer looks for first
-  const facts = [];
-  const w = get(/^nominal .*width/i), h = get(/^nominal .*height/i);
-  if (w && h) facts.push(['Size', String(w.v).replace(/\s*in\.?$/i, '') + ' × ' + String(h.v).replace(/\s*in\.?$/i, '') + ' in']);
-  [['Type', /^(door |window |product )?type$/i], ['Material', /^(door )?material$/i], ['Handing', /handing$/i], ['Style', /^(door )?style$/i],
-   ['Finish', /^(color\/?finish|finish|color family|color)$/i], ['Glass', /^glass style$/i], ['Capacity', /capacity$/i], ['Voltage', /voltage$/i]]
-    .forEach(([label, re]) => { const r = get(re); if (r && facts.length < 6 && !facts.some(f => f[0] === label)) facts.push([label, r.v]); });
-  if (facts.length < 4) rows.filter(r => r.v.length <= 22 && !facts.some(f => f[1] === r.v)).slice(0, 6 - facts.length).forEach(r => facts.push([clean(r.k), r.v]));
-  const groups = [];
-  rows.forEach(r => { const name = r.sec || 'Specifications'; let g = groups.find(x => x.name === name); if (!g) groups.push(g = { name, rows: [] }); g.rows.push(r); });
-  return '<div class="spec-key">' + facts.map(f => '<div><small>' + esc(f[0]) + '</small><b>' + esc(f[1]) + '</b></div>').join('') + '</div>' +
-    groups.map((g, i) => '<details class="spec-sec"' + (i === 0 ? ' open' : '') + '><summary>' + esc(g.name) + ' <em>' + g.rows.length + '</em></summary><table>' +
-      g.rows.map(r => '<tr><th>' + esc(clean(r.k)) + '</th><td>' + esc(r.v) + '</td></tr>').join('') + '</table></details>').join('');
+  if (rows) {
+    const get = re => rows.find(r => re.test(clean(r.k)));
+    const boxes = [];
+    const w = get(/^nominal .*width/i), h = get(/^nominal .*height/i);
+    if (w && h) boxes.push(['Size', String(w.v).replace(/\s*in\.?$/i, '') + ' × ' + String(h.v).replace(/\s*in\.?$/i, '') + ' in']);
+    [['Type', /^(door |window |product )?type$/i], ['Material', /^(door )?material$/i], ['Handing', /handing$/i], ['Style', /^(door )?style$/i],
+     ['Finish', /^(color\/?finish|finish|color family|color)$/i], ['Glass', /^glass style$/i], ['Capacity', /capacity$/i], ['Voltage', /voltage$/i]]
+      .forEach(([label, re]) => { const r = get(re); if (r && boxes.length < 6 && !boxes.some(b => b[0] === label)) boxes.push([label, r.v]); });
+    if (boxes.length < 4) rows.filter(r => r.v.length <= 22 && !boxes.some(b => b[1] === r.v)).slice(0, 6 - boxes.length).forEach(r => boxes.push([clean(r.k), r.v]));
+    const groups = [];
+    rows.forEach(r => { const name = r.sec || 'Specifications'; let g = groups.find(x => x.name === name); if (!g) groups.push(g = { name, rows: [] }); g.rows.push({ k: clean(r.k), v: r.v }); });
+    return { boxes, groups, prose: '' };
+  }
+  const ex = Site.extractFacts(p);
+  return { boxes: ex.slice(0, 6).map(r => [r.k, r.v]), groups: ex.length >= 3 ? [{ name: 'Specifications', rows: ex }] : [], prose: desc };
+};
+
+// Paragraphs for sentences, bullets for a run of short lines.
+Site.proseHtml = (text, esc) => String(text || '').trim().split(/\n\s*\n/).map(par => {
+  const ls = par.split('\n').map(l => l.trim()).filter(Boolean);
+  if (ls.length >= 3 && ls.every(l => l.length < 220)) return '<ul>' + ls.map(l => '<li>' + esc(l) + '</li>').join('') + '</ul>';
+  return '<p>' + ls.map(esc).join('<br>') + '</p>';
+}).join('');
+
+Site.boxesHtml = (boxes, esc) => boxes.length ? '<div class="spec-key">' + boxes.map(f => '<div><small>' + esc(f[0]) + '</small><b>' + esc(f[1]) + '</b></div>').join('') + '</div>' : '';
+
+Site.detailHtml = (p, esc, opts) => {
+  const f = Site.productFacts(p);
+  return ((opts && opts.noBoxes) ? '' : Site.boxesHtml(f.boxes, esc)) +
+    f.groups.map((g, i) => '<details class="spec-sec"' + (i === 0 ? ' open' : '') + '><summary>' + esc(g.name) + ' <em>' + g.rows.length + '</em></summary><table>' +
+      g.rows.map(r => '<tr><th>' + esc(r.k) + '</th><td>' + esc(r.v) + '</td></tr>').join('') + '</table></details>').join('') +
+    (f.prose ? '<details class="spec-sec"' + (f.groups.length ? '' : ' open') + '><summary>Description</summary><div class="spec-prose">' + Site.proseHtml(f.prose, esc) + '</div></details>' : '');
 };

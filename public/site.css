@@ -175,3 +175,8 @@ footer.site a:hover { color: var(--text); text-decoration: underline; }
 .spec-sec tr:nth-child(odd) { background: var(--bg); }
 .spec-sec th { text-align: left; font-weight: 500; color: var(--muted); padding: 8px 14px; width: 48%; vertical-align: top; }
 .spec-sec td { font-weight: 600; color: var(--text); padding: 8px 14px 8px 0; overflow-wrap: anywhere; }
+
+.spec-prose { padding: 4px 16px 14px; font-size: 14px; line-height: 1.65; color: #3b4452; }
+.spec-prose p { margin: 8px 0; }
+.spec-prose ul { margin: 8px 0 4px 18px; }
+.spec-prose li { margin: 4px 0; }

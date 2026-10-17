@@ -92,6 +92,10 @@
   .sku { font-family: var(--mono); font-size: 13.5px; color: var(--muted); margin-top: 10px; }
   .desc { margin-top: 10px; font-size: 16px; color: #3b4452; }
   .desc.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .card .spec-key { grid-template-columns: repeat(2, 1fr); margin: 12px 0 0; }
+  .card .spec-key > div { padding: 7px 10px; }
+  .card .spec-key b { font-size: 14px; }
+  .more-box { margin-top: 10px; }
   .more { background: none; border: 0; color: var(--accent); font: 700 15px var(--body); cursor: pointer; padding: 6px 0 0; align-self: flex-start; }
   .stockrow { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; margin-top: 14px; }
   .onhand { font-size: 15px; color: var(--muted); }
@@ -273,8 +277,7 @@ function cardHtml(p, idx) {
   } else if (pr.box != null) {
     priceHtml = `<div class="price">${money(pr.box)} <small>/ ${esc(pr.unit)}</small></div><div class="boxline"><span>Ask us for coverage per ${esc(pr.unit)}</span></div>`;
   } else priceHtml = '<div class="boxline"><span>Call for price</span></div>';
-  const desc = String(p.description || '').trim();
-  const long = desc.length > 170;
+  const facts = Site.productFacts(p);
   const boxesOnHand = pr.cov && p.quantity > 0 ? `${p.quantity} box${p.quantity === 1 ? '' : 'es'} on hand` : '';
   return `<article class="card" data-i="${idx}">
     <div class="photo">${isEx(p) ? '<span class="badge-ex"><i class="fa fa-star"></i> Exclusive</span>' : ''}${photo}</div>${thumbs}
@@ -283,7 +286,8 @@ function cardHtml(p, idx) {
       <h3 class="name">${esc(p.name)}</h3>
       <div class="price-row">${priceHtml}</div>
       ${p.sku ? `<div class="sku">SKU ${esc(p.sku)}</div>` : ''}
-      ${desc ? `<div class="desc${long ? ' clamp' : ''}">${esc(desc)}</div>${long ? '<button type="button" class="more" onclick="toggleMore(this)">Read more</button>' : ''}` : ''}
+      ${Site.boxesHtml(facts.boxes.slice(0, 4), esc)}
+      ${(facts.groups.length || facts.prose) ? `<button type="button" class="more" onclick="toggleMore(this)">All specs &amp; description</button><div class="more-box" hidden>${Site.detailHtml(p, esc, { noBoxes: true })}</div>` : ''}
       <div class="stockrow"><span class="st ${st}">${STATUS[st]}</span><span class="onhand">${boxesOnHand}</span></div>
       <div class="mine" id="mine-${idx}"></div>
       <div class="actions"><a class="btn btn-primary btn-sm" id="q-${idx}" href="/#quote">Request a quote</a></div>
@@ -296,8 +300,9 @@ function swapPhoto(idx, src, btn) {
   btn.parentNode.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
 }
 function toggleMore(btn) {
-  const d = btn.previousElementSibling, open = d.classList.toggle('clamp');
-  btn.textContent = open ? 'Read more' : 'Show less';
+  const box = btn.nextElementSibling, show = box.hidden;
+  box.hidden = !show;
+  btn.innerHTML = show ? 'Hide specs &amp; description' : 'All specs &amp; description';
 }
 
 let visible = [];
