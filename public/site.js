@@ -72,7 +72,10 @@ window.Site = (() => {
   // (Never use scrollIntoView here: on a sticky bar it also scrolls the page, which fights the visitor's scrolling.)
   const centerInBar = a => { const bar = a.parentElement; bar.scrollLeft = a.offsetLeft - (bar.clientWidth - a.offsetWidth) / 2; };
   const cap = t => String(t || '').charAt(0).toUpperCase() + String(t || '').slice(1);
-  return { TONES, isFlooring, slug, href, live, sortCats, firstImg, photo, probe, minPrice, types, icon, copy, centerInBar, cap };
+  // Links for the sticky category bar (01 Flooring, 02 Vanity …); `active` is the category being viewed.
+  const catBarHtml = (order, active, esc) => order.map((c, i) =>
+    '<a class="tone-' + (i % TONES) + (c === active ? ' on' : '') + '" href="' + href(c) + '"><i>' + String(i + 1).padStart(2, '0') + '</i>' + esc(c) + '</a>').join('');
+  return { TONES, isFlooring, slug, href, live, sortCats, firstImg, photo, probe, minPrice, types, icon, copy, centerInBar, cap, catBarHtml };
 })();
 
 // ── Motion (all of it switches off for visitors who ask for reduced motion) ──
