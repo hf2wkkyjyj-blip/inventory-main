@@ -625,7 +625,7 @@ function renderHeader() {
   const cells = [
     [live.length, live.length === 1 ? 'item in stock now' : 'items in stock now'],
     [from != null ? '$' + (from % 1 ? from.toFixed(2) : from) : 'Ask us', from != null ? 'lowest price on the shelf' : 'for current pricing'],
-    [tp.length ? tp.length + (tp.length === 1 ? ' type' : ' types') : 'In stock', tp.length ? (tp.length === 1 ? tp[0] : tp.slice(0, 2).join(' \u00b7 ') + (tp.length > 2 ? ' +' : '')) : 'ready for pickup'],
+    [tp.length ? tp.length + (tp.length === 1 ? ' type' : ' types') : 'In stock', tp.length ? (tp.length === 1 ? Site.cap(tp[0]) : tp.slice(0, 2).map(Site.cap).join(' \u00b7 ') + (tp.length > 2 ? ' +' : '')) : 'ready for pickup'],
     ['Same-day', 'pickup on in-stock items'],
   ];
   document.getElementById('specstrip-in').innerHTML = cells.map(c => '<div class="spec"><div class="n">' + c[0] + '</div><div class="l">' + esc(c[1]) + '</div></div>').join('');
@@ -810,7 +810,7 @@ async function openDetail(id) {
           <div style="font-size:11px;color:var(--muted);margin-top:2px;">$${Number(p.price).toFixed(2)} per ${p.price_unit||'box'}</div>
         </div>
       </div>`; })()}
-      ${p.description?`<div class="detail-desc">${esc(p.description).replace(/\n/g,'<br>')}</div>`:''}
+      ${p.description?`<div class="detail-desc">${Site.descHtml(p.description, esc)}</div>`:''}
       ${p.source_url ? `<a href="${p.source_url}" target="_blank" rel="noopener" style="display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--accent-light);border:1.5px solid #bfdbfe;border-radius:10px;color:var(--accent);text-decoration:none;font-size:13px;font-weight:700;transition:background .15s;" onmouseover="this.style.background='#dbeafe'" onmouseout="this.style.background='var(--accent-light)'"><i class="fa fa-external-link-alt"></i> View on ${esc(p.source)} for full specs &amp; reviews</a>` : ''}
       <div class="detail-cta">
         <p>Ready to order? Contact us for pricing and availability.</p>

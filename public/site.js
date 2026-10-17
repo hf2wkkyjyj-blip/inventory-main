@@ -59,12 +59,20 @@ window.Site = (() => {
     vanities:   { head: 'Vanities, ready to pull.',         blurb: 'Bathroom vanities in stock and priced live from the shelf.' },
     appliances: { head: 'Appliances, in stock and priced.', blurb: 'Kitchen appliances from the shelf. Ask us about availability.' },
     tools:      { head: 'Tools for the job site.',          blurb: 'Hand and power tools in stock, priced live.' },
+    door:       { head: 'Doors, in stock and priced.',      blurb: 'Doors from the shelf, with sizes, handing and full specs listed on every product.' },
+    doors:      { head: 'Doors, in stock and priced.',      blurb: 'Doors from the shelf, with sizes, handing and full specs listed on every product.' },
+    window:     { head: 'Windows, in stock and priced.',    blurb: 'Windows from the shelf, with sizes and full specs listed on every product.' },
+    windows:    { head: 'Windows, in stock and priced.',    blurb: 'Windows from the shelf, with sizes and full specs listed on every product.' },
+    toilet:     { head: 'Toilets, in stock and priced.',    blurb: 'Toilets from the shelf, priced live.' },
+    toilets:    { head: 'Toilets, in stock and priced.',    blurb: 'Toilets from the shelf, priced live.' },
+    shingles:   { head: 'Shingles, in stock and priced.',   blurb: 'Roofing shingles from the shelf, priced live.' },
   };
   const copy = c => COPY[slug(c)] || { head: c + ', in stock now.', blurb: 'Everything we have on the shelf right now, with current prices. Need something else? Request a quote and we\'ll source it.' };
   // Centre a link inside the sticky category bar by scrolling the bar sideways only.
   // (Never use scrollIntoView here: on a sticky bar it also scrolls the page, which fights the visitor's scrolling.)
   const centerInBar = a => { const bar = a.parentElement; bar.scrollLeft = a.offsetLeft - (bar.clientWidth - a.offsetWidth) / 2; };
-  return { TONES, isFlooring, slug, href, live, sortCats, firstImg, photo, probe, minPrice, types, icon, copy, centerInBar };
+  const cap = t => String(t || '').charAt(0).toUpperCase() + String(t || '').slice(1);
+  return { TONES, isFlooring, slug, href, live, sortCats, firstImg, photo, probe, minPrice, types, icon, copy, centerInBar, cap };
 })();
 
 // ── Motion (all of it switches off for visitors who ask for reduced motion) ──
@@ -159,4 +167,59 @@ Site.planks = el => {
     if (paused) { el.classList.remove('out', 'play'); el.classList.add('static'); } else cycle();
   };
   cycle();
+};
+
+
+// ── Product descriptions ──
+// Imported specs often arrive as a long run of "Label / blank line / value". Turn that into a table
+// (key facts on top, the rest grouped and collapsible); everything else becomes tidy paragraphs.
+Site.parseSpecs = text => {
+  text = String(text || '').replace(/\r/g, '').trim();
+  if (!text) return null;
+  const rows = [];
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  // Style A: "Label: value" on every line
+  if (lines.length >= 3 && lines.filter(l => /^[^:]{2,40}:\s*\S/.test(l)).length >= lines.length * 0.8) {
+    lines.forEach(l => { const m = l.match(/^([^:]{2,40}):\s*(.+)$/); if (m) rows.push({ sec: '', k: m[1].trim(), v: m[2].trim() }); });
+    return rows.length >= 3 ? rows : null;
+  }
+  // Style B: blocks split by blank lines alternate label / value (a block can start with a section heading)
+  const blocks = text.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+  if (blocks.length < 8 || blocks.filter(b => b.length < 60).length < blocks.length * 0.9) return null;
+  let sec = '';
+  for (let i = 0; i + 1 < blocks.length; i += 2) {
+    let label = blocks[i];
+    const parts = label.split('\n').map(x => x.trim()).filter(Boolean);
+    if (parts.length === 2) { sec = parts[0]; label = parts[1]; } else if (parts.length > 2) return null;
+    if (/dimension/i.test(sec) && !/height|width|thickness|depth|length|size|opening|jamb|diameter|clearance|capacity/i.test(label)) sec = 'Details';
+    rows.push({ sec, k: label, v: blocks[i + 1].replace(/\s*\n+\s*/g, ' ') });
+  }
+  return rows.length >= 4 ? rows : null;
+};
+
+Site.descHtml = (text, esc) => {
+  text = String(text || '').trim();
+  if (!text) return '';
+  const rows = Site.parseSpecs(text);
+  if (!rows) {
+    return text.split(/\n\s*\n/).map(par => {
+      const ls = par.split('\n').map(l => l.trim()).filter(Boolean);
+      return '<p>' + ls.map(esc).join('<br>') + '</p>';
+    }).join('');
+  }
+  const clean = k => k.replace(/\s*\((in|lb|ft|sq\.?\s*ft|mm|cm|lbs?)\.?\)\s*$/i, '');
+  const get = re => rows.find(r => re.test(clean(r.k)));
+  // Key facts: the handful of specs a buyer looks for first
+  const facts = [];
+  const w = get(/^nominal .*width/i), h = get(/^nominal .*height/i);
+  if (w && h) facts.push(['Size', String(w.v).replace(/\s*in\.?$/i, '') + ' × ' + String(h.v).replace(/\s*in\.?$/i, '') + ' in']);
+  [['Type', /^(door |window |product )?type$/i], ['Material', /^(door )?material$/i], ['Handing', /handing$/i], ['Style', /^(door )?style$/i],
+   ['Finish', /^(color\/?finish|finish|color family|color)$/i], ['Glass', /^glass style$/i], ['Capacity', /capacity$/i], ['Voltage', /voltage$/i]]
+    .forEach(([label, re]) => { const r = get(re); if (r && facts.length < 6 && !facts.some(f => f[0] === label)) facts.push([label, r.v]); });
+  if (facts.length < 4) rows.filter(r => r.v.length <= 22 && !facts.some(f => f[1] === r.v)).slice(0, 6 - facts.length).forEach(r => facts.push([clean(r.k), r.v]));
+  const groups = [];
+  rows.forEach(r => { const name = r.sec || 'Specifications'; let g = groups.find(x => x.name === name); if (!g) groups.push(g = { name, rows: [] }); g.rows.push(r); });
+  return '<div class="spec-key">' + facts.map(f => '<div><small>' + esc(f[0]) + '</small><b>' + esc(f[1]) + '</b></div>').join('') + '</div>' +
+    groups.map((g, i) => '<details class="spec-sec"' + (i === 0 ? ' open' : '') + '><summary>' + esc(g.name) + ' <em>' + g.rows.length + '</em></summary><table>' +
+      g.rows.map(r => '<tr><th>' + esc(clean(r.k)) + '</th><td>' + esc(r.v) + '</td></tr>').join('') + '</table></details>').join('');
 };

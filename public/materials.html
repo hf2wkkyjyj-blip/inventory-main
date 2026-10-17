@@ -196,7 +196,7 @@ function section(c, i) {
   if (from != null) chips.push('from $' + (from % 1 ? from.toFixed(2) : from));
   if (tp.length) chips.push(tp.length + (tp.length === 1 ? ' type' : ' types'));
   const rows = tp.length
-    ? tp.slice(0, 5).map((t, k) => '<li><i>' + String(k + 1).padStart(2, '0') + '</i>' + esc(t) + '<small>' + live.filter(p => p.subcategory === t).length + ' in stock</small></li>').join('')
+    ? tp.slice(0, 5).map((t, k) => '<li><i>' + String(k + 1).padStart(2, '0') + '</i>' + esc(Site.cap(t)) + '<small>' + live.filter(p => p.subcategory === t).length + ' in stock</small></li>').join('')
     : live.slice(0, 4).map((p, k) => '<li><i>' + String(k + 1).padStart(2, '0') + '</i>' + esc(String(p.name).replace(/\s+/g, ' ').slice(0, 44)) + (String(p.name).length > 44 ? '…' : '') + '</li>').join('');
   const ph = img ? '<span class="ph" data-cat="' + esc(c) + '" style="background-image:url(\'' + esc(img).replace(/'/g, '%27') + '\')"></span>'
                  : '<span class="ph" data-cat="' + esc(c) + '"><i class="fa fa-' + Site.icon(c) + '"></i></span>';
