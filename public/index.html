@@ -19,15 +19,22 @@
   .hero h1 .ghost { color: transparent; -webkit-text-stroke: 2px var(--accent); }
   .cta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 34px; }
 
-  .board { background: #fff; color: var(--text); border-radius: 10px; border: 1.5px solid var(--line); box-shadow: 0 16px 40px rgba(28,34,43,.14); overflow: hidden; }
-  .board-head { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; background: var(--panel-2); border-bottom: 1px solid var(--line); font-weight: 700; font-size: 14px; letter-spacing: .06em; text-transform: uppercase; }
-  .live { display: inline-flex; align-items: center; gap: 8px; color: var(--good); font-size: 13px; }
-  .live::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--good); animation: pulse 2s infinite; }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(15,122,69,.5); } 70% { box-shadow: 0 0 0 9px rgba(15,122,69,0); } 100% { box-shadow: 0 0 0 0 rgba(15,122,69,0); } }
-  .board-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 20px; border-bottom: 1px solid var(--line); font-size: 17px; font-weight: 600; transition: background .15s; }
-  .board-row:last-child { border-bottom: 0; }
-  .board-row:hover { background: var(--accent-soft); }
-  .board-empty { padding: 24px 20px; color: var(--muted); }
+  /* ── CATEGORY TILES (hero) ── Flooring is the big tile; each tile uses a photo of the category. */
+  .tiles { display: grid; grid-template-columns: repeat(6, 1fr); grid-auto-rows: clamp(130px, 14vw, 185px); gap: 12px; }
+  .tile { position: relative; display: block; overflow: hidden; border-radius: var(--radius); border: 1.5px solid var(--line); background: var(--accent-soft); box-shadow: 0 10px 28px rgba(28,34,43,.10); grid-column: span 2; transition: border-color .2s, box-shadow .2s, transform .2s; }
+  .tile:hover { border-color: var(--accent); box-shadow: 0 16px 36px rgba(28,34,43,.18); transform: translateY(-3px); }
+  .tile.t0 { grid-column: span 4; grid-row: span 2; }
+  .tile.solo { grid-column: span 6; }
+  .tile.tall { grid-row: span 2; }
+  .tile.b1 { grid-column: span 6; } .tile.b2 { grid-column: span 3; }
+  .tile .ph { position: absolute; inset: 0; background-size: cover; background-position: center; transition: transform .5s; }
+  .tile:hover .ph { transform: scale(1.05); }
+  .tile .ph.none { display: grid; place-items: center; color: var(--accent); font-size: 46px; opacity: .55; }
+  .tile .lab { position: absolute; left: 10px; bottom: 10px; max-width: calc(100% - 20px); display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; background: rgba(255,255,255,.96); border-radius: 8px; padding: 9px 14px; box-shadow: 0 2px 10px rgba(28,34,43,.12); }
+  .tile .lab i { font: 500 13px var(--mono); font-style: normal; color: var(--accent); }
+  .tile .lab b { font-family: var(--head); font-weight: 800; font-size: clamp(20px, 2.2vw, 28px); text-transform: uppercase; letter-spacing: .02em; line-height: 1; }
+  .tile .lab em { font-style: normal; font-size: 13.5px; font-weight: 600; color: var(--muted); }
+  .tiles-empty { grid-column: 1/-1; grid-row: span 2; display: grid; place-items: center; text-align: center; padding: 30px; background: var(--panel); border: 1.5px dashed var(--line-strong); border-radius: var(--radius); color: var(--muted); }
 
   /* ── STATS ── */
   .stats { background: var(--panel); border-bottom: 1px solid var(--line); }
@@ -40,19 +47,6 @@
 
   section.block { padding: clamp(60px, 8vw, 104px) 0; }
   section.white { background: var(--panel); border-block: 1px solid var(--line); }
-
-  /* ── CATEGORIES ── */
-  .cats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 44px; }
-  .cat { background: var(--panel); border: 1.5px solid var(--line); border-radius: var(--radius); padding: 30px 28px 26px; display: flex; flex-direction: column; min-height: 240px; transition: border-color .2s, box-shadow .2s, transform .2s; }
-  .cat:hover { border-color: var(--accent); box-shadow: 0 12px 30px rgba(28,34,43,.12); transform: translateY(-3px); }
-  .cat .num { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 15px; }
-  .cat h3 { font-size: 44px; margin: 18px 0 8px; }
-  .cat .meta { color: var(--muted); font-size: 17px; }
-  .cat .foot { margin-top: auto; padding-top: 22px; display: flex; justify-content: space-between; align-items: center; font-weight: 700; font-size: 15px; }
-  .cat .go { color: var(--accent); }
-  .cat:hover .go .arrow { transform: translateX(5px); }
-  .arrow { display: inline-block; transition: transform .2s; }
-  .cats-empty { grid-column: 1/-1; background: var(--panel); border: 1.5px dashed var(--line-strong); border-radius: var(--radius); padding: 40px; color: var(--muted); }
 
   /* ── EXCLUSIVE LINE ── */
   .ex-band { background: linear-gradient(180deg, #eef4fe, #fff); border-block: 1px solid var(--line); }
@@ -106,14 +100,19 @@
 
   @media (max-width: 980px) {
     .hero .wrap, .trade, .quote, .ex-home { grid-template-columns: 1fr; }
-    .cats { grid-template-columns: repeat(2, 1fr); }
     .featured { grid-template-columns: repeat(2, 1fr); }
     .steps { grid-template-columns: 1fr; }
     .stats .wrap { grid-template-columns: repeat(2, 1fr); }
     .stat:nth-child(3) { border-left: 0; padding-left: 0; }
   }
   @media (max-width: 560px) {
-    .cats, .featured { grid-template-columns: 1fr; }
+    .featured { grid-template-columns: 1fr; }
+    .tiles { grid-template-columns: repeat(2, 1fr); grid-auto-rows: 150px; }
+    .tiles .tile, .tiles .tile.b1, .tiles .tile.b2 { grid-column: span 1; grid-row: span 1; }
+    .tiles .tile.t0, .tiles .tile.solo, .tiles .tile.odd { grid-column: span 2; }
+    .tile .lab { padding: 7px 11px; left: 8px; bottom: 8px; max-width: calc(100% - 16px); }
+    .tile .lab em { font-size: 12.5px; }
+    .tile .ph.none { align-items: start; padding-top: 26px; font-size: 38px; }
     .ex-strip { grid-template-columns: repeat(2, 1fr); }
     .qf .row { grid-template-columns: 1fr; }
     .cta-row .btn { width: 100%; }
@@ -131,7 +130,6 @@
     </form>
     <div class="links" id="links">
       <a href="/materials.html">Materials</a>
-      <a href="/flooring.html">Flooring</a>
       <a href="#trade">Trade Accounts</a>
       <a href="#quote">Request a Quote</a>
       <a href="#contact">Contact</a>
@@ -148,13 +146,10 @@
       <p class="lede" id="hero-tagline">Flooring, vanities and more — in stock and ready for pickup. Tell us what the job needs and we'll price it.</p>
       <div class="cta-row">
         <a class="btn btn-primary" href="#quote">Request a quote <i class="fa fa-arrow-right"></i></a>
-        <a class="btn btn-outline" href="/flooring.html">Flooring &amp; calculator</a>
+        <a class="btn btn-outline" href="/materials.html">Browse materials</a>
       </div>
     </div>
-    <aside class="board" aria-label="Live stock board">
-      <div class="board-head"><span>What's in stock</span><span class="live">Live</span></div>
-      <div id="board"><div class="board-empty">Loading stock…</div></div>
-    </aside>
+    <div class="tiles" id="tiles" aria-label="Material categories"></div>
   </div>
 </header>
 
@@ -164,15 +159,6 @@
     <div class="stat"><div class="n" id="s-instock">—</div><div class="l">In stock now</div></div>
     <div class="stat"><div class="n" id="s-cats">—</div><div class="l">Categories</div></div>
     <div class="stat"><div class="n">Same<em>-day</em></div><div class="l">Pickup on in-stock items</div></div>
-  </div>
-</section>
-
-<section class="block" id="materials">
-  <div class="wrap">
-    <div class="eyebrow">Material categories</div>
-    <h2 class="section">Materials for<br>the job ahead.</h2>
-    <p class="lede">Pick a category to see what's on the shelf right now, with current prices.</p>
-    <div class="cats" id="cats"><div class="cats-empty">Loading categories…</div></div>
   </div>
 </section>
 
@@ -306,14 +292,6 @@ async function loadSettings() {
   } catch (e) {}
 }
 
-function statusOf(items) {
-  if (!items.length) return 'out';
-  if (items.every(p => p.stock === 'out_stock')) return 'out';
-  if (items.every(p => p.stock === 'low_stock' || p.stock === 'out_stock')) return 'low';
-  return 'in';
-}
-const STATUS_LABEL = { in: 'In stock', low: 'Low stock', out: 'Out of stock' };
-
 async function loadCatalog() {
   let cats = [], products = [];
   try { cats = (await (await fetch('/api/categories')).json()).filter(c => c !== 'All'); } catch (e) {}
@@ -327,21 +305,38 @@ async function loadCatalog() {
   $('s-instock').textContent = products.filter(p => p.stock !== 'out_stock').length;
   $('s-cats').textContent = cats.length;
 
-  $('board').innerHTML = cats.length ? cats.slice(0, 7).map(c => {
-    const st = statusOf(by[c] || []);
-    return `<a class="board-row" href="${catHref(c)}"><span>${esc(c)}</span><span class="st ${st}">${STATUS_LABEL[st]}</span></a>`;
-  }).join('') : '<div class="board-empty">Inventory is being updated — check back soon.</div>';
-
-  $('cats').innerHTML = cats.length ? cats.map((c, i) => {
-    const items = by[c] || [], st = statusOf(items);
-    const n = items.filter(p => p.stock !== 'out_stock').length;
-    return `<a class="cat" href="${catHref(c)}">
-      <span class="num">${i + 1}</span>
-      <h3>${esc(c)}</h3>
-      <div class="meta">${n ? n + (n === 1 ? ' item' : ' items') + ' available now' : 'Ask us — we can often special order.'}</div>
-      <div class="foot"><span class="st ${st}">${STATUS_LABEL[st]}</span><span class="go">${/^flooring$/i.test(c) ? 'See flooring + calculator' : 'View inventory'} <span class="arrow">→</span></span></div>
-    </a>`;
-  }).join('') : '<div class="cats-empty">Our catalog is being updated. Request a quote and we\'ll help directly.</div>';
+  // Category tiles in the hero (Reis-style). Photo order per tile: your own /cat-<name>.jpg if you add one,
+  // else a product photo from that category (Duraplex first for Flooring), else a plain tinted tile.
+  const ICON = { flooring: 'layer-group', vanity: 'sink', vanities: 'sink', appliances: 'kitchen-set', tools: 'screwdriver-wrench' };
+  const firstImg = items => { for (const p of items) { try { const im = (JSON.parse(p.images || '[]') || [])[0]; if (im) return im; } catch (e) {} } return ''; };
+  // Flooring leads (it's the big tile); the rest go by how much is in stock.
+  const inStock = c => (by[c] || []).filter(p => p.stock !== 'out_stock').length;
+  const shown = cats.slice().sort((a, b) => (/^flooring$/i.test(b) - /^flooring$/i.test(a)) || inStock(b) - inStock(a) || a.localeCompare(b)).slice(0, 6);
+  const rest = Math.max(0, shown.length - 3);
+  const tileClass = i => {
+    const n = shown.length;
+    if (n === 1) return 'solo';
+    if (i === 0) return 't0';
+    if (n === 2) return 'tall';
+    if (i < 3) return '';
+    return rest === 1 ? 'b1' : rest === 2 ? 'b2' : (i === n - 1 && (n - 1) % 2 ? 'odd' : '');
+  };
+  $('tiles').innerHTML = shown.length ? shown.map((c, i) => {
+    const items = (by[c] || []).filter(p => p.stock !== 'out_stock');
+    const pool = /^flooring$/i.test(c) ? items.filter(p => /duraplex/i.test(p.source || '')).concat(items) : items;
+    const img = firstImg(pool);
+    const slug = c.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const n = items.length;
+    const ph = img ? `<span class="ph" data-slug="${esc(slug)}" style="background-image:url('${esc(img).replace(/'/g, '%27')}')"></span>`
+                   : `<span class="ph none" data-slug="${esc(slug)}"><i class="fa fa-${ICON[c.toLowerCase()] || 'box-open'}"></i></span>`;
+    return `<a class="tile ${tileClass(i)}" href="${catHref(c)}">${ph}
+      <span class="lab"><i>${String(i + 1).padStart(2, '0')}</i><b>${esc(c)}</b><em>${n ? n + ' in stock' : 'Ask us'}</em></span></a>`;
+  }).join('') : '<div class="tiles-empty">Our catalog is being updated. Request a quote and we\'ll help directly.</div>';
+  document.querySelectorAll('#tiles .ph').forEach(el => {
+    const probe = new Image();
+    probe.onload = () => { el.classList.remove('none'); el.innerHTML = ''; el.style.backgroundImage = `url('/cat-${el.dataset.slug}.jpg')`; };
+    probe.src = `/cat-${el.dataset.slug}.jpg`;
+  });
 
   // Exclusive line (products whose source is "Duraplex"): shown only once they exist.
   const ex = products.filter(p => /duraplex/i.test(p.source || '') && p.stock !== 'out_stock');

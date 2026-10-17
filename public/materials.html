@@ -531,7 +531,6 @@
     </div>
     <div class="links" id="links">
       <a href="/materials.html" class="current">Materials</a>
-      <a href="/flooring.html">Flooring</a>
       <a href="/#trade">Trade Accounts</a>
       <a href="/#quote">Request a Quote</a>
       <a href="#contact">Contact</a>
@@ -674,6 +673,7 @@ async function init() {
       btn.className = 'cat-tab' + (cat === currentCat ? ' active' : '');
       btn.textContent = (cat === 'All' ? '🏠 All Products' : catIcon(cat) + ' ' + cat);
       btn.onclick = () => {
+        if (/^flooring$/i.test(cat)) { location.href = '/flooring.html'; return; }   // flooring has its own page with the room calculator
         currentCat = cat;
         document.querySelectorAll('.cat-tab').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
