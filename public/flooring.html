@@ -28,7 +28,9 @@
   .exclusive h2 { font-size: clamp(36px, 5vw, 60px); margin: 14px 0 10px; }
   .ex-facts { display: flex; flex-wrap: wrap; gap: 8px 10px; margin: 16px 0 26px; }
   .ex-facts span { background: #fff; border: 1.5px solid #bcd1f6; color: var(--accent-dark); font-weight: 600; font-size: 14.5px; padding: 7px 14px; border-radius: 999px; }
-  .ex-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; margin-bottom: 26px; }
+  .ex-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 26px; }
+  @media (min-width: 1000px) { .ex-strip { grid-template-columns: repeat(6, 1fr); } }
+  @media (max-width: 480px) { .ex-strip { grid-template-columns: repeat(2, 1fr); } }
   .ex-sw { background: #fff; border: 1.5px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; text-align: left; font: inherit; padding: 0; transition: transform .15s, border-color .15s, box-shadow .15s; }
   .ex-sw:hover { transform: translateY(-3px); border-color: var(--accent); box-shadow: 0 10px 22px rgba(28,34,43,.12); }
   .ex-sw .im { aspect-ratio: 1/1; background: var(--panel-2) center/cover no-repeat; }
