@@ -822,10 +822,12 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 
     <div class="form-row three">
       <div class="form-group" style="margin:0"><label>Category *</label>
-        <select id="p-cat" onchange="updateSubcatOptions()"><option>Flooring</option><option>Vanity</option><option>Appliances</option><option>Tools</option><option>Other</option></select>
+        <select id="p-cat" onchange="onCatChange()"><option>Flooring</option><option>Vanity</option><option>Appliances</option><option>Tools</option><option>Other</option></select>
+        <input type="text" id="p-cat-new" placeholder="Type the new category, e.g. Doors" style="display:none;margin-top:8px;" oninput="updateSubcatOptions()">
       </div>
       <div class="form-group" style="margin:0"><label>Subcategory</label>
-        <select id="p-subcat"></select>
+        <select id="p-subcat" onchange="onSubcatChange()"></select>
+        <input type="text" id="p-subcat-new" placeholder="Type the new type, e.g. Interior door" style="display:none;margin-top:8px;">
       </div>
       <div class="form-group" style="margin:0"><label>SKU / Item #</label><input type="text" id="p-sku" placeholder="FLR-001"></div>
     </div>
@@ -1530,7 +1532,7 @@ function openModal(data) {
   populateMemberDropdown('p-member', data ? data.member_id : null);
   document.getElementById('p-member-qty').value = '';
   updateMemberQtyVisibility();
-  document.getElementById('p-cat').value = 'Flooring';
+  setCategory('Flooring');
   updateSubcatOptions();
   document.getElementById('p-unit').value = 'each';
   document.getElementById('p-source').value = 'Home Depot';
@@ -1543,9 +1545,8 @@ function openModal(data) {
     document.getElementById('p-id').value = data.id;
     document.getElementById('modal-title').textContent = 'Edit Product';
     document.getElementById('p-name').value = data.name||'';
-    document.getElementById('p-cat').value = data.category||'Flooring';
+    setCategory(data.category||'Flooring');
     updateSubcatOptions(data.subcategory||'');
-    document.getElementById('p-subcat').value = data.subcategory||'';
     document.getElementById('p-sku').value = data.sku||'';
     document.getElementById('p-desc').value = data.description||'';
     document.getElementById('p-price').value = data.price!=null?data.price:'';
@@ -1579,10 +1580,11 @@ async function saveProduct() {
   const id = document.getElementById('p-id').value;
   const name = document.getElementById('p-name').value.trim();
   if (!name) { alert('Product name required'); return; }
+  if (document.getElementById('p-cat').value === NEW_OPT && !document.getElementById('p-cat-new').value.trim()) { alert('Type the new category name, or pick an existing one.'); document.getElementById('p-cat-new').focus(); return; }
   const n = v => (v===undefined||v==='') ? null : v;
   const body = {
-    name, category: document.getElementById('p-cat').value,
-    subcategory: n(document.getElementById('p-subcat').value.trim()),
+    name, category: getCategory(),
+    subcategory: n(getSubcat()),
     description: n(document.getElementById('p-desc').value.trim()),
     price: document.getElementById('p-price').value!=='' ? parseFloat(document.getElementById('p-price').value) : null,
     cost_price: document.getElementById('p-cost-price').value!=='' ? parseFloat(document.getElementById('p-cost-price').value) : null,
@@ -1610,16 +1612,60 @@ const SUBCAT_OPTIONS = {
   Tools:      ['Power Tools','Hand Tools','Accessories','Other'],
   Other:      ['Other'],
 };
+// "Type your own": the category and subcategory dropdowns end with a "+ New …" choice that opens a text box.
+const NEW_OPT = '__new__';
+const BASE_CATS = ['Flooring','Vanity','Appliances','Tools','Other'];
+function setSelectOptions(sel, values, keep) {
+  sel.innerHTML = values.map(o => `<option value="${esc(o)}">${esc(o)}</option>`).join('') + `<option value="${NEW_OPT}">+ New…</option>`;
+  if (keep && values.includes(keep)) sel.value = keep;
+}
+function knownCategories(extra) {
+  const set = new Set(BASE_CATS);
+  (allProductsCache || []).forEach(p => { if (p.category) set.add(p.category); });
+  if (extra) set.add(extra);
+  return [...set];
+}
+function setCategory(name) {
+  const sel = document.getElementById('p-cat');
+  setSelectOptions(sel, knownCategories(name), name);
+  document.getElementById('p-cat-new').style.display = 'none';
+  document.getElementById('p-cat-new').value = '';
+}
+function getCategory() {
+  const v = document.getElementById('p-cat').value;
+  return v === NEW_OPT ? (document.getElementById('p-cat-new').value.trim() || 'Other') : v;
+}
+function getSubcat() {
+  const v = document.getElementById('p-subcat').value;
+  return v === NEW_OPT ? document.getElementById('p-subcat-new').value.trim() : v;
+}
+function onCatChange() {
+  const isNew = document.getElementById('p-cat').value === NEW_OPT;
+  const box = document.getElementById('p-cat-new');
+  box.style.display = isNew ? '' : 'none';
+  if (isNew) box.focus();
+  updateSubcatOptions();
+}
+function onSubcatChange() {
+  const isNew = document.getElementById('p-subcat').value === NEW_OPT;
+  const box = document.getElementById('p-subcat-new');
+  box.style.display = isNew ? '' : 'none';
+  if (isNew) box.focus();
+}
 function updateSubcatOptions(keepValue) {
-  const cat = document.getElementById('p-cat').value;
+  const cat = getCategory();
   const sel = document.getElementById('p-subcat');
-  const prev = keepValue || sel.value;
-  const opts = SUBCAT_OPTIONS[cat] || ['Other'];
-  sel.innerHTML = opts.map(o => `<option value="${o}">${o}</option>`).join('');
-  if (opts.includes(prev)) sel.value = prev;
+  const prev = keepValue || (sel.value === NEW_OPT ? '' : sel.value);
+  const opts = (SUBCAT_OPTIONS[cat] || ['Other']).slice();
+  // types already used by products in this category (so a typed one can be picked again later)
+  (allProductsCache || []).forEach(p => { if (p.category === cat && p.subcategory && !opts.includes(p.subcategory)) opts.splice(opts.length - 1, 0, p.subcategory); });
+  if (prev && !opts.includes(prev)) opts.splice(opts.length - 1, 0, prev);
+  setSelectOptions(sel, opts, prev);
+  document.getElementById('p-subcat-new').style.display = 'none';
+  document.getElementById('p-subcat-new').value = '';
 }
 function autoDetectSubcat() {
-  const cat = document.getElementById('p-cat').value;
+  const cat = getCategory();
   if (!['Flooring','Vanity','Appliances'].includes(cat)) return;
   const name = document.getElementById('p-name').value.toLowerCase();
   const sel = document.getElementById('p-subcat');
@@ -1709,7 +1755,7 @@ function fillImportData(data) {
   if (data.description) document.getElementById('p-desc').value = data.description;
   if (data.sku)         document.getElementById('p-sku').value = data.sku;
   if (data.source)      { try { document.getElementById('p-source').value = data.source; } catch(e){} }
-  if (data.category)    { try { document.getElementById('p-cat').value = data.category; updateSubcatOptions(); autoDetectSubcat(); } catch(e){} }
+  if (data.category)    { try { setCategory(data.category); updateSubcatOptions(); autoDetectSubcat(); } catch(e){} }
   if (data.source_url)  document.getElementById('p-source-url').value = data.source_url;
   if (data.images&&data.images.length) { productImages = data.images.slice(0,6); renderImagePreviews(); }
   updateProductMargin();
