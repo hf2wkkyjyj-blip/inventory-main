@@ -109,3 +109,20 @@ footer.site a:hover { color: var(--text); text-decoration: underline; }
 .photo-band .band-fade { position: absolute; inset: 0; z-index: 0; pointer-events: none;
   background: linear-gradient(90deg, rgba(255,255,255,.97) 0%, rgba(255,255,255,.88) 44%, rgba(255,255,255,.28) 100%); }
 .photo-band.has-video::before, .photo-band.has-video::after { display: none; }
+
+/* ── CATEGORY COLOURS ── Each category gets its own light tint (by position) so sections are easy to tell apart. */
+.tone-0 { --tone-bg: #f6efe0; --tone-ink: #86621f; --tone-line: #e1d3b4; }
+.tone-1 { --tone-bg: #e3edfb; --tone-ink: #1d5fd3; --tone-line: #bcd0f2; }
+.tone-2 { --tone-bg: #e1ede3; --tone-ink: #2a7344; --tone-line: #b8d4be; }
+.tone-3 { --tone-bg: #f3e4d9; --tone-ink: #a04622; --tone-line: #e2c3ae; }
+.tone-4 { --tone-bg: #e9e8f5; --tone-ink: #544caa; --tone-line: #cbc8e6; }
+.tone-5 { --tone-bg: #dff0ee; --tone-ink: #1c7470; --tone-line: #b3d8d4; }
+
+/* ── STICKY CATEGORY BAR (01 Flooring · 02 Vanity …) ── */
+.catbar { position: sticky; top: 71px; z-index: 50; background: #fff; border-bottom: 1px solid var(--line); box-shadow: 0 2px 8px rgba(28,34,43,.05); }
+.catbar .wrap { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.catbar .wrap::-webkit-scrollbar { display: none; }
+.catbar a { flex: none; display: inline-flex; align-items: baseline; gap: 8px; padding: 15px 16px 13px; font-family: var(--head); font-weight: 700; font-size: 20px; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); border-bottom: 3px solid transparent; transition: color .15s, border-color .15s; }
+.catbar a i { font: 500 12px var(--mono); font-style: normal; color: var(--tone-ink); }
+.catbar a:hover { color: var(--text); }
+.catbar a.on { color: var(--text); border-color: var(--tone-ink); }

@@ -124,7 +124,7 @@
 <nav class="top" aria-label="Main">
   <div class="wrap">
     <a class="brand" href="/"><span id="brand-name">Solids Supply</span><small id="brand-area">Local building materials</small></a>
-    <form class="nav-search" action="/materials.html" method="get" role="search">
+    <form class="nav-search" action="/category.html" method="get" role="search">
       <i class="fa fa-search" aria-hidden="true"></i>
       <input type="search" name="q" placeholder="Search products…" aria-label="Search products">
     </form>
@@ -261,7 +261,6 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const telHref = p => 'tel:' + String(p || '').replace(/[^0-9+]/g, '');
 // Flooring has its own page (with the room calculator); everything else lists in Materials.
-const catHref = c => /^flooring$/i.test(c) ? '/flooring.html' : '/materials.html?cat=' + encodeURIComponent(c);
 
 $('menu-btn').onclick = () => {
   const open = $('links').classList.toggle('open');
@@ -305,13 +304,9 @@ async function loadCatalog() {
   $('s-instock').textContent = products.filter(p => p.stock !== 'out_stock').length;
   $('s-cats').textContent = cats.length;
 
-  // Category tiles in the hero (Reis-style). Photo order per tile: your own /cat-<name>.jpg if you add one,
+  // Category tiles in the hero. Photo order per tile: your own /cat-<name>.jpg if you add one,
   // else a product photo from that category (Duraplex first for Flooring), else a plain tinted tile.
-  const ICON = { flooring: 'layer-group', vanity: 'sink', vanities: 'sink', appliances: 'kitchen-set', tools: 'screwdriver-wrench' };
-  const firstImg = items => { for (const p of items) { try { const im = (JSON.parse(p.images || '[]') || [])[0]; if (im) return im; } catch (e) {} } return ''; };
-  // Flooring leads (it's the big tile); the rest go by how much is in stock.
-  const inStock = c => (by[c] || []).filter(p => p.stock !== 'out_stock').length;
-  const shown = cats.slice().sort((a, b) => (/^flooring$/i.test(b) - /^flooring$/i.test(a)) || inStock(b) - inStock(a) || a.localeCompare(b)).slice(0, 6);
+  const shown = Site.sortCats(cats, by).slice(0, 6);
   const rest = Math.max(0, shown.length - 3);
   const tileClass = i => {
     const n = shown.length;
@@ -322,21 +317,13 @@ async function loadCatalog() {
     return rest === 1 ? 'b1' : rest === 2 ? 'b2' : (i === n - 1 && (n - 1) % 2 ? 'odd' : '');
   };
   $('tiles').innerHTML = shown.length ? shown.map((c, i) => {
-    const items = (by[c] || []).filter(p => p.stock !== 'out_stock');
-    const pool = /^flooring$/i.test(c) ? items.filter(p => /duraplex/i.test(p.source || '')).concat(items) : items;
-    const img = firstImg(pool);
-    const slug = c.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const n = items.length;
-    const ph = img ? `<span class="ph" data-slug="${esc(slug)}" style="background-image:url('${esc(img).replace(/'/g, '%27')}')"></span>`
-                   : `<span class="ph none" data-slug="${esc(slug)}"><i class="fa fa-${ICON[c.toLowerCase()] || 'box-open'}"></i></span>`;
-    return `<a class="tile ${tileClass(i)}" href="${catHref(c)}">${ph}
+    const items = by[c] || [], n = Site.live(items).length, img = Site.photo(c, items);
+    const ph = img ? `<span class="ph" data-cat="${esc(c)}" style="background-image:url('${esc(img).replace(/'/g, '%27')}')"></span>`
+                   : `<span class="ph none" data-cat="${esc(c)}"><i class="fa fa-${Site.icon(c)}"></i></span>`;
+    return `<a class="tile ${tileClass(i)}" href="${Site.href(c)}">${ph}
       <span class="lab"><i>${String(i + 1).padStart(2, '0')}</i><b>${esc(c)}</b><em>${n ? n + ' in stock' : 'Ask us'}</em></span></a>`;
   }).join('') : '<div class="tiles-empty">Our catalog is being updated. Request a quote and we\'ll help directly.</div>';
-  document.querySelectorAll('#tiles .ph').forEach(el => {
-    const probe = new Image();
-    probe.onload = () => { el.classList.remove('none'); el.innerHTML = ''; el.style.backgroundImage = `url('/cat-${el.dataset.slug}.jpg')`; };
-    probe.src = `/cat-${el.dataset.slug}.jpg`;
-  });
+  document.querySelectorAll('#tiles .ph').forEach(el => Site.probe(el.dataset.cat, url => { el.classList.remove('none'); el.innerHTML = ''; el.style.backgroundImage = `url('${url}')`; }));
 
   // Exclusive line (products whose source is "Duraplex"): shown only once they exist.
   const ex = products.filter(p => /duraplex/i.test(p.source || '') && p.stock !== 'out_stock');
@@ -358,7 +345,7 @@ async function loadCatalog() {
       let img = ''; try { img = (JSON.parse(p.images || '[]') || [])[0] || ''; } catch (e) {}
       const bg = img ? ` style="background-image:url('${esc(img).replace(/'/g, '%27')}')"` : '';
       const price = p.price != null ? `$${Number(p.price).toFixed(2)} <small>/ ${esc(p.price_unit || 'each')}</small>` : '<small>Call for price</small>';
-      return `<a class="fcard" href="${catHref(p.category)}">
+      return `<a class="fcard" href="${Site.href(p.category)}">
         <div class="img"${bg}>${img ? '' : '<i class="fa fa-box-open"></i>'}</div>
         <div class="body"><span class="cat-l">${esc(p.category)}</span><span class="nm">${esc(p.name)}</span><span class="pr">${price}</span></div></a>`;
     }).join('');
