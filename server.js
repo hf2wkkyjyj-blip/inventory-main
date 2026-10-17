@@ -492,6 +492,10 @@ app.get('/api/settings', (req, res) => {
   res.json(obj);
 });
 
+// Identifies this running version. The admin page compares it to know when a newer version has been deployed.
+const BUILD_ID = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.RAILWAY_DEPLOYMENT_ID || String(Date.now());
+app.get('/api/build', (req, res) => { res.set('Cache-Control', 'no-store'); res.json({ build: BUILD_ID }); });
+
 app.get('/api/categories', (req, res) => {
   const cats = db.prepare("SELECT DISTINCT category FROM products ORDER BY category").all().map(r => r.category);
   res.json(['All', ...cats]);

@@ -5376,6 +5376,30 @@ function fmtDate(dt) {
 }
 // Set default expense month to current month
 document.getElementById('exp-month').value = new Date().toISOString().slice(0,7);
+
+// New-version prompt. An installed/home-screen admin is resumed, not reloaded, so it can keep showing an old
+// version for days. This asks the server which version is live and offers a Reload when it has changed.
+(function () {
+  let current = null, shown = false;
+  async function check() {
+    try {
+      const { build } = await (await fetch('/api/build', { cache: 'no-store' })).json();
+      if (current === null) current = build;
+      else if (build !== current && !shown) { shown = true; banner(); }
+    } catch (e) {}
+  }
+  function banner() {
+    const b = document.createElement('div');
+    b.setAttribute('role', 'status');
+    b.style.cssText = 'position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:9999;background:#2563eb;color:#fff;padding:12px 14px 12px 18px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.4);display:flex;gap:14px;align-items:center;font:600 14px Inter,system-ui,sans-serif;max-width:92vw;';
+    b.innerHTML = '<span>A new version is ready.</span><button type="button" style="background:#fff;color:#1d4ed8;border:0;border-radius:8px;padding:9px 16px;font:700 13px Inter,system-ui,sans-serif;cursor:pointer;">Reload</button>';
+    b.querySelector('button').onclick = () => location.reload();
+    document.body.appendChild(b);
+  }
+  check();
+  setInterval(check, 5 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+})();
 </script>
 </body>
 </html>
