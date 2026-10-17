@@ -43,7 +43,7 @@
   .ex-sw b { display: block; font-size: 16px; line-height: 1.2; }
   .ex-sw span { color: var(--muted); font-size: 14px; }
   .badge-ex { position: absolute; top: 12px; left: 12px; z-index: 2; background: var(--accent); color: #fff; font-weight: 700; font-size: 12.5px; letter-spacing: .09em; text-transform: uppercase; padding: 6px 12px; border-radius: 999px; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
-  .layout { display: grid; grid-template-columns: 340px 1fr; gap: 32px; align-items: start; padding: 40px 0 72px; }
+  .layout { display: grid; grid-template-columns: 340px 1fr; gap: 32px; align-items: start; padding-top: 40px; padding-bottom: 72px; }   /* block padding only: .wrap supplies the side gutters */
 
   /* ── CALCULATOR ── */
   html { scroll-padding-top: 140px; }
@@ -76,8 +76,8 @@
   .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
   .card { background: var(--panel); border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; transition: box-shadow .2s, border-color .2s; }
   .card:hover { border-color: var(--line-strong); box-shadow: 0 12px 28px rgba(28,34,43,.10); }
-  .brand { font: 800 13px var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
-  .brand + .name { margin-top: 2px; }
+  .p-brand { font: 800 13px var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
+  .p-brand + .name { margin-top: 2px; }
   .photo[data-open], .name[data-open] { cursor: pointer; }
   .name[data-open]:hover { color: var(--accent-dark); }
   .photo[data-open]:hover img { transform: scale(1.03); }
@@ -124,8 +124,68 @@
   .cta-band h2 { font-size: clamp(34px, 4.6vw, 54px); max-width: 18ch; }
   .cta-band p { color: var(--muted); margin-top: 8px; font-size: 18px; max-width: 46ch; }
 
-  @media (max-width: 1040px) { .layout { grid-template-columns: 1fr; } .calc { position: static; } }
-  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } .fhero .cta-row .btn { width: 100%; } }
+  .card { cursor: pointer; }
+  .facts-line { display: none; font-size: 13.5px; color: var(--muted); margin-top: 5px; }
+  .calc-toggle { display: none; }
+
+  @media (max-width: 1040px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }   /* minmax(0,…) so swipeable rows can't widen the page */
+    .calc { position: static; padding: 0; border-top-width: 4px; }
+    .calc-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; background: none; border: 0; padding: 16px 18px; text-align: left; cursor: pointer; font: inherit; color: inherit; }
+    .calc-toggle b { display: block; font-family: var(--head); font-weight: 800; font-size: 28px; text-transform: uppercase; line-height: 1; }
+    .calc-toggle small { display: block; color: var(--muted); font-size: 14px; margin-top: 5px; line-height: 1.35; }
+    .calc-toggle i { color: var(--accent); transition: transform .2s; }
+    .calc.open .calc-toggle i { transform: rotate(180deg); }
+    .calc-body { display: none; padding: 2px 18px 18px; }
+    .calc.open .calc-body { display: block; }
+    .calc-body > h2 { display: none; }
+  }
+
+  /* ── PHONE LAYOUT: short header, swipeable chips and swatches, listings as compact rows ── */
+  @media (max-width: 700px) {
+    .fhero { padding: 28px 0 32px; }
+    .fhero h1 { font-size: 40px; margin: 10px 0 0; }
+    .fhero .lede { display: none; }
+    .fhero .cta-row { margin-top: 18px; gap: 10px; flex-wrap: nowrap; }
+    .fhero .cta-row .btn { width: auto; flex: 1; padding: 13px 8px; font-size: 13px; }
+
+    .exclusive { padding: 24px 0 26px; }
+    .exclusive h2 { font-size: 34px; margin: 10px 0 8px; }
+    .exclusive .lede { font-size: 16px; }
+    .ex-facts { flex-wrap: nowrap; overflow-x: auto; margin: 12px calc(var(--gutter) * -1) 14px; padding: 0 var(--gutter); scrollbar-width: none; }
+    .ex-facts::-webkit-scrollbar, .chips::-webkit-scrollbar { display: none; }
+    .ex-facts span { flex: none; white-space: nowrap; font-size: 13.5px; padding: 6px 12px; }
+    .ex-strip { grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 18px; }
+    .ex-sw b { font-size: 15px; }
+    .ex-sw .tx { padding: 8px 10px 10px; }
+
+    .layout { padding-top: 18px; padding-bottom: 36px; gap: 16px; }
+    .toolbar { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 10px; margin-bottom: 12px; }
+    .chips { flex: none; flex-wrap: nowrap; overflow-x: auto; gap: 8px; margin: 0 calc(var(--gutter) * -1); padding: 2px var(--gutter); scrollbar-width: none; }
+    .chip { flex: none; white-space: nowrap; padding: 9px 14px; font-size: 14px; }
+    .sort { align-self: flex-start; font-size: 14px; padding: 8px 10px; }
+    .count { font-size: 14px; margin-bottom: 10px; }
+
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .card { border-radius: 10px; }
+    .card .photo { aspect-ratio: 1 / 1; }
+    .card .photo .none { font-size: 12.5px; }
+    .card .photo .none i { font-size: 30px; margin-bottom: 4px; }
+    .card .thumbs, .card .sku, .card .spec-key, .card .more, .card .more-box, .card .kind, .card .boxline, .card .actions { display: none; }
+    .card .body { padding: 10px 11px 12px; min-width: 0; }
+    .badge-ex { top: 6px; left: 6px; font-size: 10px; padding: 3px 8px; letter-spacing: .06em; }
+    .card .p-brand { font-size: 11px; margin-top: 0; }
+    .card .name { font-size: 16px; line-height: 1.1; margin: 2px 0 6px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .card .price-row { border: 0; padding: 0; gap: 0; }
+    .card .price { font-size: 24px; }
+    .card .price small { font-size: 12px; }
+    .card .facts-line { display: block; font-size: 12.5px; line-height: 1.3; margin-top: 4px; }
+    .card .stockrow { margin-top: 6px; font-size: 13px; gap: 0 8px; }
+    .card .onhand { display: none; }
+    .card .mine { margin-top: 8px; padding: 7px 9px; }
+    .card .mine .l1 { font-size: 14px; line-height: 1.25; }
+    .card .mine .l2 { font-size: 12px; }
+  }
 </style>
 </head>
 <body>
@@ -177,6 +237,8 @@
 
 <main class="wrap layout">
   <aside class="calc" id="calc" aria-labelledby="calc-title">
+    <button type="button" class="calc-toggle" id="calc-toggle" aria-expanded="false" aria-controls="calc-body"><span><b>Room calculator</b><small id="calc-sum">Enter your room size to see boxes &amp; cost</small></span><i class="fa fa-chevron-down" aria-hidden="true"></i></button>
+    <div class="calc-body" id="calc-body">
     <h2 id="calc-title">Room calculator</h2>
     <p class="sub">Type your room size once — every floor below updates with boxes and price.</p>
     <div class="grid2">
@@ -191,6 +253,7 @@
     </div>
     <div class="calc-out" id="calc-out" aria-live="polite"></div>
     <p class="calc-hint"><i class="fa fa-circle-info"></i>Boxes are whole boxes, rounded up. Prices are estimates — we confirm exact totals on your quote.</p>
+    </div>
   </aside>
 
   <section aria-label="Flooring products">
@@ -291,13 +354,15 @@ function cardHtml(p, idx) {
   } else priceHtml = '<div class="boxline"><span>Call for price</span></div>';
   const facts = Site.productFacts(p);
   const boxesOnHand = pr.cov && p.quantity > 0 ? `${p.quantity} box${p.quantity === 1 ? '' : 'es'} on hand` : '';
-  return `<article class="card" data-i="${idx}">
+  const factsLine = facts.boxes.slice(0, 3).map(b => b[1]).join(' · ');
+  return `<article class="card" data-i="${idx}" data-open="${p.id}">
     <div class="photo" data-open="${p.id}" title="View details">${isEx(p) ? '<span class="badge-ex"><i class="fa fa-star"></i> Exclusive</span>' : ''}${photo}</div>${thumbs}
     <div class="body">
       ${p.subcategory ? `<div class="kind">${esc(typeLabels().get(typeKey(p.subcategory)))}</div>` : ''}
-      ${p.brand ? `<div class="brand">${esc(p.brand)}</div>` : ''}
+      ${p.brand ? `<div class="p-brand">${esc(p.brand)}</div>` : ''}
       <h3 class="name" data-open="${p.id}" title="View details">${esc(p.name)}</h3>
       <div class="price-row">${priceHtml}</div>
+      ${factsLine ? `<div class="facts-line">${esc(factsLine)}</div>` : ''}
       ${p.sku ? `<div class="sku">SKU ${esc(p.sku)}</div>` : ''}
       ${Site.boxesHtml(facts.boxes.slice(0, 4), esc)}
       ${(facts.groups.length || facts.prose) ? `<button type="button" class="more" onclick="toggleMore(this)">All specs &amp; description</button><div class="more-box" hidden>${Site.detailHtml(p, esc, { noBoxes: true })}</div>` : ''}
@@ -343,6 +408,7 @@ function render() {
 // Recompute the sidebar summary and every card's "your room" box.
 function updateCalc() {
   const area = roomArea(), need = needed(), out = $('calc-out');
+  $('calc-sum').textContent = area ? `${num(area)} sq ft · buy ${num(need)} sq ft with ${parseFloat($('c-waste').value) || 0}% extra — tap to edit` : 'Enter your room size to see boxes & cost';
   if (!area) {
     out.classList.remove('on'); out.innerHTML = '';
     visible.forEach((p, i) => { $('mine-' + i).classList.remove('on'); setQuoteLink(i, p, null); });
@@ -423,8 +489,18 @@ async function loadProducts() {
 // Clicking a listing's photo, name or "View details" opens the same product popup as the other categories.
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-open]');
-  if (t) openDetail(Number(t.dataset.open));
+  if (!t) return;
+  const ctl = e.target.closest('a, button, select, input');
+  if (ctl && ctl !== t) return;            // links/buttons inside a card (thumbnails, Request a quote…) do their own thing
+  openDetail(Number(t.dataset.open));
 });
+
+// Room calculator folds away on phones and tablets; "Calculate my room" opens it.
+const calcBox = $('calc');
+const setCalc = open => { calcBox.classList.toggle('open', open); $('calc-toggle').setAttribute('aria-expanded', open); };
+setCalc(innerWidth > 700);
+$('calc-toggle').onclick = () => setCalc(!calcBox.classList.contains('open'));
+document.querySelectorAll('a[href="#calc"]').forEach(a => a.addEventListener('click', () => setCalc(true)));
 
 // Category bar (01 Flooring · 02 Vanity …), same as the Materials and category pages
 (async () => {
