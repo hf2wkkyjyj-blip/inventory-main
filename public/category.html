@@ -530,8 +530,7 @@ function renderCard(p) {
       <span class="stock-badge ${p.stock}">${stockLabel}</span>
     </div>
     <div class="card-body">
-      <div class="card-cat">${esc(p.category)}${p.subcategory?' · '+esc(p.subcategory):''}</div>
-      ${brand ? `<div class="card-brand">${esc(brand)}</div>` : ''}
+      ${brand ? `<div class="card-cat">${esc(brand)}</div>` : ''}
       <div class="card-name">${esc(rest || p.name)}</div>
       ${p.sku ? `<div class="card-sku">SKU: ${esc(p.sku)}</div>` : ''}
       <div class="card-footer">

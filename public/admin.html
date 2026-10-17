@@ -1392,6 +1392,7 @@ async function adminLoadProducts() {
     return `<tr id="prod-row-${p.id}">
       <td>${thumb}</td>
       <td>
+        ${p.brand ? `<div class="text-muted fs11" style="font-weight:700;letter-spacing:.06em;text-transform:uppercase;">${esc(p.brand)}</div>` : ''}
         <div style="font-weight:600;font-size:13px;">${topBadge}${esc(p.name)}</div>
         ${p.sku ? `<div class="text-muted fs11">SKU: ${esc(p.sku)}</div>` : ''}
         ${p.member_id ? `<div style="font-size:10px;color:var(--orange);font-weight:600;margin-top:2px;"><i class="fa fa-credit-card"></i> ${esc(p.member_name||'Member')}</div>` : ''}

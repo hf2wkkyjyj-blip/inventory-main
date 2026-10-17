@@ -72,10 +72,18 @@ window.Site = (() => {
   // (Never use scrollIntoView here: on a sticky bar it also scrolls the page, which fights the visitor's scrolling.)
   const centerInBar = a => { const bar = a.parentElement; bar.scrollLeft = a.offsetLeft - (bar.clientWidth - a.offsetWidth) / 2; };
   const cap = t => String(t || '').charAt(0).toUpperCase() + String(t || '').slice(1);
+  // "DURAPLEX Sunridge Oak 20 MIL x 7 in. W …" -> "Sunridge Oak": drop the brand and everything from the first size/spec onward.
+  const shortName = p => {
+    let n = String(p.name || '').trim();
+    if (p.brand && n.toLowerCase().indexOf(String(p.brand).toLowerCase()) === 0) n = n.slice(String(p.brand).length).replace(/^[\s\-\u2013:]+/, '');
+    const cut = n.search(/\s+\d+(?:\.\d+)?\s*(?:mil|mm)\b|\s+\d+(?:\.\d+)?\s*in\.|\s+\d+(?:\.\d+)?\s*cu\.?\s*ft/i);
+    const out = cut > 2 ? n.slice(0, cut).trim() : n;
+    return out || String(p.name || '');
+  };
   // Links for the sticky category bar (01 Flooring, 02 Vanity …); `active` is the category being viewed.
   const catBarHtml = (order, active, esc) => order.map((c, i) =>
     '<a class="tone-' + (i % TONES) + (c === active ? ' on' : '') + '" href="' + href(c) + '"><i>' + String(i + 1).padStart(2, '0') + '</i>' + esc(c) + '</a>').join('');
-  return { TONES, isFlooring, slug, href, live, sortCats, firstImg, photo, probe, minPrice, types, icon, copy, centerInBar, cap, catBarHtml };
+  return { TONES, isFlooring, slug, href, live, sortCats, firstImg, photo, probe, minPrice, types, icon, copy, centerInBar, cap, catBarHtml, shortName };
 })();
 
 // ── Motion (all of it switches off for visitors who ask for reduced motion) ──

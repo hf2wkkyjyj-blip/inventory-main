@@ -76,8 +76,7 @@
   .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
   .card { background: var(--panel); border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; transition: box-shadow .2s, border-color .2s; }
   .card:hover { border-color: var(--line-strong); box-shadow: 0 12px 28px rgba(28,34,43,.10); }
-  .p-brand { font: 800 13px var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
-  .p-brand + .name { margin-top: 2px; }
+  .fullname { font-size: 14.5px; line-height: 1.4; color: var(--muted); margin: 0 0 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .photo[data-open], .name[data-open] { cursor: pointer; }
   .name[data-open]:hover { color: var(--accent-dark); }
   .photo[data-open]:hover img { transform: scale(1.03); }
@@ -93,7 +92,7 @@
   .thumbs img { width: 100%; height: 100%; object-fit: cover; }
   .body { padding: 16px 20px 20px; display: flex; flex-direction: column; flex: 1; }
   .kind { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
-  .name { font-family: var(--head); font-weight: 700; text-transform: uppercase; font-size: 26px; line-height: 1.08; margin: 6px 0 12px; }
+  .name { font-family: var(--head); font-weight: 700; text-transform: uppercase; font-size: 28px; line-height: 1.08; margin: 4px 0 6px; }
   .price-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; padding: 12px 0; border-block: 1px solid var(--line); }
   .price { font-family: var(--head); font-weight: 800; font-size: 40px; line-height: 1; color: var(--accent-dark); }
   .price small { font-family: var(--body); font-weight: 600; font-size: 16px; color: var(--muted); }
@@ -171,10 +170,11 @@
     .card .photo { aspect-ratio: 1 / 1; }
     .card .photo .none { font-size: 12.5px; }
     .card .photo .none i { font-size: 30px; margin-bottom: 4px; }
-    .card .thumbs, .card .sku, .card .spec-key, .card .more, .card .more-box, .card .kind, .card .boxline, .card .actions { display: none; }
+    .card .thumbs, .card .sku, .card .spec-key, .card .more, .card .more-box, .card .boxline, .card .actions { display: none; }
+    .card .kind { font-size: 11px; }
     .card .body { padding: 10px 11px 12px; min-width: 0; }
     .badge-ex { top: 6px; left: 6px; font-size: 10px; padding: 3px 8px; letter-spacing: .06em; }
-    .card .p-brand { font-size: 11px; margin-top: 0; }
+    .card .fullname { display: none; }
     .card .name { font-size: 16px; line-height: 1.1; margin: 2px 0 6px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
     .card .price-row { border: 0; padding: 0; gap: 0; }
     .card .price { font-size: 24px; }
@@ -358,9 +358,9 @@ function cardHtml(p, idx) {
   return `<article class="card" data-i="${idx}" data-open="${p.id}">
     <div class="photo" data-open="${p.id}" title="View details">${isEx(p) ? '<span class="badge-ex"><i class="fa fa-star"></i> Exclusive</span>' : ''}${photo}</div>${thumbs}
     <div class="body">
-      ${p.subcategory ? `<div class="kind">${esc(typeLabels().get(typeKey(p.subcategory)))}</div>` : ''}
-      ${p.brand ? `<div class="p-brand">${esc(p.brand)}</div>` : ''}
-      <h3 class="name" data-open="${p.id}" title="View details">${esc(p.name)}</h3>
+      ${p.brand ? `<div class="kind">${esc(p.brand)}</div>` : ''}
+      <h3 class="name" data-open="${p.id}" title="View details">${esc(Site.shortName(p))}</h3>
+      <div class="fullname">${esc(p.name)}</div>
       <div class="price-row">${priceHtml}</div>
       ${factsLine ? `<div class="facts-line">${esc(factsLine)}</div>` : ''}
       ${p.sku ? `<div class="sku">SKU ${esc(p.sku)}</div>` : ''}
