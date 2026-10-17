@@ -103,3 +103,9 @@ footer.site a:hover { color: var(--text); text-decoration: underline; }
 .photo-band::after { content: ''; position: absolute; right: -8%; top: -30%; width: 55%; height: 160%; pointer-events: none;
   background: radial-gradient(closest-side, rgba(29,95,211,.13), transparent 70%); }
 .photo-band > .wrap { position: relative; z-index: 1; }
+
+/* Optional looping video behind a band (see bandVideo in site.js). The same white fade keeps the headline readable. */
+.photo-band .band-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+.photo-band .band-fade { position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(90deg, rgba(255,255,255,.97) 0%, rgba(255,255,255,.88) 44%, rgba(255,255,255,.28) 100%); }
+.photo-band.has-video::before, .photo-band.has-video::after { display: none; }
