@@ -71,7 +71,8 @@
 
       document.getElementById('detail-info').innerHTML = `
         <div class="detail-cat">${esc(p.category)}${p.subcategory?' · '+esc(p.subcategory):''}</div>
-        <div class="detail-name">${esc(p.name)}</div>
+        ${p.brand ? `<div class="detail-brand">${esc(p.brand)}</div>` : ''}
+      <div class="detail-name">${esc(p.name)}</div>
         ${priceHtml}
         <div class="detail-meta">
           <span class="detail-tag ${p.stock}">${stockLabel}</span>

@@ -819,6 +819,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div id="import-msg"></div>
 
     <div class="form-group"><label>Product Name *</label><input type="text" id="p-name" placeholder="e.g. LifeProof Vinyl Plank Flooring 6mm" oninput="autoDetectSubcat()"></div>
+    <div class="form-group"><label>Brand</label><input type="text" id="p-brand" list="brand-list" placeholder="e.g. Duraplex, Bannister (optional)" autocomplete="off"><datalist id="brand-list"></datalist></div>
 
     <div class="form-row three">
       <div class="form-group" style="margin:0"><label>Category *</label>
@@ -1526,7 +1527,8 @@ async function saveEditSale() {
 // ── PRODUCT MODAL ─────────────────────────────────────────────────────────────
 function openModal(data) {
   productImages = [];
-  const fields = ['p-id','p-name','p-sku','p-desc','p-price','p-cost-price','p-qty','p-source-url','p-coverage'];
+  const fields = ['p-id','p-name','p-brand','p-sku','p-desc','p-price','p-cost-price','p-qty','p-source-url','p-coverage'];
+  document.getElementById('brand-list').innerHTML = [...new Set((allProductsCache || []).map(p => p.brand).filter(Boolean))].sort().map(b => `<option value="${esc(b)}">`).join('');
   fields.forEach(id => document.getElementById(id).value = '');
   // Populate member dropdown
   populateMemberDropdown('p-member', data ? data.member_id : null);
@@ -1545,6 +1547,7 @@ function openModal(data) {
     document.getElementById('p-id').value = data.id;
     document.getElementById('modal-title').textContent = 'Edit Product';
     document.getElementById('p-name').value = data.name||'';
+    document.getElementById('p-brand').value = data.brand||'';
     setCategory(data.category||'Flooring');
     updateSubcatOptions(data.subcategory||'');
     document.getElementById('p-sku').value = data.sku||'';
@@ -1583,7 +1586,7 @@ async function saveProduct() {
   if (document.getElementById('p-cat').value === NEW_OPT && !document.getElementById('p-cat-new').value.trim()) { alert('Type the new category name, or pick an existing one.'); document.getElementById('p-cat-new').focus(); return; }
   const n = v => (v===undefined||v==='') ? null : v;
   const body = {
-    name, category: getCategory(),
+    name, brand: n(document.getElementById('p-brand').value.trim()), category: getCategory(),
     subcategory: n(getSubcat()),
     description: n(document.getElementById('p-desc').value.trim()),
     price: document.getElementById('p-price').value!=='' ? parseFloat(document.getElementById('p-price').value) : null,

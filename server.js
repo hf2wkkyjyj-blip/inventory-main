@@ -151,6 +151,7 @@ try { db.exec('ALTER TABLE products ADD COLUMN cost_price REAL'); } catch(e) {}
 try { db.exec('ALTER TABLE products ADD COLUMN coverage_sqft REAL'); } catch(e) {}
 try { db.exec('ALTER TABLE products ADD COLUMN member_id INTEGER'); } catch(e) {}
 try { db.exec('ALTER TABLE products ADD COLUMN member_qty INTEGER DEFAULT 0'); } catch(e) {}
+try { db.exec('ALTER TABLE products ADD COLUMN brand TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE sales ADD COLUMN payment_method TEXT'); } catch(e) {}
 try { db.exec('ALTER TABLE sales ADD COLUMN member_id INTEGER'); } catch(e) {}
 try { db.exec('ALTER TABLE sales ADD COLUMN member_qty_sold INTEGER DEFAULT 0'); } catch(e) {}
@@ -427,6 +428,20 @@ function auth(req, res, next) {
   catch(e) { res.status(401).json({ error: 'Invalid token' }); }
 }
 
+// Is this request from a logged-in admin/employee? Used to keep private product fields off the public API.
+function isStaff(req) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  if (!token) return false;
+  try { jwt.verify(token, JWT_SECRET); return true; } catch (e) { return false; }
+}
+// Cost price and partner (member) details are for the owner only; visitors never get them.
+const PRIVATE_PRODUCT_FIELDS = ['cost_price', 'member_id', 'member_qty', 'member_name'];
+function publicProduct(p) {
+  const o = Object.assign({}, p);
+  PRIVATE_PRODUCT_FIELDS.forEach(k => { delete o[k]; });
+  return o;
+}
+
 function getSettingValue(key, fallback = null) {
   try {
     const row = db.prepare('SELECT value FROM settings WHERE key=?').get([key]);
@@ -446,7 +461,7 @@ app.get('/api/products', (req, res) => {
   let sql = 'SELECT p.*, m.name as member_name FROM products p LEFT JOIN members m ON p.member_id=m.id WHERE 1=1';
   const params = [];
   if (category && category !== 'All') { sql += ' AND p.category=?'; params.push(category); }
-  if (search) { sql += ' AND (p.name LIKE ? OR p.description LIKE ? OR p.subcategory LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+  if (search) { sql += ' AND (p.name LIKE ? OR p.description LIKE ? OR p.subcategory LIKE ? OR p.brand LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
   if (stock) { sql += ' AND p.stock=?'; params.push(stock); }
   if (featured === '1') { sql += ' AND p.featured=1'; }
 
@@ -460,13 +475,14 @@ app.get('/api/products', (req, res) => {
   }
 
   sql += ' ORDER BY p.featured DESC, p.sort_order ASC, p.created_at DESC';
-  res.json(db.prepare(sql).all(params));
+  const rows = db.prepare(sql).all(params);
+  res.json(isStaff(req) ? rows : rows.map(publicProduct));
 });
 
 app.get('/api/products/:id', (req, res) => {
   const p = db.prepare('SELECT * FROM products WHERE id=?').get([req.params.id]);
   if (!p) return res.status(404).json({ error: 'Not found' });
-  res.json(p);
+  res.json(isStaff(req) ? p : publicProduct(p));
 });
 
 app.get('/api/settings', (req, res) => {
@@ -532,21 +548,21 @@ app.delete('/api/admin/quotes/:id', auth, adminOnly, (req, res) => {
 
 // ─── ADMIN PRODUCT ROUTES ─────────────────────────────────────────────────────
 app.post('/api/admin/products', auth, (req, res) => {
-  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price, coverage_sqft, member_id } = req.body;
+  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price, coverage_sqft, member_id, brand } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   const n = v => (v === undefined || v === '') ? null : v;
   const { member_qty } = req.body;
-  const result = db.prepare(`INSERT INTO products (name,category,subcategory,description,price,price_unit,sku,source,stock,images,featured,sort_order,quantity,source_url,cost_price,coverage_sqft,member_id,member_qty) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), n(coverage_sqft), n(member_id), parseInt(member_qty)||0]);
+  const result = db.prepare(`INSERT INTO products (name,category,subcategory,description,price,price_unit,sku,source,stock,images,featured,sort_order,quantity,source_url,cost_price,coverage_sqft,member_id,member_qty,brand) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), n(coverage_sqft), n(member_id), parseInt(member_qty)||0, n(brand && String(brand).trim())]);
   res.json({ id: result.lastInsertRowid });
 });
 
 app.put('/api/admin/products/:id', auth, (req, res) => {
-  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price, coverage_sqft, member_id, member_qty } = req.body;
+  const { name, category, subcategory, description, price, price_unit, sku, source, stock, images, featured, sort_order, quantity, source_url, cost_price, coverage_sqft, member_id, member_qty, brand } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   const n = v => (v === undefined || v === '') ? null : v;
-  db.prepare(`UPDATE products SET name=?,category=?,subcategory=?,description=?,price=?,price_unit=?,sku=?,source=?,stock=?,images=?,featured=?,sort_order=?,quantity=?,source_url=?,cost_price=?,coverage_sqft=?,member_id=?,member_qty=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), n(coverage_sqft), n(member_id), parseInt(member_qty)||0, req.params.id]);
+  db.prepare(`UPDATE products SET name=?,category=?,subcategory=?,description=?,price=?,price_unit=?,sku=?,source=?,stock=?,images=?,featured=?,sort_order=?,quantity=?,source_url=?,cost_price=?,coverage_sqft=?,member_id=?,member_qty=?,brand=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .run([name, category||'Other', n(subcategory), n(description), n(price), price_unit||'each', n(sku), source||'Other', stock||'in_stock', JSON.stringify(images||[]), featured?1:0, sort_order||0, parseInt(quantity)||0, n(source_url), n(cost_price), n(coverage_sqft), n(member_id), parseInt(member_qty)||0, n(brand && String(brand).trim()), req.params.id]);
   res.json({ success: true });
 });
 

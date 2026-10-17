@@ -513,7 +513,11 @@ function renderCard(p) {
       : `<span class="card-price">$${Number(p.price).toFixed(2)}<span class="unit"> / ${p.price_unit||'each'}</span></span>`)
     : `<span class="card-price" style="color:var(--muted);font-size:13px;font-weight:600;">Call for price</span>`;
   const srcDot = p.source==='Home Depot'?'hd':p.source==="Lowe's"?'lw':'ot';
-  const { brand, rest } = extractBrand(p.name);
+  let { brand, rest } = extractBrand(p.name);
+  if (p.brand) {   // a brand typed in admin wins over the guess from the product name
+    brand = p.brand;
+    rest = p.name.toLowerCase().indexOf(p.brand.toLowerCase()) === 0 ? p.name.slice(p.brand.length).replace(/^[\s\-\u2013:]+/, '') : p.name;
+  }
 
   const imgHtml = images[0]
     ? `<img src="${images[0]}" alt="${esc(p.name)}" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'card-placeholder\\'><i class=\\'fa fa-${catFaIcon(p.category)}\\'></i><span>${esc(p.category)}</span></div>'">`

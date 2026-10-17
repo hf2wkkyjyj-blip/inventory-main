@@ -76,6 +76,8 @@
   .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
   .card { background: var(--panel); border: 1.5px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; transition: box-shadow .2s, border-color .2s; }
   .card:hover { border-color: var(--line-strong); box-shadow: 0 12px 28px rgba(28,34,43,.10); }
+  .brand { font: 800 13px var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-top: 8px; }
+  .brand + .name { margin-top: 2px; }
   .photo[data-open], .name[data-open] { cursor: pointer; }
   .name[data-open]:hover { color: var(--accent-dark); }
   .photo[data-open]:hover img { transform: scale(1.03); }
@@ -293,6 +295,7 @@ function cardHtml(p, idx) {
     <div class="photo" data-open="${p.id}" title="View details">${isEx(p) ? '<span class="badge-ex"><i class="fa fa-star"></i> Exclusive</span>' : ''}${photo}</div>${thumbs}
     <div class="body">
       ${p.subcategory ? `<div class="kind">${esc(typeLabels().get(typeKey(p.subcategory)))}</div>` : ''}
+      ${p.brand ? `<div class="brand">${esc(p.brand)}</div>` : ''}
       <h3 class="name" data-open="${p.id}" title="View details">${esc(p.name)}</h3>
       <div class="price-row">${priceHtml}</div>
       ${p.sku ? `<div class="sku">SKU ${esc(p.sku)}</div>` : ''}
