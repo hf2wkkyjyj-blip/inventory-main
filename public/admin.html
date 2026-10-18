@@ -537,7 +537,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="bot-stat s-red clickable" onclick="botFilterStatus('Cancelled')" id="bsc-Cancelled"><div class="lbl">CANCELLED</div><div class="val" id="bs-cancelled">0</div></div>
     <div class="bot-stat s-pink clickable" onclick="botFilterStatus('Refunded')" id="bsc-Refunded"><div class="lbl">REFUNDED</div><div class="val" id="bs-refunded">0</div></div>
     <div class="bot-stat s-green"><div class="lbl">SPENT</div><div class="val" style="font-size:18px;" id="bs-spent">$0</div></div>
-    <div class="bot-stat s-amber" id="bsc-fees" data-tip="Finder fees paid: box/order fees + per-unit fees × units. Cancelled and refunded orders not counted.">
+    <div class="bot-stat s-amber" id="bsc-fees" data-tip="Finder fees paid: box/order fees + per-unit fees × units. Cancelled and refunded orders aren't counted — unless you marked their finder fee as still owed.">
       <div class="lbl">FINDER FEES</div><div class="val" style="font-size:18px;" id="bs-fees">$0</div>
       <div class="sub" id="bs-fees-sub"></div></div>
     <div class="bot-stat s-profit clickable" id="bsc-profit" onclick="botOpenView('sold')" data-tip="From recorded sales: money in − selling fees − landed cost of the units sold. ROI = profit ÷ that landed cost. Click to see every sale.">
@@ -975,6 +975,29 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   </div>
 </div>
 
+<!-- ══ MODAL: CANCEL / REFUND AN ORDER ══════════════════════════════════════ -->
+<div class="overlay" id="bot-close-overlay" onclick="if(event.target.id==='bot-close-overlay')closeBotClose()">
+  <div class="modal" style="width:440px;max-width:94vw;">
+    <h2 id="bot-close-title" style="margin-bottom:6px;">Cancel order</h2>
+    <p id="bot-close-sub" style="color:var(--muted);font-size:13px;margin:0 0 16px;line-height:1.5;"></p>
+    <input type="hidden" id="bot-close-id"><input type="hidden" id="bot-close-kind">
+    <div class="form-group" id="bot-close-amount-row">
+      <label style="font-size:11px;">Amount refunded ($)</label>
+      <input type="number" id="bot-close-amount" step="0.01" min="0" oninput="botCloseSync()" style="width:100%;">
+      <div id="bot-close-amount-hint" style="font-size:11px;color:var(--muted);margin-top:4px;"></div>
+    </div>
+    <div class="form-group" id="bot-close-fee-row">
+      <label style="font-size:11px;">Finder fee you still have to pay ($)</label>
+      <input type="number" id="bot-close-fee" step="0.01" min="0" placeholder="0.00" style="width:100%;">
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.45;">A fee that isn't refunded stays in your costs (Finder Fees card). Leave it at 0 if the fee was refunded too.</div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
+      <button class="btn btn-ghost" onclick="closeBotClose()">Back</button>
+      <button class="btn btn-primary" id="bot-close-go" onclick="botCloseGo()">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ MODAL: EDIT BOT ORDER ═════════════════════════════════════════════════ -->
 <div class="overlay" id="bot-edit-overlay" onclick="if(event.target.id==='bot-edit-overlay')closeBotEdit()">
   <div class="modal" style="width:520px;max-height:90vh;overflow-y:auto;">
@@ -982,7 +1005,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <input type="hidden" id="bot-edit-id">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Status</label>
-        <select id="bot-edit-status" style="width:100%;"><option>Confirmed</option><option>Shipped</option><option>Delivered</option><option>Cancelled</option><option>Refunded</option></select></div>
+        <select id="bot-edit-status" onchange="botEditKeptToggle()" style="width:100%;"><option>Confirmed</option><option>Shipped</option><option>Delivered</option><option>Cancelled</option><option>Refunded</option></select></div>
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Whose order</label>
         <select id="bot-edit-owner" style="width:100%;"></select></div>
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Tracking #</label>
@@ -1003,7 +1026,8 @@ tr:hover>td{background:rgba(47,129,247,.03);}
           <input type="number" id="bot-edit-ship" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
         <div class="form-group" style="margin:0;"><label style="font-size:11px;">Finder Fee ($)</label>
           <input type="number" id="bot-edit-finder" step="0.01" placeholder="0.00" oninput="document.getElementById('bot-edit-overlay').dataset.feeauto='';botEditCalc()" style="width:100%;">
-          <div id="bot-edit-finder-hint" style="font-size:10px;color:var(--muted);margin-top:3px;"></div></div>
+          <div id="bot-edit-finder-hint" style="font-size:10px;color:var(--muted);margin-top:3px;"></div>
+          <label id="bot-edit-kept-row" style="display:none;margin-top:6px;font-size:11px;font-weight:400;cursor:pointer;"><input type="checkbox" id="bot-edit-kept" style="width:auto;margin-right:6px;">Fee still owed — keep it in my costs (not refunded)</label></div>
       </div>
       <!-- Landed cost summary -->
       <div id="bot-edit-summary" style="margin-top:12px;background:rgba(96,165,250,.07);border:1px solid rgba(96,165,250,.2);border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;">
@@ -2737,7 +2761,8 @@ function renderBotOrders() {
       <td style="max-width:180px;"><div class="clip" data-tip="${esc(itemList.join('\n'))}">${esc(items||'—')}</div></td>
       <td style="text-align:right;font-variant-numeric:tabular-nums;">
         ${o.order_total?'$'+Number(o.order_total).toFixed(2):'—'}
-        ${o.landed && o.landed.fee ? `<div class="bot-ol-fee" style="font-size:10px;color:#fbbf24;margin-top:1px;">+ $${o.landed.fee.toFixed(2)} fee${o.fee_source === 'auto' ? ' <span style="color:#60a5fa;" data-tip="Filled from your last fee for this product at this store">· auto</span>' : ''}</div>` : ''}
+        ${(o.fee_kept && Number(o.finder_fee) > 0) ? `<div style="font-size:10px;color:#fbbf24;margin-top:1px;" data-tip="Finder fee still owed on this ${esc((o.status||'').toLowerCase())} order — it counts in your Finder Fees">+ $${Number(o.finder_fee).toFixed(2)} fee kept</div>` : ''}
+        ${o.landed && o.landed.fee && o.status !== 'Cancelled' && o.status !== 'Refunded' ? `<div class="bot-ol-fee" style="font-size:10px;color:#fbbf24;margin-top:1px;">+ $${o.landed.fee.toFixed(2)} fee${o.fee_source === 'auto' ? ' <span style="color:#60a5fa;" data-tip="Filled from your last fee for this product at this store">· auto</span>' : ''}</div>` : ''}
         ${(()=>{const cpu=botLandedPerUnit(o);return cpu?`<div class="bot-ol-landed" onclick="botShowOrderCost(${Number(o.id)}, this)" data-tip="Click for the full breakdown" style="font-size:10px;color:#60a5fa;margin-top:1px;cursor:pointer;text-decoration:underline dotted;">$${cpu.toFixed(2)}/unit</div>`:''})()}
       </td>
       <td>${esc(o.shipping_name||'—')}</td>
@@ -4418,34 +4443,74 @@ function botCloseBtns(o, mode) {
   return `<button class="bot-cancel-btn" onclick="botQuickClose(${id},'cancel')" data-tip="Cancel order ${num}" title="Cancel order ${num}" style="${st(red)}color:#f87171;"><i class="fa fa-ban" style="${sq ? 'font-size:11px;' : ''}"></i></button>` +
          `<button class="bot-refund-btn" onclick="botQuickClose(${id},'refund')" data-tip="Refund order ${num}" title="Refund order ${num}" style="${st(pink)}color:#f472b6;"><i class="fa fa-rotate-left" style="${sq ? 'font-size:11px;' : ''}"></i></button>`;
 }
-async function botQuickClose(id, kind) {
+function botQuickClose(id, kind) {
   const o = _botOrders.find(x => Number(x.id) === Number(id)) || {};
   const num = o.order_number ? '#' + o.order_number : 'this order';
   const total = Number(o.order_total) || 0;
-  const left = Math.max(0, total - (Number(o.refunded_amount) || 0));   // what's still refundable
-  let amount;
-  if (kind === 'cancel') {
-    if (!confirm(`Cancel order ${num}?\n\nIt stops counting in your costs, fees and stock. You can undo it right after, or change the status later with ✎ Edit.`)) return;
-  } else {
-    const ans = total > 0
-      ? prompt(`Refund order ${num}.\n\nHow much was refunded ($)? The full $${left.toFixed(2)} marks the order Refunded. A smaller amount is a partial refund and the order keeps its status.`, left.toFixed(2))
-      : (confirm(`Mark order ${num} as Refunded?`) ? '' : null);
-    if (ans === null) return;
-    amount = ans.trim() === '' ? undefined : Number(ans.replace(/[$,\s]/g, ''));
-    if (amount !== undefined && !(amount > 0)) { alert('Type an amount above $0.'); return; }
+  const left = Math.max(0, Math.round((total - (Number(o.refunded_amount) || 0)) * 100) / 100);   // what's still refundable
+  const isPartner = !!(o.partner_name || (o.partner_id != null && Number(o.partner_id) !== 0));
+  document.getElementById('bot-close-id').value = id;
+  document.getElementById('bot-close-kind').value = kind;
+  document.getElementById('bot-close-title').textContent = (kind === 'cancel' ? 'Cancel order ' : 'Refund order ') + num;
+  document.getElementById('bot-close-sub').textContent = kind === 'cancel'
+    ? 'The order stops counting in your costs and stock. You can Undo right after, or change the status later with ✎ Edit.'
+    : 'The full amount marks the order Refunded. A smaller amount is a partial refund and the order keeps its status.';
+  const amtRow = document.getElementById('bot-close-amount-row');
+  amtRow.style.display = kind === 'refund' && total > 0 ? '' : 'none';
+  document.getElementById('bot-close-amount').value = left ? left.toFixed(2) : '';
+  document.getElementById('bot-close-amount').dataset.left = left;
+  // A fee you typed earlier is offered back; an automatic estimate isn't something you paid, so it starts at 0.
+  document.getElementById('bot-close-fee').value = o.fee_source === 'manual' && Number(o.finder_fee) > 0 ? Number(o.finder_fee).toFixed(2) : '';
+  document.getElementById('bot-close-fee-row').dataset.partner = isPartner ? '1' : '';
+  document.getElementById('bot-close-go').textContent = kind === 'cancel' ? 'Cancel order' : 'Refund';
+  botCloseSync();
+  document.getElementById('bot-close-overlay').classList.add('open');
+  setTimeout(() => document.getElementById(kind === 'refund' && total > 0 ? 'bot-close-amount' : 'bot-close-fee').focus(), 60);
+}
+// The fee question only matters when the order ends up dead: a cancel, or a refund of everything that's left.
+function botCloseSync() {
+  const kind = document.getElementById('bot-close-kind').value;
+  const amt = document.getElementById('bot-close-amount'), left = Number(amt.dataset.left) || 0;
+  const v = amt.value === '' ? left : Number(amt.value);
+  const partial = kind === 'refund' && left > 0 && v > 0 && v < left - 0.005;
+  document.getElementById('bot-close-amount-hint').textContent = kind === 'refund' && left > 0
+    ? (partial ? 'Partial refund — the order keeps its status.' : `Full refund — marks the order Refunded ($${left.toFixed(2)} left on it).`) : '';
+  const feeRow = document.getElementById('bot-close-fee-row');
+  feeRow.style.display = partial || feeRow.dataset.partner ? 'none' : '';
+}
+function closeBotClose() { document.getElementById('bot-close-overlay').classList.remove('open'); }
+async function botCloseGo() {
+  const id = Number(document.getElementById('bot-close-id').value), kind = document.getElementById('bot-close-kind').value;
+  const o = _botOrders.find(x => Number(x.id) === id) || {};
+  const num = o.order_number ? '#' + o.order_number : 'this order';
+  const body = { kind };
+  const amtRow = document.getElementById('bot-close-amount-row');
+  if (kind === 'refund' && amtRow.style.display !== 'none') {
+    const raw = document.getElementById('bot-close-amount').value;
+    if (raw !== '') { const a = Number(raw); if (!(a > 0)) { alert('Type an amount above $0.'); return; } body.amount = a; }
   }
+  if (document.getElementById('bot-close-fee-row').style.display !== 'none') {
+    const raw = document.getElementById('bot-close-fee').value;
+    const f = raw === '' ? 0 : Number(raw);
+    if (!Number.isFinite(f) || f < 0) { alert('The finder fee must be $0 or more.'); return; }
+    body.finder_fee = f;
+  }
+  const btn = document.getElementById('bot-close-go'); btn.disabled = true;
   let r = null, err = null;
   try {
-    const res = await fetch('/api/admin/bot-orders/' + Number(id) + '/close', { method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN }, body: JSON.stringify({ kind, amount }) });
+    const res = await fetch('/api/admin/bot-orders/' + id + '/close', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN }, body: JSON.stringify(body) });
     const j = await res.json().catch(() => ({}));
     if (res.status === 401) { doLogout(); return; }
     if (res.ok) r = j; else err = j.error || 'Could not do that.';
   } catch (e) { err = 'Could not reach the server.'; }
+  btn.disabled = false;
   if (err) { alert(err); return; }
+  closeBotClose();
   const money = n => '$' + Number(n).toFixed(2);
-  const text = kind === 'cancel' ? `Order ${esc(num)} cancelled`
+  let text = kind === 'cancel' ? `Order ${esc(num)} cancelled`
     : r.partial ? `Partial refund recorded on ${esc(num)} (${money(r.refunded_amount)} so far)` : `Order ${esc(num)} refunded`;
+  if (r.fee_kept) text += ` · ${money(body.finder_fee)} finder fee kept in your costs`;
   botShowUndoMsg(text, [r.previous]);
   await loadBotOrders();
   const ptPage = document.getElementById('bot-partners-page');
@@ -5202,6 +5267,8 @@ async function botEditRow(id) {
     ps.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   ownSel.value = o.partner_override === null || o.partner_override === undefined ? '' : String(o.partner_override);
   ownSel.dataset.was = ownSel.value;
+  document.getElementById('bot-edit-kept').checked = !!o.fee_kept;
+  botEditKeptToggle();
   document.getElementById('bot-edit-tracking').value = o.tracking || '';
   document.getElementById('bot-edit-notes').value = o.notes || '';
   document.getElementById('bot-edit-total').value = o.order_total || '';
@@ -5243,7 +5310,13 @@ function botEditValues() {
   return {
     status: v('bot-edit-status'), tracking: v('bot-edit-tracking').trim() || null, notes: v('bot-edit-notes').trim() || null,
     order_total: num('bot-edit-total'), tax_amount: num('bot-edit-tax'), ship_cost: num('bot-edit-ship'), finder_fee: num('bot-edit-finder'),
+    fee_kept: document.getElementById('bot-edit-kept').checked ? 1 : 0,
   };
+}
+// "Fee still owed" only makes sense once the order is cancelled or refunded.
+function botEditKeptToggle() {
+  const st = document.getElementById('bot-edit-status').value;
+  document.getElementById('bot-edit-kept-row').style.display = st === 'Cancelled' || st === 'Refunded' ? '' : 'none';
 }
 function closeBotEdit() {
   document.getElementById('bot-edit-overlay').classList.remove('open');
