@@ -406,6 +406,10 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <div class="pl-section-title">Expense Breakdown</div>
         <div id="pl-expense-detail"></div>
       </div>
+      <div class="pl-section">
+        <div class="pl-section-title">Order tracker (resale)</div>
+        <div id="pl-resale"><div class="text-muted fs12" style="padding:8px 0;">Loading…</div></div>
+      </div>
     </div>
     <div>
       <div class="pl-section">
@@ -2062,7 +2066,37 @@ async function loadPL() {
   if (to)   params.set('to', to);
   const data = await api('GET', '/admin/pl'+(params.toString()?'?'+params:''));
   if (!data) return;
+  window._plRange = { from, to };
   renderPL(data);
+}
+
+// Order tracker figures for the same period as the P&L tab, including finder fees you lost on refunded/cancelled orders.
+async function plRenderResale(d) {
+  const box = document.getElementById('pl-resale');
+  if (!box) return;
+  const { from, to } = window._plRange || {};
+  const inR = dt => { const x = String(dt || '').slice(0, 10); return !!x && (!from || x >= from) && (!to || x <= to); };
+  const m = await api('GET', '/admin/bot-money');
+  if (!m) { box.innerHTML = '<div class="text-muted fs12" style="padding:8px 0;">Could not load the order tracker figures.</div>'; return; }
+  const sum = (arr, k) => arr.reduce((a, x) => a + (Number(x[k]) || 0), 0);
+  const sales = (m.sales || []).filter(x => inR(x.sold_at));
+  const lost = (m.lostFees || []).filter(x => inR(x.date)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const rev = sum(sales, 'revenue'), cost = sum(sales, 'cost'), fees = sum(sales, 'fees'), profit = sum(sales, 'profit');
+  const lostTotal = sum(lost, 'fee'), net = profit - lostTotal;
+  const store = Number(d.net_profit) || 0, all = store + net;
+  const col = n => n >= 0 ? 'var(--green)' : 'var(--red)';
+  const sgn = n => (n >= 0 ? '+' : '−') + botMoneyFmt(Math.abs(n));
+  box.innerHTML = `
+    <div class="pl-row"><span>Revenue from units sold</span><span class="fw7 text-accent">${botMoneyFmt(rev)}</span></div>
+    <div class="pl-row"><span>Cost of those units (landed, fees included)</span><span class="fw7 text-red">− ${botMoneyFmt(cost)}</span></div>
+    <div class="pl-row"><span>Selling fees</span><span class="fw7 text-red">− ${botMoneyFmt(fees)}</span></div>
+    <div class="pl-row pl-total"><span>Resale profit</span><span style="color:${col(profit)}">${sgn(profit)}</span></div>
+    <div class="pl-row"><span>Lost on refunded / cancelled orders <span class="text-muted fs11">(finder fee not returned)</span></span><span class="fw7 text-red">− ${botMoneyFmt(lostTotal)}</span></div>
+    <div class="pl-row pl-total"><span>Resale net</span><span style="color:${col(net)}">${sgn(net)}</span></div>
+    ${lost.length ? `<div style="margin:8px 0 2px;font-size:11px;color:var(--muted);">Orders behind the loss</div>` + lost.map(x => `
+      <div class="pl-row" style="font-size:12px;"><span>${esc(x.order_number || '—')} <span class="text-muted fs11">· ${esc(x.retailer || '')} · ${esc(x.status)} · ${esc(botShortDate(x.date))}</span></span><span class="fw7 text-red">− ${botMoneyFmt(x.fee)}</span></div>`).join('') : ''}
+    <div class="pl-row" style="padding-top:12px;"><span>Storefront net profit <span class="text-muted fs11">(from this tab)</span></span><span style="color:${col(store)}">${sgn(store)}</span></div>
+    <div class="pl-row" style="font-size:15px;"><span><b>All-in net profit</b></span><span style="color:${col(all)};font-weight:700;font-size:17px;">${sgn(all)}</span></div>`;
 }
 
 function renderPL(d) {
@@ -2134,6 +2168,7 @@ function renderPL(d) {
       </tr>`;
     }).join('');
   }
+  plRenderResale(d);
 }
 
 function exportPLCsv() {
@@ -2324,7 +2359,9 @@ function botRenderMoneyCards(ordersInRange) {
   const fees = (_botMoney.orderFees || []).filter(f => inRange.has(f.id));
   const feeTotal = fees.reduce((s, f) => s + f.fee, 0);
   feesEl.textContent = botMoneyFmt(feeTotal);
-  document.getElementById('bs-fees-sub').textContent = fees.length ? `${fees.length} order${fees.length === 1 ? '' : 's'}` : '';
+  const lostTotal = fees.filter(f => f.kept).reduce((s, f) => s + f.fee, 0);
+  document.getElementById('bs-fees-sub').textContent = fees.length
+    ? `${fees.length} order${fees.length === 1 ? '' : 's'}${lostTotal ? ` · ${botMoneyFmt(lostTotal)} lost on refunds/cancels` : ''}` : '';
 
   const sales   = (_botMoney.sales || []).filter(s => botDateInRange(s.sold_at, _botRange));
   const profit  = sales.reduce((s, x) => s + x.profit, 0);
@@ -2354,7 +2391,7 @@ function botRenderMoneyCards(ordersInRange) {
   const gone = (_botMoney.presales || []).filter(x => x.order_gone);
   document.getElementById('bs-profit-sub').textContent = (sales.length
     ? `${units} sold · ${botMoneyFmt(revenue)} in${cost > 0 ? ` · ROI ${Math.round(profit / cost * 100)}%` : ''}`
-    : 'no sales yet') + (gone.length ? ` · ⚠ ${gone.length} presale${gone.length === 1 ? '' : 's'} on a cancelled order — refund the buyer` : '');
+    : 'no sales yet') + (lostTotal ? ` · −${botMoneyFmt(lostTotal)} lost fees → net ${botMoneyFmt(profit - lostTotal)}` : '') + (gone.length ? ` · ⚠ ${gone.length} presale${gone.length === 1 ? '' : 's'} on a cancelled order — refund the buyer` : '');
 }
 
 

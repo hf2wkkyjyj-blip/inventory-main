@@ -1675,7 +1675,13 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
   // Cancelled/refunded orders whose fee you still have to pay (not refunded): the order fee stays in your costs.
   // (A partner's orders are left out — his tab is settled separately.)
   const keptFeeOrders = annotatePartners(db.prepare("SELECT * FROM bot_orders WHERE status IN ('Cancelled','Refunded') AND fee_kept=1 AND finder_fee>0").all(), partnersList);
-  for (const o of keptFeeOrders) if (!o.partner_id) orderFees.push({ id: o.id, fee: r2(Number(o.finder_fee) || 0), kept: true });
+  const lostFees = [];   // the same fees as a list, so the P&L tab can show each loss
+  for (const o of keptFeeOrders) if (!o.partner_id) {
+    const fee = r2(Number(o.finder_fee) || 0);
+    orderFees.push({ id: o.id, fee, kept: true });
+    lostFees.push({ id: o.id, order_number: o.order_number || null, retailer: o.retailer || null, status: o.status,
+                    date: String(o.status_changed_at || o.order_date || '').slice(0, 10), fee, shipping_name: o.shipping_name || null });
+  }
 
   const seen = new Set();
   const sales = [];
@@ -1786,7 +1792,7 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
                    unit_price: Number(s.unit_price) || 0, fees: Number(s.fees) || 0, channel: s.channel || null, sold_at: s.sold_at,
                    order_gone: !s.order_status || s.order_status === 'Cancelled' || s.order_status === 'Refunded' }));
   } catch (_) {}
-  res.json({ orderFees, sales, claims, stock: stockTotals, partners, partnerOrderIds, retailers, presales });
+  res.json({ orderFees, lostFees, sales, claims, stock: stockTotals, partners, partnerOrderIds, retailers, presales });
 });
 
 // ── Product catalog (see skuCatalog.js) ─────────────────────────────────────
