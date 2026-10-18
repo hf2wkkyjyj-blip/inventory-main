@@ -988,9 +988,11 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     </div>
     <div class="form-group" id="bot-close-fee-row">
       <label style="font-size:11px;">Finder fee you still have to pay ($)</label>
-      <input type="number" id="bot-close-fee" step="0.01" min="0" placeholder="0.00" style="width:100%;">
+      <input type="number" id="bot-close-fee" step="0.01" min="0" placeholder="0.00" oninput="botCloseSync()" style="width:100%;">
       <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.45;">A fee that isn't refunded stays in your costs (Finder Fees card). Leave it at 0 if the fee was refunded too.</div>
     </div>
+    <input type="hidden" id="bot-close-paid">
+    <div id="bot-close-loss" style="margin-top:14px;padding:10px 12px;border-radius:8px;background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.25);font-size:12.5px;line-height:1.55;"></div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px;">
       <button class="btn btn-ghost" onclick="closeBotClose()">Back</button>
       <button class="btn btn-primary" id="bot-close-go" onclick="botCloseGo()">Confirm</button>
@@ -4459,8 +4461,10 @@ function botQuickClose(id, kind) {
   amtRow.style.display = kind === 'refund' && total > 0 ? '' : 'none';
   document.getElementById('bot-close-amount').value = left ? left.toFixed(2) : '';
   document.getElementById('bot-close-amount').dataset.left = left;
-  // A fee you typed earlier is offered back; an automatic estimate isn't something you paid, so it starts at 0.
-  document.getElementById('bot-close-fee').value = o.fee_source === 'manual' && Number(o.finder_fee) > 0 ? Number(o.finder_fee).toFixed(2) : '';
+  // A fee you typed earlier (including on older orders, where the source was never recorded) is offered back;
+  // an automatic estimate isn't something you paid, so it starts at 0.
+  document.getElementById('bot-close-paid').value = JSON.stringify({ total, left, fee: Number(o.finder_fee) || 0 });
+  document.getElementById('bot-close-fee').value = o.fee_source !== 'auto' && Number(o.finder_fee) > 0 ? Number(o.finder_fee).toFixed(2) : '';
   document.getElementById('bot-close-fee-row').dataset.partner = isPartner ? '1' : '';
   document.getElementById('bot-close-go').textContent = kind === 'cancel' ? 'Cancel order' : 'Refund';
   botCloseSync();
@@ -4477,6 +4481,25 @@ function botCloseSync() {
     ? (partial ? 'Partial refund — the order keeps its status.' : `Full refund — marks the order Refunded ($${left.toFixed(2)} left on it).`) : '';
   const feeRow = document.getElementById('bot-close-fee-row');
   feeRow.style.display = partial || feeRow.dataset.partner ? 'none' : '';
+
+  // What this costs you, in plain numbers. Cancel, or a refund of everything left, ends the order:
+  // the store gives the order total back, and the only loss is a finder fee that isn't returned.
+  let info = {}; try { info = JSON.parse(document.getElementById('bot-close-paid').value || '{}'); } catch (_) {}
+  const m = n => '$' + Number(n).toFixed(2);
+  const box = document.getElementById('bot-close-loss');
+  const total = Number(info.total) || 0;
+  if (feeRow.dataset.partner) { box.innerHTML = 'This is a partner order — its fees stay on his tab.'; return; }
+  if (total <= 0) { box.innerHTML = 'No order total on file, so there is nothing to compare.'; return; }
+  if (partial) {
+    const back = v, stays = Math.max(0, left - back);
+    box.innerHTML = `<b>Partial refund.</b> You get <b>${m(back)}</b> back now. The order stays in your costs: <b>${m(stays)}</b> still paid${info.fee ? ` + ${m(info.fee)} finder fee` : ''}.`;
+    return;
+  }
+  const fee = Math.max(0, Number(document.getElementById('bot-close-fee').value) || 0);
+  const back = kind === 'cancel' ? left : Math.min(v, left);
+  box.innerHTML = `You paid <b>${m(left)}</b>${info.fee ? ` + <b>${m(info.fee)}</b> finder fee` : ''}. Assuming the store returns the full <b>${m(back)}</b>:<br>` +
+    (fee > 0 ? `<span style="color:#fbbf24;">Finder fee not refunded <b>${m(fee)}</b> → <b>you lose ${m(fee)}</b></span> (it stays in your Finder Fees).`
+             : `<span style="color:#4ade80;"><b>You lose nothing</b> — the order and its fee both come back.</span>`);
 }
 function closeBotClose() { document.getElementById('bot-close-overlay').classList.remove('open'); }
 async function botCloseGo() {
