@@ -518,6 +518,8 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   #bot-orders-table tbody td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top;font-size:12.5px;}
   #bot-orders-table tbody tr:last-child td{border-bottom:none;}
   #bot-orders-table tbody tr:hover{background:var(--surface);}
+  /* Keep the action buttons (Cancel, Refund, edit, delete) in view while the wide table scrolls sideways */
+  #bot-orders-table tbody td:last-child, #bot-orders-table thead th:last-child{position:sticky;right:0;background:var(--surface);box-shadow:-10px 0 10px -10px rgba(0,0,0,.65);}
 </style>
 
 <!-- Everything below is the normal order-tracker screen. Partners replaces it
@@ -2732,7 +2734,7 @@ function renderBotOrders() {
       <td style="font-weight:600;">${esc(o.order_number||'—')}</td>
       <td style="color:var(--muted);">${botDateCell(o, status)}</td>
       <td>${botStatusCell(o)}</td>
-      <td style="max-width:220px;"><div class="clip" data-tip="${esc(itemList.join('\n'))}">${esc(items||'—')}</div></td>
+      <td style="max-width:180px;"><div class="clip" data-tip="${esc(itemList.join('\n'))}">${esc(items||'—')}</div></td>
       <td style="text-align:right;font-variant-numeric:tabular-nums;">
         ${o.order_total?'$'+Number(o.order_total).toFixed(2):'—'}
         ${o.landed && o.landed.fee ? `<div class="bot-ol-fee" style="font-size:10px;color:#fbbf24;margin-top:1px;">+ $${o.landed.fee.toFixed(2)} fee${o.fee_source === 'auto' ? ' <span style="color:#60a5fa;" data-tip="Filled from your last fee for this product at this store">· auto</span>' : ''}</div>` : ''}
@@ -2740,10 +2742,11 @@ function renderBotOrders() {
       </td>
       <td>${esc(o.shipping_name||'—')}</td>
       <td style="white-space:nowrap;">${o.tracking ? `<a href="${botTrackingUrl(o.retailer, o.tracking)}" target="_blank" style="color:#60a5fa;font-size:12px;font-weight:600;">${esc(o.tracking)}</a>` : '<span style="color:var(--muted);">—</span>'}</td>
-      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px;" title="${esc(o.shipping_address && o.shipping_address !== botMainAddr(o) ? 'On the label: ' + o.shipping_address : (o.shipping_address||''))}">${esc(botMainAddr(o)||'—')}</td>
+      <td style="max-width:115px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px;" title="${esc(o.shipping_address && o.shipping_address !== botMainAddr(o) ? 'On the label: ' + o.shipping_address : (o.shipping_address||''))}">${esc(botMainAddr(o)||'—')}</td>
       <td style="white-space:nowrap;">
         ${o.status==='Shipped'?`<button style="background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.3);color:#60a5fa;padding:2px 7px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:700;margin-right:4px;" onclick="markDelivered(${o.id})" title="Mark Delivered">✓ Del</button>`:''}
         ${botPresellable(o) ? `<button class="bot-ol-presell" style="background:rgba(74,222,128,.08);border:1px solid #166534;color:#4ade80;height:26px;border-radius:6px;cursor:pointer;margin-right:4px;font-size:11px;padding:0 7px;" onclick="openPresale(${o.id})" title="Presell — sold before it arrives">$ Presell${botPresalesFor(o.id).length ? ' ✓' : ''}</button>` : ''}
+        ${botCloseBtns(o, 'pill')}
         <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:4px;" onclick="botEditRow(${o.id})" title="Edit"><i class="fa fa-pen" style="font-size:11px;"></i></button>
         <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;" onclick="deleteBotOrder(${o.id})" title="Delete"><i class="fa fa-trash" style="font-size:11px;"></i></button>
       </td>
@@ -3086,7 +3089,7 @@ function renderPartners() {
       ${_ptOpen.has(p.id) ? `<div style="margin-top:8px;font-size:11px;">
         ${p.orderList.length ? `<div style="display:flex;gap:10px;padding:2px 0;font-size:10px;letter-spacing:.05em;color:var(--muted);">
           <span style="flex:1;">ORDER · ITEMS (tap an item for its landed cost)</span>
-          <span style="width:78px;text-align:right;">ORDER</span><span style="width:62px;text-align:right;">FEES</span><span style="width:84px;text-align:right;">LANDED</span><span style="width:118px;"></span></div>` : ''}
+          <span style="width:78px;text-align:right;">ORDER</span><span style="width:62px;text-align:right;">FEES</span><span style="width:84px;text-align:right;">LANDED</span><span style="width:178px;"></span></div>` : ''}
         ${[...p.orderList].sort((x, y) => String(y.order_date || '').localeCompare(String(x.order_date || ''))).map(o => `<div class="pt-order" data-id="${o.id}" style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--border);">
           <div style="flex:1;min-width:0;">
             <div><b style="font-weight:600;">${esc(o.order_number || '')}</b>
@@ -3104,7 +3107,8 @@ function renderPartners() {
           <span class="pt-o-total" style="width:78px;text-align:right;font-variant-numeric:tabular-nums;">${m(o.total)}</span>
           <span class="pt-o-fee" onclick="partnerShowFee(${p.id}, ${o.id}, this)" data-tip="Where this fee comes from" style="width:62px;text-align:right;font-variant-numeric:tabular-nums;cursor:pointer;text-decoration:underline dotted;color:${o.fee ? 'var(--text)' : 'var(--muted)'};">${m(o.fee)}</span>
           <b class="pt-o-landed" style="width:84px;text-align:right;font-variant-numeric:tabular-nums;color:#60a5fa;">${m(o.landed)}</b>
-          <div style="width:118px;display:flex;gap:4px;justify-content:flex-end;">
+          <div style="width:178px;display:flex;gap:4px;justify-content:flex-end;">
+            ${botCloseBtns(o, 'sq')}
             <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;" onclick="botEditRow(${o.id})" title="Edit — status, tracking, costs, whose order"><i class="fa fa-pen" style="font-size:11px;"></i></button>
             <button style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;" onclick="deleteBotOrder(${o.id})" title="Delete"><i class="fa fa-trash" style="font-size:11px;"></i></button>
             <button class="btn btn-ghost btn-sm pt-mine" onclick="partnerSetOwner(${o.id}, 0)" title="This one is mine">Mine</button>
@@ -3265,7 +3269,7 @@ function botOrderEdits(p) {
   return `<div style="font-size:10px;color:var(--muted);margin-top:3px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">${p.orders.map(o => `
     <span style="white-space:nowrap;">${esc(o.order_number || '—')}
       <button class="bot-box-edit" onclick="botEditRow(${Number(o.id)})" data-tip="Edit order ${esc(o.order_number || '')}"
-        style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;width:22px;height:20px;font-size:9px;margin-left:2px;"><i class="fa fa-pen"></i></button>${botPresellable(o) ? `
+        style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;width:22px;height:20px;font-size:9px;margin-left:2px;"><i class="fa fa-pen"></i></button>${botCloseBtns(o, 'mini')}${botPresellable(o) ? `
       <button class="bot-presell-btn" onclick="openPresale(${Number(o.id)})" data-tip="Presell — sold before it arrives"
         style="background:none;border:1px solid #166534;border-radius:5px;color:#4ade80;cursor:pointer;height:20px;font-size:9px;margin-left:2px;padding:0 5px;">$ Presell</button>` : ''}</span>`).join('')}</div>`;
 }
@@ -4178,7 +4182,7 @@ function renderBotPackages() {
           <div style="display:flex;align-items:center;gap:6px;line-height:20px;">
             <span>${esc(o.order_number || '—')}</span>
             <button class="bot-pkg-edit" onclick="botEditRow(${Number(o.id)})" data-tip="Edit order ${esc(o.order_number || '')} — tracking, status, costs"
-              style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;width:22px;height:20px;font-size:9px;"><i class="fa fa-pen"></i></button>
+              style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;width:22px;height:20px;font-size:9px;"><i class="fa fa-pen"></i></button>${botCloseBtns(o, 'mini')}
           </div>`).join('')}</td>
       </tr>`;
     }).join('');
@@ -4394,8 +4398,67 @@ async function botUndo() {
   _botUndo = null;
   document.getElementById('bot-undo-bar').style.display = 'none';
   const r = await api('POST', '/admin/bot-orders/bulk-restore', { previous });
-  if (!r || r.error) { alert('Undo failed — the orders are still marked delivered.'); return; }
+  if (!r || r.error) { alert('Undo failed — nothing was changed back.'); return; }
   await loadBotOrders();
+}
+
+// ── Cancel / Refund any order, whatever its status ─────────────────────────
+// Buttons come in three sizes: 'pill' (orders table), 'sq' (partner rows), 'mini' (box/package views).
+function botCloseBtns(o, mode) {
+  if (!o || o.status === 'Cancelled' || o.status === 'Refunded') return '';
+  const id = Number(o.id), num = esc(o.order_number || '');
+  const red = 'rgba(248,113,113,.38)', pink = 'rgba(244,114,182,.38)';
+  if (mode === 'pill') {
+    const st = (c, bg) => `background:${bg};border:1px solid ${c};height:26px;border-radius:6px;cursor:pointer;margin-right:4px;font-size:11px;font-weight:700;padding:0 7px;`;
+    return `<button class="bot-ol-cancel" onclick="botQuickClose(${id},'cancel')" title="Cancel this order" style="${st(red, 'rgba(248,113,113,.10)')}color:#f87171;">Cancel</button>` +
+           `<button class="bot-ol-refund" onclick="botQuickClose(${id},'refund')" title="Refund this order" style="${st(pink, 'rgba(244,114,182,.10)')}color:#f472b6;">Refund</button>`;
+  }
+  const sq = mode === 'sq';
+  const st = c => `background:none;border:1px solid ${c};border-radius:${sq ? 6 : 5}px;cursor:pointer;${sq ? 'width:26px;height:26px;' : 'width:22px;height:20px;font-size:9px;margin-left:2px;'}`;
+  return `<button class="bot-cancel-btn" onclick="botQuickClose(${id},'cancel')" data-tip="Cancel order ${num}" title="Cancel order ${num}" style="${st(red)}color:#f87171;"><i class="fa fa-ban" style="${sq ? 'font-size:11px;' : ''}"></i></button>` +
+         `<button class="bot-refund-btn" onclick="botQuickClose(${id},'refund')" data-tip="Refund order ${num}" title="Refund order ${num}" style="${st(pink)}color:#f472b6;"><i class="fa fa-rotate-left" style="${sq ? 'font-size:11px;' : ''}"></i></button>`;
+}
+async function botQuickClose(id, kind) {
+  const o = _botOrders.find(x => Number(x.id) === Number(id)) || {};
+  const num = o.order_number ? '#' + o.order_number : 'this order';
+  const total = Number(o.order_total) || 0;
+  const left = Math.max(0, total - (Number(o.refunded_amount) || 0));   // what's still refundable
+  let amount;
+  if (kind === 'cancel') {
+    if (!confirm(`Cancel order ${num}?\n\nIt stops counting in your costs, fees and stock. You can undo it right after, or change the status later with ✎ Edit.`)) return;
+  } else {
+    const ans = total > 0
+      ? prompt(`Refund order ${num}.\n\nHow much was refunded ($)? The full $${left.toFixed(2)} marks the order Refunded. A smaller amount is a partial refund and the order keeps its status.`, left.toFixed(2))
+      : (confirm(`Mark order ${num} as Refunded?`) ? '' : null);
+    if (ans === null) return;
+    amount = ans.trim() === '' ? undefined : Number(ans.replace(/[$,\s]/g, ''));
+    if (amount !== undefined && !(amount > 0)) { alert('Type an amount above $0.'); return; }
+  }
+  let r = null, err = null;
+  try {
+    const res = await fetch('/api/admin/bot-orders/' + Number(id) + '/close', { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + TOKEN }, body: JSON.stringify({ kind, amount }) });
+    const j = await res.json().catch(() => ({}));
+    if (res.status === 401) { doLogout(); return; }
+    if (res.ok) r = j; else err = j.error || 'Could not do that.';
+  } catch (e) { err = 'Could not reach the server.'; }
+  if (err) { alert(err); return; }
+  const money = n => '$' + Number(n).toFixed(2);
+  const text = kind === 'cancel' ? `Order ${esc(num)} cancelled`
+    : r.partial ? `Partial refund recorded on ${esc(num)} (${money(r.refunded_amount)} so far)` : `Order ${esc(num)} refunded`;
+  botShowUndoMsg(text, [r.previous]);
+  await loadBotOrders();
+  const ptPage = document.getElementById('bot-partners-page');
+  if (ptPage && ptPage.style.display !== 'none') renderPartners();
+}
+function botShowUndoMsg(text, previous) {
+  const token = {};
+  _botUndo = { token, previous };
+  const bar = document.getElementById('bot-undo-bar');
+  bar.innerHTML = `<span><i class="fa fa-check" style="color:#34d399;"></i> ${text}</span>
+    <button class="btn btn-ghost btn-sm" id="bot-undo-btn" onclick="botUndo()" style="color:#8fbcf5;font-weight:700;">Undo</button>`;
+  bar.style.display = 'flex';
+  setTimeout(() => { if (_botUndo && _botUndo.token === token) { _botUndo = null; bar.style.display = 'none'; } }, 12000);
 }
 
 // ── Expandable product rows: every order behind a product, with tracking ────
@@ -4449,6 +4512,7 @@ function botOrdersPanel(item, idx) {
       <td style="padding:5px 8px;white-space:nowrap;">${trk}</td>
       <td style="padding:5px 8px;color:var(--muted);white-space:nowrap;">${esc(when)}</td>
       <td style="padding:5px 8px;color:var(--muted);max-width:220px;"><div class="clip" data-tip="${esc([l.shipping_name, l.shipping_address, l.jig_address && l.jig_address !== l.shipping_address ? 'On the label: ' + l.jig_address : ''].filter(Boolean).join('\n'))}">${esc(shipTo || '—')}</div></td>
+      <td style="padding:5px 8px;white-space:nowrap;text-align:right;">${l.id != null ? `<button class="bot-pkg-edit" onclick="botEditRow(${Number(l.id)})" data-tip="Edit order ${esc(l.order_number || '')}" style="background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer;width:22px;height:20px;font-size:9px;"><i class="fa fa-pen"></i></button>${botCloseBtns(l, 'mini')}` : ''}</td>
     </tr>`;
   }).join('');
 
@@ -4463,7 +4527,7 @@ function botOrdersPanel(item, idx) {
         <th style="padding:4px 8px;font-weight:600;">ORDER #</th><th style="padding:4px 8px;font-weight:600;">STORE</th>
         <th style="padding:4px 8px;font-weight:600;text-align:center;">QTY</th><th style="padding:4px 8px;font-weight:600;">STATUS</th>
         <th style="padding:4px 8px;font-weight:600;">TRACKING</th><th style="padding:4px 8px;font-weight:600;">DATE</th>
-        <th style="padding:4px 8px;font-weight:600;">SHIP TO</th>
+        <th style="padding:4px 8px;font-weight:600;">SHIP TO</th><th style="padding:4px 8px;"></th>
       </tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>

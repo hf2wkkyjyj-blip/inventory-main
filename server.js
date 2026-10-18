@@ -1538,9 +1538,47 @@ app.post('/api/admin/bot-orders/bulk-restore', auth, adminOnly, (req, res) => {
     if (!Number.isInteger(id) || id <= 0 || !BOT_STATUS_SET.has(p.status)) continue;
     db.prepare(`UPDATE bot_orders SET status=?, tracking_status=?, delivered_date=?, expected_date=?, status_changed_at=?, status_source=? WHERE id=?`)
       .run([p.status, orNull(p.tracking_status), orNull(p.delivered_date), orNull(p.expected_date), orNull(p.status_changed_at), orNull(p.status_source), id]);
+    if (p.refunded_amount !== undefined && Number.isFinite(Number(p.refunded_amount))) db.prepare('UPDATE bot_orders SET refunded_amount=? WHERE id=?').run([Number(p.refunded_amount), id]);
     restored++;
   }
   res.json({ restored });
+});
+
+// Cancel or refund one order, whatever its status (Confirmed, Shipped, Delivered…).
+//  cancel → status Cancelled.
+//  refund → the full order total comes back: status Refunded, refunded_amount = the order total.
+//           A smaller amount is a partial refund: the order keeps its status and refunded_amount goes up.
+// Cancelled/Refunded orders drop out of costs, fees and inventory (every total already skips them).
+// `previous` is returned so the page can offer Undo (bulk-restore puts it back).
+app.post('/api/admin/bot-orders/:id/close', auth, adminOnly, (req, res) => {
+  const id = Number(req.params.id);
+  const kind = req.body && req.body.kind;
+  if (kind !== 'cancel' && kind !== 'refund') return res.status(400).json({ error: "kind must be 'cancel' or 'refund'" });
+  const o = db.prepare('SELECT id, status, order_total, refunded_amount, tracking_status, delivered_date, expected_date, status_changed_at, status_source FROM bot_orders WHERE id=?').get([id]);
+  if (!o) return res.status(404).json({ error: 'No such order' });
+  if (o.status === 'Cancelled' || o.status === 'Refunded') return res.status(400).json({ error: 'This order is already ' + o.status.toLowerCase() });
+  const previous = { id: o.id, status: o.status, tracking_status: o.tracking_status, delivered_date: o.delivered_date, expected_date: o.expected_date,
+                     status_changed_at: o.status_changed_at, status_source: o.status_source, refunded_amount: o.refunded_amount || 0 };
+  const total = Number(o.order_total) || 0, now = new Date().toISOString().slice(0, 10);   // a date, like the bulk Delivered action uses
+  let status = o.status, refunded = Number(o.refunded_amount) || 0;
+  if (kind === 'cancel') {
+    status = 'Cancelled';
+  } else if (total <= 0) {
+    // No total on file (e.g. a $0 order): nothing to work out, so a refund just marks it Refunded.
+    status = 'Refunded';
+  } else {
+    const remaining = Math.round((total - refunded) * 100) / 100;
+    let amt = req.body.amount === undefined || req.body.amount === null || req.body.amount === '' ? remaining : Number(req.body.amount);
+    if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: 'Refund must be more than $0' });
+    amt = Math.round(amt * 100) / 100;
+    if (amt > remaining + 0.005) return res.status(400).json({ error: 'That is more than is left on this order ($' + remaining.toFixed(2) + ')' });
+    const next = Math.round((refunded + amt) * 100) / 100;
+    if (next >= total - 0.005) { status = 'Refunded'; refunded = total; }   // everything is back: fully refunded
+    else refunded = next;                                                    // partial: the order keeps its status
+  }
+  db.prepare("UPDATE bot_orders SET status=?, refunded_amount=?, status_changed_at=?, status_source='manual' WHERE id=?").run([status, refunded, now, id]);
+  runAutoFees();
+  res.json({ ok: true, status, refunded_amount: refunded, partial: kind === 'refund' && status === o.status, previous });
 });
 
 app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
