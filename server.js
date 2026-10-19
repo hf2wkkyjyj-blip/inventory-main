@@ -270,6 +270,7 @@ try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_set_at TEXT"); } catch(e) {
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_kept INTEGER DEFAULT 0"); } catch(e) {}
 const nowIso = () => new Date().toISOString();
 const AutoFees = require('./autoFees');
+const { resolveClose } = require('./orderClose');
 function runAutoFees() {
   try { const n = AutoFees.applyAutoFees(db, SkuCatalog.loadCatalog(db)); if (n) console.log(`💲 auto finder fee on ${n} order(s)`); return n; }
   catch (e) { console.error('auto fees failed:', e.message); return 0; }
@@ -981,7 +982,7 @@ function keptFeeLosses(from, to) {
   return annotatePartners(rows, loadPartners(db)).filter(o => !o.partner_id).map(o => ({
     id: o.id, order_number: o.order_number || null, retailer: o.retailer || null, status: o.status,
     date: String(o.status_changed_at || o.order_date || '').slice(0, 10),
-    fee: Math.round((Number(o.finder_fee) || 0) * 100) / 100, shipping_name: o.shipping_name || null,
+    fee: Math.round((Number(o.finder_fee) || 0) * 100) / 100,
   })).filter(x => (!from || x.date >= from) && (!to || x.date <= to)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
@@ -1571,47 +1572,21 @@ app.post('/api/admin/bot-orders/bulk-restore', auth, adminOnly, (req, res) => {
 // `previous` is returned so the page can offer Undo (bulk-restore puts it back).
 app.post('/api/admin/bot-orders/:id/close', auth, adminOnly, (req, res) => {
   const id = Number(req.params.id);
-  const kind = req.body && req.body.kind;
-  if (kind !== 'cancel' && kind !== 'refund') return res.status(400).json({ error: "kind must be 'cancel' or 'refund'" });
   const o = db.prepare('SELECT id, status, order_total, refunded_amount, tracking_status, delivered_date, expected_date, status_changed_at, status_source, finder_fee, fee_source, fee_set_at, fee_kept FROM bot_orders WHERE id=?').get([id]);
   if (!o) return res.status(404).json({ error: 'No such order' });
-  if (o.status === 'Cancelled' || o.status === 'Refunded') return res.status(400).json({ error: 'This order is already ' + o.status.toLowerCase() });
+  const r = resolveClose(o, req.body);          // the arithmetic lives in orderClose.js (tested)
+  if (r.error) return res.status(400).json({ error: r.error });
   const previous = { id: o.id, status: o.status, tracking_status: o.tracking_status, delivered_date: o.delivered_date, expected_date: o.expected_date,
                      status_changed_at: o.status_changed_at, status_source: o.status_source, refunded_amount: o.refunded_amount || 0,
                      finder_fee: o.finder_fee || 0, fee_source: o.fee_source || null, fee_set_at: o.fee_set_at || null, fee_kept: o.fee_kept || 0 };
-  // Finder fee that still has to be paid even though the order is cancelled/refunded (it isn't refunded).
-  // Sent only when the page asked; 0 means "no fee owed". A fee you set is yours, never auto-changed.
-  let feeOwed = null;
-  if (req.body.finder_fee !== undefined && req.body.finder_fee !== null && req.body.finder_fee !== '') {
-    feeOwed = Number(req.body.finder_fee);
-    if (!Number.isFinite(feeOwed) || feeOwed < 0) return res.status(400).json({ error: 'Finder fee must be a number' });
-    feeOwed = Math.round(feeOwed * 100) / 100;
-  }
-  const total = Number(o.order_total) || 0, now = new Date().toISOString().slice(0, 10);   // a date, like the bulk Delivered action uses
-  let status = o.status, refunded = Number(o.refunded_amount) || 0;
-  if (kind === 'cancel') {
-    status = 'Cancelled';
-  } else if (total <= 0) {
-    // No total on file (e.g. a $0 order): nothing to work out, so a refund just marks it Refunded.
-    status = 'Refunded';
-  } else {
-    const remaining = Math.round((total - refunded) * 100) / 100;
-    let amt = req.body.amount === undefined || req.body.amount === null || req.body.amount === '' ? remaining : Number(req.body.amount);
-    if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: 'Refund must be more than $0' });
-    amt = Math.round(amt * 100) / 100;
-    if (amt > remaining + 0.005) return res.status(400).json({ error: 'That is more than is left on this order ($' + remaining.toFixed(2) + ')' });
-    const next = Math.round((refunded + amt) * 100) / 100;
-    if (next >= total - 0.005) { status = 'Refunded'; refunded = total; }   // everything is back: fully refunded
-    else refunded = next;                                                    // partial: the order keeps its status
-  }
-  db.prepare("UPDATE bot_orders SET status=?, refunded_amount=?, status_changed_at=?, status_source='manual' WHERE id=?").run([status, refunded, now, id]);
-  // The fee only stays in your costs if the order is now dead (cancelled / fully refunded) AND you said it's still owed.
-  const dead = status === 'Cancelled' || status === 'Refunded';
-  if (feeOwed !== null) {
-    db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='manual', fee_set_at=?, fee_kept=? WHERE id=?").run([feeOwed, nowIso(), dead && feeOwed > 0 ? 1 : 0, id]);
+  const today = new Date().toISOString().slice(0, 10);   // a date, like the bulk Delivered action uses
+  if (r.statusChanged) db.prepare("UPDATE bot_orders SET status=?, refunded_amount=?, status_changed_at=?, status_source='manual' WHERE id=?").run([r.status, r.refunded, today, id]);
+  else                 db.prepare('UPDATE bot_orders SET refunded_amount=? WHERE id=?').run([r.refunded, id]);   // partial refund: status and its date stay as they were
+  if (r.feeOwed !== null) {
+    db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='manual', fee_set_at=?, fee_kept=? WHERE id=?").run([r.feeOwed, nowIso(), r.feeKept ? 1 : 0, id]);
   }
   runAutoFees();
-  res.json({ ok: true, status, refunded_amount: refunded, fee_kept: dead && feeOwed !== null && feeOwed > 0, partial: kind === 'refund' && status === o.status, previous });
+  res.json({ ok: true, status: r.status, refunded_amount: r.refunded, fee_kept: r.feeKept, partial: r.partial, previous });
 });
 
 app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
@@ -2082,6 +2057,7 @@ app.post('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
 
 app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
   const o = req.body;
+  const before = db.prepare('SELECT status FROM bot_orders WHERE id=?').get([req.params.id]);
   db.prepare(`UPDATE bot_orders SET
     category=COALESCE(?,category), retailer=COALESCE(?,retailer), order_number=COALESCE(?,order_number),
     account_email=COALESCE(?,account_email), order_date=COALESCE(?,order_date), delivered_date=COALESCE(?,delivered_date),
@@ -2094,6 +2070,9 @@ app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
     .run([o.category||null,o.retailer||null,o.order_number||null,o.account_email||null,o.order_date||null,o.delivered_date||null,o.shipping_name||null,o.shipping_address||null,o.status||null,o.items?JSON.stringify(o.items):null,o.order_total!=null?o.order_total:null,o.refunded_amount!=null?o.refunded_amount:null,o.notes||null,o.tracking||null,o.tracking_status||null,o.expected_date||null,o.tax_amount!=null?o.tax_amount:null,o.ship_cost!=null?o.ship_cost:null,o.finder_fee!=null?o.finder_fee:null,req.params.id]);
   // A status you set by hand survives Repair Statuses (see status_source).
   if (o.status) db.prepare("UPDATE bot_orders SET status_source='manual' WHERE id=?").run([req.params.id]);
+  // Cancelling/refunding from Edit counts from today (as the Cancel/Refund form does), so a lost fee lands in this period's P&L.
+  if (before && (o.status === 'Cancelled' || o.status === 'Refunded') && o.status !== before.status)
+    db.prepare('UPDATE bot_orders SET status_changed_at=? WHERE id=?').run([new Date().toISOString().slice(0, 10), req.params.id]);
   if (o.fee_kept !== undefined && o.fee_kept !== null) db.prepare('UPDATE bot_orders SET fee_kept=? WHERE id=?').run([o.fee_kept ? 1 : 0, req.params.id]);
   // A fee you type is yours (never auto-changed, even $0); fee_auto: true hands it back to the auto fee.
   if (o.fee_auto === true)        db.prepare("UPDATE bot_orders SET fee_source='auto', finder_fee=0 WHERE id=?").run([req.params.id]);
