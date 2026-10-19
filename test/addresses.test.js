@@ -37,6 +37,18 @@ eq('"Highway 7" keeps its number',  addressKey('500 Highway 7, X, MN 55008') ===
 eq('two-word street names intact',  addressKey('9 Briar Hill Dr Door 3, X, TX 76207'), addressKey('09 Briar Hill Drive, X, TX 76207'));
 eq('type-less street unaffected',   addressKey('8805 E Test Center Apt-3-out, X, MN 55428'), addressKey('08805 E Test Center, X, MN 55428'));
 
+console.log('\n── Jig tag on the house number, and a typo in the street type ──');
+eq('7703-nj … Apt-2-in joins the main address', addressKey('7703-nj 118th Avenue North Apt-2-in, Champlin, Mn 55316'), '7703|118th');
+eq('…same as the plain spelling',               addressKey('7703 118th Ave N, Champlin, MN 55316'), '7703|118th');
+eq('digits+letters without a hyphen',            addressKey('7703nj 118th Ave N, Champlin, MN 55316'), '7703|118th');
+eq('single letter still works',                  addressKey('07703c 118th Ave North Dept, Champlin, Mn 55316'), '7703|118th');
+eq('"Avea" is the type',                         addressKey('13564 142nd Avea N, Dayton, MN 55327'), addressKey('13564 142nd Ave N, Dayton, MN 55327'));
+eq('"Stret" is the type',                        addressKey('200 Elm Stret, X, MN 55000'), addressKey('200 Elm St, X, MN 55000'));
+eq('a real word after the name is kept',         addressKey('50 Main Line Rd, X, MN 55000'), '50|main line');
+eq('Highway 7 keeps its number',                 addressKey('900 Highway 7, X, MN 55000'), '900|7');
+eq('street starting with a number-word is not a house number', addressKey('12th St N, X, MN 55000'), null);
+eq('label for the jig case is the clean one',    buildAddressBook(['7703 118th Ave N, Champlin, MN 55316', '7703-nj 118th Avenue North Apt-2-in, Champlin, Mn 55316']).main('7703-nj 118th Avenue North Apt-2-in, Champlin, Mn 55316'), '7703 118th Ave N, Champlin, MN 55316');
+
 console.log('\n── Different places stay apart ──');
 eq('different house number',       addressKey('102 Maple Ave N, Springfield, MN 55001') === k0, false);
 eq('different street',             addressKey('100 Birch Ave N, Springfield, MN 55001') === k0, false);

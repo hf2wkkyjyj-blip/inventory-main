@@ -29,6 +29,23 @@ const UNIT = /^(apt|apartment|unit|ste|suite|fl|flr|floor|rm|room|door|dept|bsmt
 const STATES = /\b(A[LKZR]|C[AOT]|D[EC]|FL|GA|HI|I[ADLN]|K[SY]|LA|M[ADEINOST]|N[CDEHJMVY]|O[HKR]|PA|RI|S[CD]|T[NX]|UT|V[AT]|W[AIVY])\b/;
 const STATE_NAMES = { minnesota: 'MN', texas: 'TX', wisconsin: 'WI', iowa: 'IA', california: 'CA', illinois: 'IL', 'north dakota': 'ND', 'south dakota': 'SD' };
 
+// House number, then an optional jig tag glued on: a letter ("8410c", "0100d") or a hyphen + up to
+// 3 letters ("7703-nj", "7703nj"). The digits alone identify the house.
+const HOUSE       = /^0*\d+(?:-?[a-z]{1,3})?\s+\S/i;
+const HOUSE_SPLIT = /^0*(\d+)(?:-?[a-z]{1,3})?\s+(.*)$/i;
+
+// A street type misspelled by a letter ("Avea", "Aven", "Stret") is still the type — but only straight after
+// the street name and at its end (before the direction), so "Main Line Rd" keeps "Line".
+const TYPE_KEYS = Object.keys(TYPES).filter(t => t.length >= 3);
+const oneOff = (a, b) => {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1);               // one letter different
+  const [long, short] = a.length > b.length ? [a, b] : [b, a];
+  return long.slice(i + 1) === short.slice(i);                                       // one letter missing / extra
+};
+const nearType = w => TYPE_KEYS.find(t => oneOff(w, t)) || null;
+
 const titleWord = w => /^\d/.test(w) ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
 
 /** Parse one address string. Returns null when there's no house number to go on. */
@@ -38,10 +55,16 @@ function parseAddress(raw) {
   const parts = s.split(',').map(x => x.trim()).filter(Boolean);
   // The street line is the first part that starts with a house number
   // ("Maple Grove Sam's Club, 16701 94th Ave N, …" → the second part).
-  const si = parts.findIndex(p => /^0*\d+[a-z]?\s+\S/i.test(p));
+  const si = parts.findIndex(p => HOUSE.test(p));
   if (si < 0) return null;
-  const m = parts[si].match(/^0*(\d+)[a-z]?\s+(.*)$/i);
+  const m = parts[si].match(HOUSE_SPLIT);
   let words = m[2].toLowerCase().replace(/[-_.]/g, ' ').split(/\s+/).filter(Boolean);
+  words = words.map((w, i) => {
+    if (i === 0 || w.length < 3 || TYPES[w] || DIRS[w] || UNIT.test(w)) return w;
+    const next = words[i + 1];
+    const named = words.slice(0, i).some(x => !TYPES[x] && !DIRS[x]);
+    return named && (next === undefined || DIRS[next]) && nearType(w) ? nearType(w) : w;
+  });
   // A unit starts at a unit word — but a bare number right after a type-only
   // name is the street itself ("Highway 7", "County Rd 81"), not a unit.
   const named = i => words.slice(0, i).some(x => !TYPES[x] && !DIRS[x]);
@@ -65,6 +88,8 @@ function parseAddress(raw) {
   const tail   = parts.slice(si + 1).join(', ');
   const zipM   = tail.match(/\b(\d{5})(?:-\d{4})?\b/);
   let state    = (tail.match(STATES) || [])[1] || '';
+  // "Mn 55316" — a state typed in lower/mixed case, right before the zip.
+  if (!state) { const m2 = tail.match(/\b([A-Za-z]{2})\s+\d{5}(?:-\d{4})?\b/); if (m2 && STATES.test(m2[1].toUpperCase())) state = m2[1].toUpperCase(); }
   if (!state) { const sn = Object.keys(STATE_NAMES).find(n => tail.toLowerCase().includes(n)); if (sn) state = STATE_NAMES[sn]; }
   const cityPart = parts.slice(si + 1).find(p => !/\d{5}/.test(p) && !STATES.test(p) && !/united states|usa/i.test(p) && !UNIT.test(p.toLowerCase().split(' ')[0]));
   const city   = cityPart ? cityPart.split(' ').map(titleWord).join(' ') : '';
