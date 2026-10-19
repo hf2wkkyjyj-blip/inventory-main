@@ -974,6 +974,17 @@ app.delete('/api/admin/expenses/:id', auth, (req, res) => {
 });
 
 // ─── P&L ─────────────────────────────────────────────────────────────────────
+// A cancelled/refunded order whose finder fee still has to be paid (fee_kept) is a loss: the order comes back, the fee doesn't.
+// Yours only (a partner's are settled on his tab). Optional date range on the day it was cancelled/refunded.
+function keptFeeLosses(from, to) {
+  const rows = db.prepare("SELECT * FROM bot_orders WHERE status IN ('Cancelled','Refunded') AND fee_kept=1 AND finder_fee>0").all();
+  return annotatePartners(rows, loadPartners(db)).filter(o => !o.partner_id).map(o => ({
+    id: o.id, order_number: o.order_number || null, retailer: o.retailer || null, status: o.status,
+    date: String(o.status_changed_at || o.order_date || '').slice(0, 10),
+    fee: Math.round((Number(o.finder_fee) || 0) * 100) / 100, shipping_name: o.shipping_name || null,
+  })).filter(x => (!from || x.date >= from) && (!to || x.date <= to)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
 app.get('/api/admin/pl', auth, (req, res) => {
   const { from, to } = req.query;
   const sf = [], sp = [], ef = [], ep = [];
@@ -1001,7 +1012,11 @@ app.get('/api/admin/pl', auth, (req, res) => {
   if (to)   rsf.push(`date(s.sold_at)<=?`);
   const rsw = rsf.length ? 'WHERE ' + rsf.join(' AND ') : '';
   const recentSales = db.prepare(`SELECT s.id, s.product_name, s.quantity_sold, s.sale_price, s.profit, s.payment_method, s.notes, s.sold_at, s.member_id, m.name as member_name FROM sales s LEFT JOIN members m ON s.member_id=m.id ${rsw} ORDER BY s.sold_at DESC LIMIT 200`).all(sp);
-  res.json({ revenue: s.revenue, cogs: my_cogs, member_cogs, gross_profit: my_gross_profit, transactions: s.transactions, total_expenses: e.total, net_profit: my_gross_profit - e.total, inventory_value: inv.value, inventory_value_all: inv_all.value, total_invested, expense_breakdown: eCat, top_products: top, recent_sales: recentSales });
+  // Finder fees lost on refunded/cancelled orders count as a loss in this period (see keptFeeLosses).
+  const lostOrders = keptFeeLosses(from, to);
+  const lostTotal = Math.round(lostOrders.reduce((a, x) => a + x.fee, 0) * 100) / 100;
+  const breakdown = lostTotal > 0 ? [...eCat, { category: 'Lost finder fees (refunded/cancelled orders)', total: lostTotal, auto: true }].sort((a, b) => b.total - a.total) : eCat;
+  res.json({ revenue: s.revenue, cogs: my_cogs, member_cogs, gross_profit: my_gross_profit, transactions: s.transactions, total_expenses: e.total + lostTotal, net_profit: my_gross_profit - e.total - lostTotal, lost_fees: lostTotal, lost_fee_orders: lostOrders, inventory_value: inv.value, inventory_value_all: inv_all.value, total_invested, expense_breakdown: breakdown, top_products: top, recent_sales: recentSales });
 });
 
 // ─── MEMBERS ─────────────────────────────────────────────────────────────────
@@ -1674,14 +1689,8 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
   const orderFees = allFees.filter(x => !x.partner_id).map(({ id, fee }) => ({ id, fee }));
   // Cancelled/refunded orders whose fee you still have to pay (not refunded): the order fee stays in your costs.
   // (A partner's orders are left out — his tab is settled separately.)
-  const keptFeeOrders = annotatePartners(db.prepare("SELECT * FROM bot_orders WHERE status IN ('Cancelled','Refunded') AND fee_kept=1 AND finder_fee>0").all(), partnersList);
-  const lostFees = [];   // the same fees as a list, so the P&L tab can show each loss
-  for (const o of keptFeeOrders) if (!o.partner_id) {
-    const fee = r2(Number(o.finder_fee) || 0);
-    orderFees.push({ id: o.id, fee, kept: true });
-    lostFees.push({ id: o.id, order_number: o.order_number || null, retailer: o.retailer || null, status: o.status,
-                    date: String(o.status_changed_at || o.order_date || '').slice(0, 10), fee, shipping_name: o.shipping_name || null });
-  }
+  const lostFees = keptFeeLosses();
+  for (const x of lostFees) orderFees.push({ id: x.id, fee: x.fee, kept: true });
 
   const seen = new Set();
   const sales = [];

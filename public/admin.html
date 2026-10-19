@@ -406,10 +406,6 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <div class="pl-section-title">Expense Breakdown</div>
         <div id="pl-expense-detail"></div>
       </div>
-      <div class="pl-section">
-        <div class="pl-section-title">Order tracker (resale)</div>
-        <div id="pl-resale"><div class="text-muted fs12" style="padding:8px 0;">Loading…</div></div>
-      </div>
     </div>
     <div>
       <div class="pl-section">
@@ -2066,37 +2062,7 @@ async function loadPL() {
   if (to)   params.set('to', to);
   const data = await api('GET', '/admin/pl'+(params.toString()?'?'+params:''));
   if (!data) return;
-  window._plRange = { from, to };
   renderPL(data);
-}
-
-// Order tracker figures for the same period as the P&L tab, including finder fees you lost on refunded/cancelled orders.
-async function plRenderResale(d) {
-  const box = document.getElementById('pl-resale');
-  if (!box) return;
-  const { from, to } = window._plRange || {};
-  const inR = dt => { const x = String(dt || '').slice(0, 10); return !!x && (!from || x >= from) && (!to || x <= to); };
-  const m = await api('GET', '/admin/bot-money');
-  if (!m) { box.innerHTML = '<div class="text-muted fs12" style="padding:8px 0;">Could not load the order tracker figures.</div>'; return; }
-  const sum = (arr, k) => arr.reduce((a, x) => a + (Number(x[k]) || 0), 0);
-  const sales = (m.sales || []).filter(x => inR(x.sold_at));
-  const lost = (m.lostFees || []).filter(x => inR(x.date)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const rev = sum(sales, 'revenue'), cost = sum(sales, 'cost'), fees = sum(sales, 'fees'), profit = sum(sales, 'profit');
-  const lostTotal = sum(lost, 'fee'), net = profit - lostTotal;
-  const store = Number(d.net_profit) || 0, all = store + net;
-  const col = n => n >= 0 ? 'var(--green)' : 'var(--red)';
-  const sgn = n => (n >= 0 ? '+' : '−') + botMoneyFmt(Math.abs(n));
-  box.innerHTML = `
-    <div class="pl-row"><span>Revenue from units sold</span><span class="fw7 text-accent">${botMoneyFmt(rev)}</span></div>
-    <div class="pl-row"><span>Cost of those units (landed, fees included)</span><span class="fw7 text-red">− ${botMoneyFmt(cost)}</span></div>
-    <div class="pl-row"><span>Selling fees</span><span class="fw7 text-red">− ${botMoneyFmt(fees)}</span></div>
-    <div class="pl-row pl-total"><span>Resale profit</span><span style="color:${col(profit)}">${sgn(profit)}</span></div>
-    <div class="pl-row"><span>Lost on refunded / cancelled orders <span class="text-muted fs11">(finder fee not returned)</span></span><span class="fw7 text-red">− ${botMoneyFmt(lostTotal)}</span></div>
-    <div class="pl-row pl-total"><span>Resale net</span><span style="color:${col(net)}">${sgn(net)}</span></div>
-    ${lost.length ? `<div style="margin:8px 0 2px;font-size:11px;color:var(--muted);">Orders behind the loss</div>` + lost.map(x => `
-      <div class="pl-row" style="font-size:12px;"><span>${esc(x.order_number || '—')} <span class="text-muted fs11">· ${esc(x.retailer || '')} · ${esc(x.status)} · ${esc(botShortDate(x.date))}</span></span><span class="fw7 text-red">− ${botMoneyFmt(x.fee)}</span></div>`).join('') : ''}
-    <div class="pl-row" style="padding-top:12px;"><span>Storefront net profit <span class="text-muted fs11">(from this tab)</span></span><span style="color:${col(store)}">${sgn(store)}</span></div>
-    <div class="pl-row" style="font-size:15px;"><span><b>All-in net profit</b></span><span style="color:${col(all)};font-weight:700;font-size:17px;">${sgn(all)}</span></div>`;
 }
 
 function renderPL(d) {
@@ -2109,7 +2075,7 @@ function renderPL(d) {
     <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value text-accent">$${d.revenue.toFixed(2)}</div><div class="stat-sub">${d.transactions} transactions</div></div>
     <div class="stat-card"><div class="stat-label">COGS</div><div class="stat-value">$${d.cogs.toFixed(2)}</div><div class="stat-sub">cost of goods sold</div></div>
     <div class="stat-card"><div class="stat-label">Gross Profit</div><div class="stat-value" style="color:${gpColor}">${gpSign}$${d.gross_profit.toFixed(2)}</div><div class="stat-sub">before expenses</div></div>
-    <div class="stat-card"><div class="stat-label">Expenses</div><div class="stat-value text-red">$${d.total_expenses.toFixed(2)}</div><div class="stat-sub">operating costs</div></div>
+    <div class="stat-card"><div class="stat-label">Expenses</div><div class="stat-value text-red">$${d.total_expenses.toFixed(2)}</div><div class="stat-sub">${d.lost_fees ? `incl. $${Number(d.lost_fees).toFixed(2)} lost finder fees` : 'operating costs'}</div></div>
     <div class="stat-card" style="border-color:${d.net_profit>=0?'rgba(86,211,100,.3)':'rgba(248,81,73,.3)'}"><div class="stat-label">Net Profit</div><div class="stat-value fw7" style="color:${netColor};font-size:26px;">${netSign}$${d.net_profit.toFixed(2)}</div><div class="stat-sub">gross profit − expenses</div></div>`;
 
   document.getElementById('pl-revenue-detail').innerHTML = `
@@ -2118,7 +2084,10 @@ function renderPL(d) {
     <div class="pl-row pl-total"><span>Gross Profit</span><span style="color:${gpColor}">${gpSign}$${d.gross_profit.toFixed(2)}</span></div>`;
 
   document.getElementById('pl-expense-detail').innerHTML = (d.expense_breakdown.length ? d.expense_breakdown.map(e =>
-    `<div class="pl-row"><span>${esc(e.category)}</span><span class="fw7 text-red">$${Number(e.total).toFixed(2)}</span></div>`
+    `<div class="pl-row"><span>${esc(e.category)}${e.auto ? ' <span class="text-muted fs11">· automatic</span>' : ''}</span><span class="fw7 text-red">$${Number(e.total).toFixed(2)}</span></div>` +
+    // The orders behind the lost finder fees: the order was refunded/cancelled, the fee wasn't.
+    (e.auto ? (d.lost_fee_orders || []).map(x =>
+      `<div class="pl-row" style="font-size:11.5px;padding-left:14px;"><span class="text-muted">${esc(x.order_number || '—')} · ${esc(x.retailer || '')} · ${esc(x.status)} · ${esc(botShortDate(x.date))}</span><span class="text-red">$${Number(x.fee).toFixed(2)}</span></div>`).join('') : '')
   ).join('') : '<div class="text-muted fs12" style="padding:8px 0;">No expenses recorded</div>') +
     `<div class="pl-row pl-total"><span>Total Expenses</span><span class="fw7 text-red">$${d.total_expenses.toFixed(2)}</span></div>
      <div class="pl-row" style="padding-top:12px;font-size:15px;"><span><b>Net Profit</b></span><span style="color:${netColor};font-weight:700;font-size:17px;">${netSign}$${d.net_profit.toFixed(2)}</span></div>`;
@@ -2168,7 +2137,6 @@ function renderPL(d) {
       </tr>`;
     }).join('');
   }
-  plRenderResale(d);
 }
 
 function exportPLCsv() {
@@ -2391,7 +2359,7 @@ function botRenderMoneyCards(ordersInRange) {
   const gone = (_botMoney.presales || []).filter(x => x.order_gone);
   document.getElementById('bs-profit-sub').textContent = (sales.length
     ? `${units} sold · ${botMoneyFmt(revenue)} in${cost > 0 ? ` · ROI ${Math.round(profit / cost * 100)}%` : ''}`
-    : 'no sales yet') + (lostTotal ? ` · −${botMoneyFmt(lostTotal)} lost fees → net ${botMoneyFmt(profit - lostTotal)}` : '') + (gone.length ? ` · ⚠ ${gone.length} presale${gone.length === 1 ? '' : 's'} on a cancelled order — refund the buyer` : '');
+    : 'no sales yet') + (gone.length ? ` · ⚠ ${gone.length} presale${gone.length === 1 ? '' : 's'} on a cancelled order — refund the buyer` : '');
 }
 
 
@@ -3604,7 +3572,7 @@ function renderBotComing() {
           <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
         <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.boxes} box${g.boxes === 1 ? '' : 'es'} · ${g.units} unit${g.units === 1 ? '' : 's'}${g.boxes ? (m => ` · <span class="bot-addr-money" style="color:var(--text);">${botMoneyFmt(m.paid + m.fees)}</span>`)(botViewMoney(g.days.flatMap(d => d.boxes), BOT_TAB_STATUSES.coming)) : ''}${g.notShipped.length ? ` · ${g.notShipped.length} not shipped yet` : ''}</span>
         ${g.boxes && navigator.share ? `<button class="btn btn-primary btn-sm bot-owner-send" onclick="botSendOwnerMsg(${gi})" data-tip="Text it to the house owner"><i class="fa fa-paper-plane"></i> Send</button>` : ''}
-        ${g.boxes ? `<button class="btn btn-ghost btn-sm bot-owner-copy" onclick="botCopyOwnerMsg(${gi}, this)" data-tip="Copy a message for the house owner: how many boxes, which days, which carriers"><i class="fa fa-copy"></i> Copy for house owner</button>` : ''}
+        ${g.boxes ? `<button class="btn btn-ghost btn-sm bot-owner-copy" onclick="botCopyOwnerMsg(${gi}, this)" data-tip="Copy a message for the house owner: how many boxes, which days, carriers, each tracking number and the name on the package"><i class="fa fa-copy"></i> Copy for house owner</button>` : ''}
       </div>
       ${g.days.map(day => `
         <div class="bot-coming-day" style="padding:6px 12px 2px;font-size:11px;font-weight:700;letter-spacing:.04em;color:${day.late ? '#f87171' : day.ofd ? '#4ade80' : 'var(--muted)'};">
@@ -3708,18 +3676,27 @@ function renderBotOrdered() {
     </div>`; }).join('');
 }
 
-// Plain text for the house owner: which days, how many boxes, which carriers.
+// Plain text for the house owner: which days, how many boxes, which carriers — and for each box its
+// tracking number and the name on the label, so they know what to look for at the door.
 function botOwnerMessage(g) {
   const street = String(g.address || '').split(',')[0];
+  const namesOf = p => [...new Set((p.shipTo || []).map(x => String(x.name || '').trim()).filter(Boolean))];
   if (botEffectiveView() === 'ordered') {
     const n = g.notShipped.length;
     const hi0 = g.owner ? `Hi ${String(g.owner).split(' ')[0]} — heads up` : 'Heads up';
-    return `${hi0}: ${n} package${n === 1 ? '' : 's'} ordered for ${street}. They haven't shipped yet — I'll let you know when they do. Thank you!`;
+    const names = [...new Set(g.notShipped.flatMap(namesOf))];
+    return `${hi0}: ${n} package${n === 1 ? '' : 's'} ordered for ${street}${names.length ? ` (name${names.length === 1 ? '' : 's'} on the package${n === 1 ? '' : 's'}: ${names.join(', ')})` : ''}. They haven't shipped yet — I'll let you know when they do. Thank you!`;
   }
-  const lines = g.days.map(day => {
+  const lines = g.days.flatMap(day => {
     const carriers = [...new Set(day.boxes.map(p => p.carrierLabel).filter(Boolean))];
     const when = day.ofd ? 'Today (out for delivery)' : day.late ? 'Any day now (running late)' : botDayLabel(day.date);
-    return `• ${when}: ${day.boxes.length} box${day.boxes.length === 1 ? '' : 'es'}${carriers.length ? ` (${carriers.join(', ')})` : ''}`;
+    const head = `• ${when}: ${day.boxes.length} box${day.boxes.length === 1 ? '' : 'es'}${carriers.length ? ` (${carriers.join(', ')})` : ''}`;
+    const boxes = day.boxes.map(p => {
+      const who = namesOf(p);
+      const trk = p.tracking ? `${p.carrierLabel ? p.carrierLabel + ' ' : ''}${p.tracking}` : 'no tracking number yet';
+      return `   – ${trk}${who.length ? ` — name on package: ${who.join(' / ')}` : ''}`;
+    });
+    return [head, ...boxes];
   });
   const hi = g.owner ? `Hi ${String(g.owner).split(' ')[0]} — heads up, packages` : 'Heads up — packages';
   return `${hi} coming to ${street}:\n${lines.join('\n')}\n${g.boxes} box${g.boxes === 1 ? '' : 'es'} total. Thank you!`;
