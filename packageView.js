@@ -121,6 +121,10 @@ function computePackages(orders, catalog, stock) {
       checkedIn:     p.orders.every(o => o.checked_in),
       // Box fee = what's been put on its orders (see feeSplit.js).
       fee:           Math.round(p.orders.reduce((s, o) => s + o.finder_fee, 0) * 100) / 100,
+      // The fee typed per unit on the product row (By product → FEE / UNIT), for
+      // the units in this box. Separate from the box fee above; both count.
+      unitFee:       Math.round(p.orders.reduce((s, o) =>
+                       s + o.lines.reduce((t, l) => t + (l.cost ? Number(l.cost.extraFee) || 0 : 0) * l.qty, 0), 0) * 100) / 100,
     };
   });
 

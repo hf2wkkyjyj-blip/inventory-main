@@ -104,6 +104,26 @@ console.log('\n── Catalog names are used for contents ──');
   eq('linked product shows its short name', pk[0].contents[0].name, 'PC ETB');
 }
 
+console.log('\n── Per-unit fee typed on the product shows on its package ──');
+{
+  // RWB Porsche 930 ×2 per order, $3 typed per unit on the product row.
+  const car = (id, extra) => ({
+    id, order_number: 'CHP' + id, retailer: 'Mattel Creations', status: 'Confirmed', tracking: null,
+    shipping_name: 'A', shipping_address: '13564 142nd Ave N, Dayton, MN 55327',
+    items: JSON.stringify(['2x RWB Porsche 930']),
+    _lineCosts: { 'rwb porsche 930': { extraFee: 3 } }, ...extra,
+  });
+  const pk = computePackages([car(1)]);
+  eq('2 units × $3 = $6', pk[0].unitFee, 6);
+  eq('no box fee yet', pk[0].fee, 0);
+  const both = computePackages([car(2, { finder_fee: 4.5 })]);
+  eq('box fee kept separate', [both[0].fee, both[0].unitFee], [4.5, 6]);
+  const none = computePackages([car(3, { _lineCosts: {} })]);
+  eq('no per-unit fee typed → 0', none[0].unitFee, 0);
+  const two = computePackages([car(4, { tracking: '870000000999' }), car(5, { tracking: '870000000999' })]);
+  eq('two orders in one box add up', two[0].unitFee, 12);
+}
+
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -4216,8 +4216,7 @@ function renderBotPackages() {
         <td style="padding:9px 8px;max-width:260px;">${shipTo || '<span style="color:var(--muted);">—</span>'}</td>
         <td style="padding:9px 8px;max-width:360px;">${tags}</td>
         <td style="padding:9px 8px;text-align:right;white-space:nowrap;">
-          <button class="bot-pkg-fee" onclick="openBoxFee(${i})" data-tip="${p.fee ? 'Change the fee for this box' : 'Add one fee for this whole box — split by retail cost'}"
-            style="background:none;border:1px ${p.fee ? 'solid #4ade80' : 'dashed var(--border)'};border-radius:5px;cursor:pointer;padding:1px 7px;font-size:11px;font-variant-numeric:tabular-nums;color:${p.fee ? '#4ade80' : 'var(--muted)'};">${p.fee ? '$' + p.fee.toFixed(2) : '+ Fee'}</button>
+          ${botPkgFeeHtml(p, i)}
         </td>
         <td style="padding:9px 8px;color:var(--muted);white-space:nowrap;font-size:11px;">${p.orders.map(o => `
           <div style="display:flex;align-items:center;gap:6px;line-height:20px;">
@@ -4234,6 +4233,18 @@ function renderBotPackages() {
   all.checked = bulk.length > 0 && bulk.every(p => _botPkgSelected.has(p.key));
   all.indeterminate = !all.checked && bulk.some(p => _botPkgSelected.has(p.key));
   botRenderActionBar();
+}
+
+// The Fee cell of a package: the box fee plus any per-unit fee typed on the
+// product (By product → FEE / UNIT), so a fee set there isn't "missing" here.
+function botPkgFeeHtml(p, i) {
+  const box = Number(p.fee) || 0, unit = Number(p.unitFee) || 0, total = box + unit;
+  const tip = unit
+    ? `${box ? `Box fee $${box.toFixed(2)} + ` : ''}$${unit.toFixed(2)} per-unit fee typed on the product — click to ${box ? 'change the box fee' : 'add a box fee on top'}`
+    : box ? 'Change the fee for this box' : 'Add one fee for this whole box — split by retail cost';
+  return `<button class="bot-pkg-fee" onclick="openBoxFee(${i})" data-tip="${esc(tip)}"
+      style="background:none;border:1px ${total ? 'solid #4ade80' : 'dashed var(--border)'};border-radius:5px;cursor:pointer;padding:1px 7px;font-size:11px;font-variant-numeric:tabular-nums;color:${total ? '#4ade80' : 'var(--muted)'};">${total ? '$' + total.toFixed(2) : '+ Fee'}</button>`
+    + (unit ? `<div style="font-size:9px;color:var(--muted);margin-top:2px;">${box ? `box $${box.toFixed(2)} + per-unit $${unit.toFixed(2)}` : 'per-unit fee'}</div>` : '');
 }
 
 // ── Box fee ─────────────────────────────────────────────────────────────────
