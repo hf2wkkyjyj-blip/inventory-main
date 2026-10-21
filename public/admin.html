@@ -1026,8 +1026,11 @@ tr:hover>td{background:rgba(47,129,247,.03);}
           <input type="number" id="bot-edit-tax" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
         <div class="form-group" style="margin:0;"><label style="font-size:11px;">Shipping ($) <span style="color:var(--muted);font-weight:400;">— already in the total</span></label>
           <input type="number" id="bot-edit-ship" step="0.01" placeholder="0.00" oninput="botEditCalc()" style="width:100%;"></div>
-        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Finder Fee ($)</label>
-          <input type="number" id="bot-edit-finder" step="0.01" placeholder="0.00" oninput="document.getElementById('bot-edit-overlay').dataset.feeauto='';botEditCalc()" style="width:100%;">
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Finder Fee ($) <span id="bot-edit-fee-label" style="color:var(--muted);font-weight:400;">— for the whole order</span></label>
+          <div style="display:flex;gap:6px;">
+            <input type="number" id="bot-edit-finder" step="0.01" placeholder="0.00" oninput="document.getElementById('bot-edit-overlay').dataset.feeauto='';botEditCalc()" style="flex:1;min-width:0;">
+            <select id="bot-edit-fee-mode" onchange="botEditFeeMode()" style="width:108px;"><option value="order">whole order</option><option value="unit">per unit</option></select>
+          </div>
           <div id="bot-edit-finder-hint" style="font-size:10px;color:var(--muted);margin-top:3px;"></div>
           <label id="bot-edit-kept-row" style="display:none;margin-top:6px;font-size:11px;font-weight:400;cursor:pointer;"><input type="checkbox" id="bot-edit-kept" style="width:auto;margin-right:6px;">Fee still owed — keep it in my costs (not refunded)</label></div>
       </div>
@@ -1068,11 +1071,6 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <label style="font-size:11px;">Store titles grouped here</label>
       <div id="bie-titles" style="border:1px solid var(--border);border-radius:8px;padding:6px 8px;max-height:180px;overflow:auto;font-size:12px;"></div>
       <div style="font-size:11px;color:var(--muted);margin-top:4px;">Unlink a title if it doesn't belong — it'll reappear as its own row to sort out.</div>
-    </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
-      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Finder fee / unit ($)</label>
-        <input type="number" id="bie-buyer-fee" step="0.01" placeholder="0.00" style="width:100%;"></div>
     </div>
 
     <div style="display:flex;gap:8px;align-items:center;">
@@ -1161,10 +1159,12 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   <div class="modal" style="width:520px;max-height:88vh;overflow:auto;">
     <h2 style="margin-bottom:4px;"><i class="fa fa-hand-holding-usd" style="color:var(--accent)"></i> Box fee</h2>
     <div id="bf-sub" style="font-size:12px;color:var(--muted);margin-bottom:14px;"></div>
-    <div class="form-group" style="margin-bottom:10px;"><label style="font-size:11px;">Fee for the whole box ($)</label>
-      <input type="number" id="bf-fee" min="0" step="0.01" placeholder="0.00" style="width:100%;" oninput="boxFeePreviewSoon()"></div>
+    <div class="form-group" style="margin-bottom:10px;"><label style="font-size:11px;">Fee ($) <span style="color:var(--muted);font-weight:400;">— for the whole box, or per unit</span></label>
+      <div style="display:flex;gap:8px;">
+        <input type="number" id="bf-fee" min="0" step="0.01" placeholder="0.00" style="flex:1;min-width:0;" oninput="boxFeePreviewSoon()">
+        <select id="bf-mode" onchange="boxFeeMode()" style="width:118px;"><option value="order">whole box</option><option value="unit">per unit</option></select>
+      </div></div>
     <div id="bf-rate" style="font-size:12px;margin-bottom:8px;"></div>
-    <div id="bf-double" style="display:none;font-size:12px;color:#fbbf24;border:1px solid #7a5a12;border-radius:8px;padding:6px 10px;margin-bottom:8px;"></div>
     <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px;">
       <thead><tr style="font-size:10px;letter-spacing:.06em;color:var(--muted);text-align:right;">
         <th style="text-align:left;padding:4px 0;">ITEM</th><th>QTY</th><th>RETAIL</th><th>FEE</th><th>FEE / UNIT</th></tr></thead>
@@ -3059,8 +3059,7 @@ function partnerShowLineCost(el) {
     ['Item', c.item, true],
     [c.taxEstimated ? 'Tax <span style="font-size:10px;opacity:.7;">(est. from total)</span>' : 'Tax', c.tax, true],
     ['Shipping', c.ship],
-    ['Finder fee (order/box)', c.orderFee],
-    ['Extra fee / unit', c.extraFee],
+    ['Finder fee', c.orderFee],
   ], c.total, `${l.qty} unit${l.qty === 1 ? '' : 's'} · $${(c.total * l.qty).toFixed(2)} total · order ${esc(o.order_number || '')}`);
 }
 function partnerShowFee(pid, oid, el) {
@@ -3069,7 +3068,6 @@ function partnerShowFee(pid, oid, el) {
   if (!o) return;
   botCostPopover(el, '#' + (o.order_number || o.id), [
     [o.feeAuto ? 'Finder fee <span style="color:#60a5fa;font-size:10px;">auto — your last fee for this product here</span>' : 'Finder fee (order/box)', o.orderFee || 0, true],
-    ['FEE / UNIT on its products', o.unitFee || 0, true],
   ], o.fee, o.fee ? '' : 'No fee saved on this order. Add it with ✎ (Finder fee) or the box fee in By package.', 'FEES ON THIS ORDER');
 }
 async function partnerSetOwner(orderId, partnerId) {
@@ -3491,8 +3489,7 @@ function botShowBoxCost(el) {
     ['Item', c.item, true],
     [c.taxEstimated ? 'Tax <span style="font-size:10px;opacity:.7;">(est. from total)</span>' : 'Tax', c.tax, true],
     ['Shipping', c.ship],
-    ['Finder fee (order/box)', c.orderFee],
-    ['Extra fee / unit', c.extraFee],
+    ['Finder fee', c.orderFee],
   ];
   const qty = lines.reduce((a, l) => a + l.qty, 0);
   const differs = lines.some(l => Math.abs(l.cost.total - c.total) > 0.005);
@@ -4239,7 +4236,7 @@ function renderBotPackages() {
 // ── Box fee ─────────────────────────────────────────────────────────────────
 // One fee for the whole box. The server splits it (feeSplit.js) — the preview
 // asks it with dryRun, so what you see is exactly what gets saved.
-let _bfPkg = null, _bfTimer = null, _bfDouble = [];
+let _bfPkg = null, _bfTimer = null;
 
 function openBoxFee(i) {
   const p = _botPkgRows[i];
@@ -4247,7 +4244,11 @@ function openBoxFee(i) {
   _bfPkg = p;
   document.getElementById('bf-sub').textContent =
     `${p.tracking || 'No tracking yet'} · ${p.orders.length} order${p.orders.length === 1 ? '' : 's'} · ${p.units} unit${p.units === 1 ? '' : 's'}`;
-  document.getElementById('bf-fee').value = p.fee || '';
+  // Counted per unit when every order in the box was (at one rate); else a whole-box fee.
+  const per = p.orders.length > 0 && p.orders.every(o => o.fee_mode === 'unit' && o.fee_unit != null) && new Set(p.orders.map(o => o.fee_unit)).size === 1;
+  document.getElementById('bf-mode').value = per ? 'unit' : 'order';
+  document.getElementById('bf-mode').disabled = false;
+  document.getElementById('bf-fee').value = per ? p.orders[0].fee_unit : (p.fee || '');
   document.getElementById('bf-error').style.display = 'none';
   document.getElementById('bf-similar').style.display = 'none';
   document.getElementById('bf-main-actions').style.display = 'flex';
@@ -4264,22 +4265,26 @@ function closeBoxFee() {
 
 function boxFeePreviewSoon() { clearTimeout(_bfTimer); _bfTimer = setTimeout(boxFeePreview, 200); }
 
+// Switching how it's counted keeps the same fee: $12 for the box ↔ $3 per unit × 4.
+function boxFeeMode() {
+  if (!_bfPkg) return;
+  const inp = document.getElementById('bf-fee'), v = parseFloat(inp.value), units = _bfPkg.units || 1;
+  if (!Number.isNaN(v)) inp.value = (document.getElementById('bf-mode').value === 'unit' ? v / units : v * units).toFixed(2);
+  boxFeePreview();
+}
+const botFeeModeOf = () => document.getElementById('bf-mode').value === 'unit' ? 'unit' : 'order';
+
 async function boxFeePreview() {
   if (!_bfPkg) return;
   const fee = parseFloat(document.getElementById('bf-fee').value) || 0;
-  const r = await api('POST', '/admin/bot-packages/fee', { orderIds: _bfPkg.orderIds, fee, dryRun: true });
+  const r = await api('POST', '/admin/bot-packages/fee', { orderIds: _bfPkg.orderIds, fee, mode: botFeeModeOf(), dryRun: true });
   if (!r || !_bfPkg) return;
   const money = n => '$' + (n || 0).toFixed(2);
-  document.getElementById('bf-rate').innerHTML = r.basis === 'retail'
+  document.getElementById('bf-rate').innerHTML = r.basis === 'unit'
+    ? `${_bfPkg.units} unit${_bfPkg.units === 1 ? '' : 's'} × <b>${money(fee)}</b> = <b>${money(r.fee)}</b> for this box`
+    : r.basis === 'retail'
     ? `Retail in this box <b>${money(r.retail)}</b> → fee rate <b>${(r.rate * 100).toFixed(1)}%</b> of each item's price`
     : '<span style="color:#fbbf24;">No prices in this box — split evenly per unit.</span>';
-  // Products in this box that ALSO have an extra per-unit fee typed in.
-  const dbl = (r.unitFeeProducts || []);
-  const dEl = document.getElementById('bf-double');
-  _bfDouble = dbl;
-  dEl.style.display = dbl.length && fee > 0 ? '' : 'none';
-  dEl.innerHTML = dbl.length ? `⚠ Already has a per-unit fee typed in FEE / UNIT: ${dbl.map(p => `<b>${esc(p.name)}</b> $${p.perUnit.toFixed(2)}/unit`).join(', ')}.
-     This box fee is added <u>on top</u>. If it's the same fee, clear that FEE / UNIT box after saving.` : '';
   document.getElementById('bf-items').innerHTML = r.items.map(it => `
     <tr class="bf-item" style="border-top:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums;">
       <td style="text-align:left;padding:5px 0;">${esc(it.name)}</td><td>${it.qty}</td><td>${money(it.retail)}</td>
@@ -4294,33 +4299,32 @@ async function saveBoxFee() {
   const raw = document.getElementById('bf-fee').value;
   const fee = raw === '' ? 0 : parseFloat(raw);
   if (!(fee >= 0)) { err.textContent = 'Enter the fee as a number.'; err.style.display = ''; return; }
-  if (fee > 0 && _bfDouble.length && !confirm(
-      `${_bfDouble.map(p => `${p.name} already has $${p.perUnit.toFixed(2)}/unit typed in FEE / UNIT`).join('\n')}\n\n` +
-      `Save this box fee on top of it? (Cancel if it's the same fee.)`)) return;
   const btn = document.getElementById('bf-save'); btn.disabled = true;
   try {
-    const r = await api('POST', '/admin/bot-packages/fee', { orderIds: _bfPkg.orderIds, fee });
+    const mode = botFeeModeOf();
+    const r = await api('POST', '/admin/bot-packages/fee', { orderIds: _bfPkg.orderIds, fee, mode });
     if (!r) { err.textContent = 'Could not save the fee.'; err.style.display = ''; return; }
     // One-order box with a fee: offer the same fee to the rest of the drop.
-    if (fee > 0 && _bfPkg.orderIds.length === 1 && await boxFeeOfferSimilar(_bfPkg.orderIds[0], fee)) return;
+    if (fee > 0 && _bfPkg.orderIds.length === 1 && await boxFeeOfferSimilar(_bfPkg.orderIds[0], fee, mode, r.fee)) return;
     closeBoxFee();
     botLoadMoney();
     await loadBotItemView(botCurCat());
   } finally { btn.disabled = false; }
 }
 
-let _bfSimFee = 0;
-async function boxFeeOfferSimilar(orderId, fee) {
+let _bfSimFee = 0, _bfSimMode = 'order';
+// `fee` is what was typed (a box amount or a rate per unit); `total` is what this one order now carries.
+async function boxFeeOfferSimilar(orderId, fee, mode, total) {
   const r = await api('GET', `/admin/bot-orders/${orderId}/similar`);
   const all = (r && r.matches) || [];
-  const todo = all.filter(m => Math.abs(m.finder_fee - fee) > 0.004);   // already at this fee → nothing to do
+  const todo = all.filter(m => Math.abs(m.finder_fee - total) > 0.004);   // already at this fee → nothing to do
   if (!todo.length) return false;
-  _bfSimFee = fee;
+  _bfSimFee = fee; _bfSimMode = mode;
   const money = n => '$' + (n || 0).toFixed(2);
   const done = all.length - todo.length;
   const items = (_bfPkg.contents || []).map(c => `${c.name} ×${c.qty}`).join(', ');
   document.getElementById('bf-sim-head').innerHTML =
-    `✓ Saved. <b>${todo.length}</b> other ${esc((_bfPkg.retailers || []).join(', '))} order${todo.length === 1 ? '' : 's'} with the same items <span style="color:var(--muted);">(${esc(items)})</span>${done ? ` <span style="color:var(--muted);">· ${done} already at ${money(fee)}</span>` : ''}`;
+    `✓ Saved. <b>${todo.length}</b> other ${esc((_bfPkg.retailers || []).join(', '))} order${todo.length === 1 ? '' : 's'} with the same items <span style="color:var(--muted);">(${esc(items)})</span>${done ? ` <span style="color:var(--muted);">· ${done} already at ${money(total)}</span>` : ''}`;
   document.getElementById('bf-sim-list').innerHTML = todo.map(m => {
     // An order that already has a DIFFERENT fee is shown but left unchecked.
     const other = m.finder_fee > 0;
@@ -4334,6 +4338,7 @@ async function boxFeeOfferSimilar(orderId, fee) {
   }).join('');
   document.getElementById('bf-main-actions').style.display = 'none';
   document.getElementById('bf-fee').disabled = true;
+  document.getElementById('bf-mode').disabled = true;
   document.getElementById('bf-similar').style.display = 'block';
   boxFeeSimCount();
   return true;
@@ -4349,7 +4354,7 @@ function boxFeeSimAll(on) {
 function boxFeeSimCount() {
   const n = boxFeeSimChecked().length;
   const b = document.getElementById('bf-sim-apply');
-  b.textContent = `Apply $${_bfSimFee.toFixed(2)} to ${n} order${n === 1 ? '' : 's'}`;
+  b.textContent = `Apply $${_bfSimFee.toFixed(2)}${_bfSimMode === 'unit' ? ' per unit' : ''} to ${n} order${n === 1 ? '' : 's'}`;
   b.disabled = n === 0;
 }
 
@@ -4357,7 +4362,7 @@ async function applyBoxFeeSimilar() {
   const ids = boxFeeSimChecked();
   if (!ids.length) return;
   const b = document.getElementById('bf-sim-apply'); b.disabled = true;
-  const r = await api('POST', '/admin/bot-orders/bulk-fee', { orderIds: ids, fee: _bfSimFee });
+  const r = await api('POST', '/admin/bot-orders/bulk-fee', { orderIds: ids, fee: _bfSimFee, mode: _bfSimMode });
   if (!r) { b.disabled = false; alert('Could not apply the fee.'); return; }
   closeBoxFee();
   botLoadMoney();
@@ -4802,7 +4807,6 @@ function renderBotItemView() {
   _botItemRows = rows;
   tbody.innerHTML = rows.map((item, idx) => {
     const landed   = item.perUnitTotal || 0;
-    const buyerFee = item.buyer_fee   || 0;
     // Profit shows only what sales actually made — no asking-price estimate
     // (market prices move too fast for one to mean anything).
 
@@ -4838,10 +4842,13 @@ function renderBotItemView() {
     const qtyTip = item.stockTracked
       ? `${inHand} in hand (picked up & checked) · ${item.toPickUp || 0} to pick up · ${item.onTheWay || 0} on the way · ${item.inClaim || 0} in claim · ${item.qty} ordered`
       : `${item.qty} ordered`;
-    const boxFee = item.perUnitBoxFee || 0;
-    const feeTotalHtml = boxFee > 0
-      ? `<div class="fee-total" style="font-size:12px;font-weight:700;color:#fbbf24;font-variant-numeric:tabular-nums;">$${(item.perUnitFinder || 0).toFixed(2)}</div>
-         <div style="font-size:9px;color:var(--muted);margin-bottom:2px;">box $${boxFee.toFixed(2)}${buyerFee ? ` + $${Number(buyerFee).toFixed(2)}` : ''}</div>`
+    // One fee per order. The box holds the per-unit fee when this product's orders
+    // agree on it; typing one sets each of those orders to units × it.
+    const solos = (item.orderLines || []).filter(l => l.solo && l.feeMode !== 'order');
+    const uniform = solos.length && new Set(solos.map(l => l.feeUnit)).size === 1 ? solos[0].feeUnit : null;
+    const feeAvg = item.perUnitFinder || 0;
+    const feeTotalHtml = feeAvg > 0
+      ? `<div class="fee-total" style="font-size:12px;font-weight:700;color:#fbbf24;font-variant-numeric:tabular-nums;margin-bottom:2px;">$${feeAvg.toFixed(2)}</div>`
       : '';
     const inStyle = 'width:68px;text-align:right;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 5px;color:var(--text);font-size:11px;font-variant-numeric:tabular-nums;';
 
@@ -4885,8 +4892,8 @@ function renderBotItemView() {
       </td>
       <td style="padding:8px;text-align:right;">
         ${feeTotalHtml}
-        <input type="number" step="0.01" value="${buyerFee||''}" placeholder="${boxFee > 0 ? '+ extra' : '0.00'}" style="${inStyle}"
-          onchange="saveBotSkuField(${idx},'buyer_fee',this)" data-tip="${boxFee > 0 ? 'Extra fee per unit, on top of the box fee' : 'Fee per unit'}">
+        <input type="number" step="0.01" value="${uniform || ''}" placeholder="${feeAvg > 0 && uniform == null ? 'mixed' : '0.00'}" style="${inStyle}"
+          onchange="botSetUnitFee(${idx},this)" data-tip="Fee per unit — sets each of this product's orders to its units × this">
       </td>
       <td style="padding:8px;text-align:center;white-space:nowrap;">
         <button class="bot-sold" onclick="openBotSale(${idx})" data-tip="${soldTip}"
@@ -4947,39 +4954,30 @@ function showLandedBreakdown(idx, anchorEl) {
   }, 0);
 }
 
-// The same fee can be entered two ways: on the orders (Fee button / ✎) and as
-// an extra per-unit fee here. Both go into landed cost, so entering one fee in
-// both places counted it twice (it happened: $1,100 across 7 products). Ask
-// before adding an extra per-unit fee on top of an order/box fee.
-function botConfirmExtraFee(item, newFee) {
-  const box = Number(item && item.perUnitBoxFee) || 0;
-  const old = Number(item && item.buyer_fee) || 0;
-  if (!(box > 0) || !(newFee > 0) || newFee === old) return true;
-  return confirm(`"${item.name}" already has a fee from its orders: $${box.toFixed(2)} per unit.\n\n` +
-    `Add $${newFee.toFixed(2)} MORE per unit on top? Total would be $${(box + newFee).toFixed(2)} per unit.\n\n` +
-    `OK = it's a second, separate fee.   Cancel = it's the same fee — don't add it.`);
-}
-
-async function saveBotSkuField(idx, field, inputEl) {
+// A product's fee per unit, typed on its row: each of its orders gets units × it,
+// saved on the order like any other fee (so every tab shows the same number).
+// A box of several products, and orders you counted as a whole, are left alone.
+async function botSetUnitFee(idx, inputEl) {
   const item = _botItemRows[idx];
-  if (!item) { console.warn('saveBotSkuField: no row at index', idx); return; }
-  if (field === 'buyer_fee' && !botConfirmExtraFee(item, parseFloat(inputEl.value) || 0)) {
-    inputEl.value = item.buyer_fee || '';
-    return;
-  }
-  const before = Number(item[field]) || 0;
-  item[field] = parseFloat(inputEl.value) || 0;
-  // The per-unit fee is part of landed cost: move the landed total and its
-  // Finder line by the change, so the row and the breakdown update at once.
-  if (field === 'buyer_fee') {
-    const delta = item.buyer_fee - before;
-    item.perUnitTotal  = Math.round(((item.perUnitTotal  || 0) + delta) * 100) / 100;
-    item.perUnitFinder = Math.round(((item.perUnitFinder || 0) + delta) * 100) / 100;
-  }
-  // skuKey is "#p<id>" for a linked product, so prices survive renaming it.
-  await api('PATCH', '/admin/bot-items/sku', { sku: item.skuKey || item.name, buyer_fee: item.buyer_fee||0, sale_price: item.sale_price||0 });
-  if (field === 'buyer_fee') botLoadMoney();
-  renderBotItemView();
+  if (!item) return;
+  const raw = inputEl.value.trim();
+  const perUnit = raw === '' ? 0 : parseFloat(raw);
+  if (!(perUnit >= 0)) { renderBotItemView(); return; }
+  const orderIds = (item.orderLines || []).map(l => l.id).filter(id => id != null);
+  const dry = await api('POST', '/admin/bot-items/unit-fee', { orderIds, perUnit, dryRun: true });
+  if (!dry) { renderBotItemView(); return; }
+  const left = [];
+  if (dry.skippedMixed) left.push(`${dry.skippedMixed} order${dry.skippedMixed === 1 ? '' : 's'} with several products — set those with ✎ or the box fee.`);
+  if (dry.skippedWhole) left.push(`${dry.skippedWhole} order${dry.skippedWhole === 1 ? '' : 's'} counted as a whole order.`);
+  if (!dry.set) { alert('Nothing to change — ' + (left.length ? 'left alone:\n' + left.join('\n') : 'every order is already at this fee.')); renderBotItemView(); return; }
+  const msg = [`Set $${perUnit.toFixed(2)} per unit on ${dry.set} order${dry.set === 1 ? '' : 's'} of "${item.name}"?`,
+    `Each order's fee becomes its units × $${perUnit.toFixed(2)}.`];
+  if (dry.changed) msg.push(`${dry.changed} already ${dry.changed === 1 ? 'has a different fee, which is' : 'have different fees, which are'} replaced.`);
+  if (left.length) msg.push('Left alone: ' + left.join(' '));
+  if (!confirm(msg.join('\n\n'))) { renderBotItemView(); return; }
+  await api('POST', '/admin/bot-items/unit-fee', { orderIds, perUnit });
+  botLoadMoney();
+  await loadBotItemView(botCurCat());
 }
 
 // ── Record sale (partial quantities) ─────────────────────────────────────────
@@ -5106,7 +5104,6 @@ async function openBotItemEdit(idx) {
     ? 'Not linked yet — the name below is a suggestion. Save to confirm it (or fix it first).'
     : `${item.qty} unit${item.qty === 1 ? '' : 's'} across ${item.orders || 0} order${item.orders === 1 ? '' : 's'}`;
   document.getElementById('bie-name').value       = item.name;
-  document.getElementById('bie-buyer-fee').value  = item.buyer_fee  || '';
   document.getElementById('bie-delete-product').style.display = item.productId ? '' : 'none';
 
   renderBieTitles();
@@ -5167,14 +5164,11 @@ async function saveBotItemEdit() {
   const name        = document.getElementById('bie-name').value.trim();
   const mergeIntoId = document.getElementById('bie-merge').value || null;
   if (!name && !mergeIntoId) { alert('Give the product a name.'); return; }
-  if (!botConfirmExtraFee(item, parseFloat(document.getElementById('bie-buyer-fee').value) || 0)) return;
-
   const r = await api('POST', '/admin/sku-products/save', {
     productId:   item.productId || null,
     name,
     rawNames:    item.rawNames || [],
     mergeIntoId,
-    buyer_fee:   parseFloat(document.getElementById('bie-buyer-fee').value)  || 0,
     sale_price:  item.sale_price || 0,          // no longer edited here; kept as stored
   });
   if (!r || r.error) { alert((r && r.error) || 'Could not save.'); return; }
@@ -5276,7 +5270,6 @@ function botShowOrderCost(id, el) {
   const parts = [
     [`Paid <span style="font-size:10px;opacity:.75;">(items${o.tax_amount ? ` + tax $${Number(o.tax_amount).toFixed(2)}` : ' + tax'}${o.ship_cost ? ` + ship $${Number(o.ship_cost).toFixed(2)}` : ''})</span>`, L.paid, true],
     [o.fee_source === 'auto' ? 'Finder fee <span style="color:#60a5fa;font-size:10px;">auto</span>' : 'Finder fee (order/box)', L.orderFee, true],
-    ['FEE / UNIT on its products', L.unitFee],
   ];
   const items = (L.lines || []).map(l => `${esc(l.name)} ×${l.qty}${l.cost ? ` · $${l.cost.total.toFixed(2)}/unit` : ''}`).join('<br>');
   const units = L.units || botTotalQty(o);
@@ -5311,13 +5304,15 @@ async function botEditRow(id) {
   document.getElementById('bot-edit-total').value = o.order_total || '';
   document.getElementById('bot-edit-tax').value = o.tax_amount || '';
   document.getElementById('bot-edit-ship').value = o.ship_cost || '';
-  document.getElementById('bot-edit-finder').value = o.finder_fee || '';
+  // The fee is one number on the order; this shows how it was counted.
+  const unitMode = o.fee_mode === 'unit' && o.fee_unit != null;
+  document.getElementById('bot-edit-fee-mode').value = unitMode ? 'unit' : 'order';
+  document.getElementById('bot-edit-finder').value = (unitMode ? o.fee_unit : o.finder_fee) || '';
   // Shown via the `open` class like every other .overlay — style.display left it
   // at opacity:0 / pointer-events:none, i.e. invisible and unclickable.
   document.getElementById('bot-edit-overlay').classList.add('open');
   // Store qty for calc
   document.getElementById('bot-edit-overlay').dataset.qty = (o.landed && o.landed.units) || botTotalQty(o);
-  document.getElementById('bot-edit-overlay').dataset.unitfee = (o.landed && o.landed.unitFee) || 0;
   document.getElementById('bot-edit-overlay').dataset.refunded = o.refunded_amount || 0;
   document.getElementById('bot-edit-overlay').dataset.opened = JSON.stringify(botEditValues());
   document.getElementById('bot-edit-overlay').dataset.feeauto = '';
@@ -5328,7 +5323,9 @@ async function botEditRow(id) {
 function botEditFeeHint(o) {
   const el = document.getElementById('bot-edit-finder-hint');
   const a = o.landed && o.landed.autoFee;
-  const rate = a ? a.used.map(u => `${esc(u.name)} $${u.perUnit.toFixed(2)}/unit${u.from ? ' (from #' + esc(u.from) + ')' : ''}`).join(', ') : '';
+  const rate = a ? (a.flat
+    ? `$${a.fee.toFixed(2)} for the whole order${a.used[0].from ? ' (from #' + esc(a.used[0].from) + ')' : ''}`
+    : a.used.map(u => `${esc(u.name)} $${u.perUnit.toFixed(2)}/unit${u.from ? ' (from #' + esc(u.from) + ')' : ''}`).join(', ')) : '';
   if (o.fee_source === 'auto') {
     el.innerHTML = `<span style="color:#60a5fa;">auto</span> — your last fee at ${esc(o.retailer || 'this store')}: ${rate}. Type a fee to set it yourself.`;
   } else if (a && Math.abs((Number(o.finder_fee) || 0) - a.fee) > 0.004) {
@@ -5336,6 +5333,7 @@ function botEditFeeHint(o) {
   } else el.innerHTML = '';
 }
 function botEditUseAuto(fee) {
+  document.getElementById('bot-edit-fee-mode').value = 'order';
   document.getElementById('bot-edit-finder').value = fee.toFixed(2);
   document.getElementById('bot-edit-overlay').dataset.feeauto = '1';
   botEditCalc();
@@ -5346,9 +5344,21 @@ function botEditValues() {
   const num = id => v(id).trim() === '' ? 0 : Math.round(parseFloat(v(id)) * 100) / 100;
   return {
     status: v('bot-edit-status'), tracking: v('bot-edit-tracking').trim() || null, notes: v('bot-edit-notes').trim() || null,
-    order_total: num('bot-edit-total'), tax_amount: num('bot-edit-tax'), ship_cost: num('bot-edit-ship'), finder_fee: num('bot-edit-finder'),
+    order_total: num('bot-edit-total'), tax_amount: num('bot-edit-tax'), ship_cost: num('bot-edit-ship'),
+    fee_mode: v('bot-edit-fee-mode'), fee_amount: num('bot-edit-finder'),        // a whole-order amount, or a rate per unit
     fee_kept: document.getElementById('bot-edit-kept').checked ? 1 : 0,
   };
+}
+// Switching how the fee is counted keeps the same fee: $6 whole order ↔ $3 per unit × 2.
+function botEditFeeMode() {
+  const ov  = document.getElementById('bot-edit-overlay').dataset;
+  const qty = parseInt(ov.qty) || 1;
+  const inp = document.getElementById('bot-edit-finder');
+  const v   = parseFloat(inp.value);
+  const toUnit = document.getElementById('bot-edit-fee-mode').value === 'unit';
+  if (!Number.isNaN(v)) inp.value = (toUnit ? v / qty : v * qty).toFixed(2);
+  ov.feeauto = '';
+  botEditCalc();
 }
 // "Fee still owed" only makes sense once the order is cancelled or refunded.
 function botEditKeptToggle() {
@@ -5361,10 +5371,14 @@ function closeBotEdit() {
 function botEditCalc() {
   const qty   = parseInt(document.getElementById('bot-edit-overlay').dataset.qty) || 1;
   const total = parseFloat(document.getElementById('bot-edit-total').value) || 0;
-  const finder= parseFloat(document.getElementById('bot-edit-finder').value) || 0;
+  const typed = parseFloat(document.getElementById('bot-edit-finder').value) || 0;
+  const perUnit_ = document.getElementById('bot-edit-fee-mode').value === 'unit';
+  const finder = perUnit_ ? typed * qty : typed;
+  document.getElementById('bot-edit-fee-label').textContent = perUnit_
+    ? `— ${qty} unit${qty === 1 ? '' : 's'} × $${typed.toFixed(2)} = $${finder.toFixed(2)}` : '— for the whole order';
   const ov    = document.getElementById('bot-edit-overlay').dataset;
   // Tax and shipping are part of the total — not added again.
-  const landed = total - (parseFloat(ov.refunded) || 0) + finder + (parseFloat(ov.unitfee) || 0);
+  const landed = total - (parseFloat(ov.refunded) || 0) + finder;
   const perUnit = landed / qty;
   const el = document.getElementById('bot-edit-perunit');
   if (landed > 0) {
@@ -5383,7 +5397,14 @@ async function saveBotEdit() {
   const payload = {};
   for (const k of Object.keys(now)) if (JSON.stringify(now[k]) !== JSON.stringify(opened[k]) && !(Number.isNaN(now[k]))) payload[k] = now[k];
   // "↺ use auto fee": hand the fee back to the auto rule instead of fixing it.
-  if (document.getElementById('bot-edit-overlay').dataset.feeauto === '1') { delete payload.finder_fee; payload.fee_auto = true; }
+  // The fee box is a whole-order amount, or a rate per unit (the server works out rate × units).
+  const feeTouched = 'fee_mode' in payload || 'fee_amount' in payload;
+  delete payload.fee_mode; delete payload.fee_amount;
+  if (feeTouched) {
+    if (now.fee_mode === 'unit') { payload.fee_mode = 'unit'; payload.fee_unit = now.fee_amount; }
+    else payload.finder_fee = now.fee_amount;
+  }
+  if (document.getElementById('bot-edit-overlay').dataset.feeauto === '1') { delete payload.finder_fee; delete payload.fee_mode; delete payload.fee_unit; payload.fee_auto = true; }
   if (Object.keys(payload).length) await api('PATCH', '/admin/bot-orders/'+id, payload);
   const ownSel = document.getElementById('bot-edit-owner');
   if (ownSel && ownSel.value !== ownSel.dataset.was) {

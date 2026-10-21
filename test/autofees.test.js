@@ -10,7 +10,7 @@ const raw = new DatabaseSync(':memory:');
 const db = { prepare: sql => { const st = raw.prepare(sql); const a = p => (p === undefined ? [] : Array.isArray(p) ? p : [p]);
   return { all: p => st.all(...a(p)), get: p => st.get(...a(p)), run: p => st.run(...a(p)) }; } };
 raw.exec(`CREATE TABLE bot_orders (id INTEGER PRIMARY KEY, retailer TEXT, order_number TEXT, status TEXT, items TEXT, order_total REAL,
-  tax_amount REAL, ship_cost REAL, finder_fee REAL, fee_source TEXT, fee_set_at TEXT, order_date TEXT, received_at TEXT, created_at TEXT)`);
+  tax_amount REAL, ship_cost REAL, finder_fee REAL, fee_source TEXT, fee_set_at TEXT, fee_mode TEXT, fee_unit REAL, order_date TEXT, received_at TEXT, created_at TEXT)`);
 const cat = { products: new Map(), aliases: new Map() };
 const ins = (id, retailer, items, fee, extra = {}) => raw.prepare(`INSERT INTO bot_orders (id, retailer, order_number, status, items, order_total, finder_fee, fee_source, fee_set_at, order_date)
   VALUES (?,?,?,?,?,?,?,?,?,?)`).run(id, retailer, 'T' + id, extra.status || 'Confirmed', JSON.stringify(items), extra.total || 50, fee, extra.src || null, extra.at || null, extra.date || '2026-10-01');
@@ -42,6 +42,21 @@ eq('auto order follows: 3 × $7 = $21',         fee(3).f, 21);
 eq('… mixed one too: $7',                      fee(7).f, 7);
 eq('auto fees never become the rate',          feeRates(raw.prepare('SELECT * FROM bot_orders').all(), cat).get('test mart|' + require('../itemNames').itemKey(require('../packageView').productNameFor('Test Box', cat))).order_id, 1);
 eq('running again changes nothing',            applyAutoFees(db, cat), 0);
+
+console.log('\n── A whole-order store gets the same amount, not a rate ──');
+raw.exec('DELETE FROM bot_orders');
+ins(21, 'Flat Shop', ['2x Test Box @ $25.00'], 12, { src: 'manual', at: '2026-10-12T10:00:00Z', date: '2026-10-12' });
+raw.prepare("UPDATE bot_orders SET fee_mode='order' WHERE id=21").run();                    // $12 for the whole order
+ins(22, 'Flat Shop', ['5x Test Box @ $25.00'], 0, { total: 125 });                          // bigger order, no fee yet
+ins(23, 'Unit Shop', ['2x Test Box @ $25.00'], 10, { src: 'manual', at: '2026-10-12T10:00:00Z', date: '2026-10-12' });
+raw.prepare("UPDATE bot_orders SET fee_mode='unit', fee_unit=5 WHERE id=23").run();         // $5 per unit
+ins(24, 'Unit Shop', ['3x Test Box @ $25.00'], 0, { total: 75 });
+const tail = id => raw.prepare('SELECT finder_fee f, fee_source s, fee_mode m, fee_unit u FROM bot_orders WHERE id=?').get(id);
+applyAutoFees(db, cat);
+eq('whole-order store: same $12, not 5 × a rate', tail(22), { f: 12, s: 'auto', m: 'order', u: null });
+eq('per-unit store: 3 × $5, remembers the rate',  tail(24), { f: 15, s: 'auto', m: 'unit', u: 5 });
+eq('a whole-order fee is no per-unit rate',       feeRates(raw.prepare('SELECT * FROM bot_orders').all(), cat).size, 1);
+eq('running again changes nothing',               applyAutoFees(db, cat), 0);
 
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`${passed} passed, ${failed} failed`);

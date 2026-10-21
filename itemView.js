@@ -162,6 +162,8 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
     const lines = orderLineCosts(order);
     if (!lines.length) continue;
     const { taxEstimated, costKnown } = lines;
+    // One product in the whole order? (a box of several products is set as a whole)
+    const solo = new Set(lines.map(l => productFor(l.rawName).key)).size === 1;
 
     for (let idx = 0; idx < lines.length; idx++) {
       const { rawName, qty, unitItem, unitTax, unitShip, unitFinder, unitTotal } = lines[idx];
@@ -195,6 +197,9 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
         shipping_address: order.shipping_address || null,
         jig_address:     order.jig_address || null,      // the exact text on the label, when grouped
         checked_in:      tracked ? (order.id != null && checkedIn.has(order.id)) : null,
+        // The fee per unit this order carries, and how it was counted — so the
+        // product row can show one per-unit fee when its orders agree.
+        solo, feeUnit: round2(unitFinder), feeMode: order.fee_mode || null,
       });
 
       if (taxEstimated) g._taxEstUnits      += qty;

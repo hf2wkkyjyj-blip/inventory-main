@@ -73,6 +73,7 @@ function computePackages(orders, catalog, stock) {
       status: o.status || 'Confirmed', tracking_status: o.tracking_status || null,
       expected_date: o.expected_date || null, delivered_date: o.delivered_date || null,
       order_date: o.order_date || null, finder_fee: Number(o.finder_fee) || 0,
+      fee_mode: o.fee_mode || null, fee_unit: o.fee_unit == null ? null : Number(o.fee_unit),
       shipping_name: o.shipping_name || null, shipping_address: o.shipping_address || null,
       jig_address: o.jig_address || null,
       owner: o.owner || null,

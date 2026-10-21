@@ -265,11 +265,15 @@ try { require('./legacyFixes').applyLegacyFixes(db); } catch (e) { console.error
 // Finder fee on orders with none: your last fee per unit for that product at
 // that store (autoFees.js). 'auto' = filled by this; anything else = set by you.
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_source TEXT"); } catch(e) {}
+// How the fee was counted: 'unit' (fee_unit × units), 'order' (a whole-order amount), null = older (see feeRules.js).
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_mode TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_unit REAL"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_set_at TEXT"); } catch(e) {}   // when you last typed its fee
 // 1 = on a Cancelled/Refunded order, the finder fee still has to be paid (not refunded), so it stays in your costs.
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_kept INTEGER DEFAULT 0"); } catch(e) {}
 const nowIso = () => new Date().toISOString();
 const AutoFees = require('./autoFees');
+const FeeRules = require('./feeRules');
 const { resolveClose } = require('./orderClose');
 function runAutoFees() {
   try { const n = AutoFees.applyAutoFees(db, SkuCatalog.loadCatalog(db)); if (n) console.log(`💲 auto finder fee on ${n} order(s)`); return n; }
@@ -1460,6 +1464,7 @@ const isIsoDate = s => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) &&
 // item view already spreads over that order's items.
 app.post('/api/admin/bot-packages/fee', auth, adminOnly, (req, res) => {
   const { orderIds, fee, dryRun } = req.body || {};
+  const perUnit = (req.body || {}).mode === 'unit';           // else the fee is for the whole box
   const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
   const amount = Number(fee);
   if (!ids.length)                                return res.status(400).json({ error: 'orderIds required' });
@@ -1479,19 +1484,26 @@ app.post('/api/admin/bot-packages/fee', auth, adminOnly, (req, res) => {
   if (!orders.length) return res.status(404).json({ error: 'No such orders' });
 
   const catalog = SkuCatalog.loadCatalog(db);
-  const split = splitBoxFee(orders, amount, catalog);
-  // Products in this box that already carry a typed per-unit fee — a box fee
-  // on top would count the same fee twice if they're one and the same.
-  let pricingRows = [];
-  try { pricingRows = db.prepare('SELECT * FROM bot_sku_prices').all(); } catch (_) {}
-  split.unitFeeProducts = computeItemGroups(orders, pricingRows, catalog)
-    .filter(g => g.perUnitFeeTyped > 0).map(g => ({ name: g.name, perUnit: g.perUnitFeeTyped }));
+  let split, fees;
+  if (perUnit) {
+    // Per unit: every order is its own units × rate — nothing to split.
+    fees = new Map(orders.map(o => [o.id, FeeRules.feeFor(o, 'unit', amount, catalog)]));
+    const total = [...fees.values()].reduce((s, f) => s + f.fee, 0);
+    split = splitBoxFee(orders, 0, catalog);
+    split.fee = Math.round(total * 100) / 100;
+    split.rate = null; split.basis = 'unit';
+    split.orders = split.orders.map(x => ({ ...x, fee: fees.get(x.id).fee }));
+    split.items = split.items.map(it => ({ ...it, fee: Math.round(it.qty * amount * 100) / 100, perUnit: Math.round(amount * 100) / 100 }));
+  } else {
+    split = splitBoxFee(orders, amount, catalog);
+    fees = new Map(split.orders.map(o => [o.id, { fee: o.fee, mode: 'order', unit: null }]));
+  }
   if (!dryRun) {
     const at = nowIso();
-    for (const o of split.orders) db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='manual', fee_set_at=? WHERE id=?").run([o.fee, at, o.id]);
+    for (const [id, f] of fees) FeeRules.saveFee(db, id, f, at);
     runAutoFees();
   }
-  res.json({ ...split, saved: !dryRun });
+  res.json({ ...split, mode: perUnit ? 'unit' : 'order', saved: !dryRun });
 });
 
 // Orders that look like this one (same store, items and quantities) — so a fee
@@ -1512,18 +1524,35 @@ app.get('/api/admin/bot-orders/:id/similar', auth, adminOnly, (req, res) => {
 
 // Same fee on each of these orders (one order = one fee, not split between them).
 app.post('/api/admin/bot-orders/bulk-fee', auth, adminOnly, (req, res) => {
-  const { orderIds, fee } = req.body || {};
+  const { orderIds, fee, mode } = req.body || {};
   const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
   const amount = Number(fee);
   if (!ids.length)                            return res.status(400).json({ error: 'orderIds required' });
   if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'Fee must be a number' });
+  // 'unit': the amount is per unit, so each order gets its own units × amount; otherwise the same amount on each.
+  const catalog = SkuCatalog.loadCatalog(db);
   let updated = 0;
   for (const id of ids) {
-    const r = db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='manual', fee_set_at=? WHERE id=?").run([Math.round(amount * 100) / 100, nowIso(), id]);
-    if (r && r.changes) updated += Number(r.changes);
+    const o = db.prepare('SELECT * FROM bot_orders WHERE id=?').get([id]);
+    if (!o) continue;
+    FeeRules.saveFee(db, id, FeeRules.feeFor(o, mode === 'unit' ? 'unit' : 'order', amount, catalog), nowIso());
+    updated++;
   }
   runAutoFees();
   res.json({ updated });
+});
+
+// A product's fee per unit, from its row in By product: each of its orders gets units × this.
+// dryRun says how many orders it would set / replace / leave, for the confirm box.
+app.post('/api/admin/bot-items/unit-fee', auth, adminOnly, (req, res) => {
+  const { orderIds, perUnit, dryRun } = req.body || {};
+  const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
+  const amount = Number(perUnit);
+  if (!ids.length)                            return res.status(400).json({ error: 'orderIds required' });
+  if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'Fee must be a number' });
+  const r = FeeRules.setUnitFee(db, SkuCatalog.loadCatalog(db), ids, amount, { dryRun: !!dryRun, at: nowIso() });
+  if (!dryRun) runAutoFees();
+  res.json({ ...r, saved: !dryRun });
 });
 
 app.post('/api/admin/bot-orders/bulk-status', auth, adminOnly, (req, res) => {
@@ -1798,7 +1827,7 @@ app.post('/api/admin/sku-products/save', auth, adminOnly, (req, res) => {
     });
     if (buyer_fee !== undefined || sale_price !== undefined) {
       db.prepare('INSERT OR REPLACE INTO bot_sku_prices (sku, buyer_fee, sale_price) VALUES (?,?,?)')
-        .run([SkuCatalog.productSkuKey(id), parseFloat(buyer_fee) || 0, parseFloat(sale_price) || 0]);
+        .run([SkuCatalog.productSkuKey(id), 0, parseFloat(sale_price) || 0]);   // the fee lives on the orders now (feeRules.js)
     }
     res.json({ productId: id });
   } catch (e) {
@@ -1916,7 +1945,7 @@ app.patch('/api/admin/bot-items/sku', auth, adminOnly, (req, res) => {
   const { sku, buyer_fee, sale_price } = req.body;
   if (!sku) return res.status(400).json({ error: 'sku required' });
   db.prepare('INSERT OR REPLACE INTO bot_sku_prices (sku,buyer_fee,sale_price) VALUES (?,?,?)')
-    .run([sku, buyer_fee||0, sale_price||0]);
+    .run([sku, 0, sale_price||0]);        // the fee lives on the orders now (feeRules.js)
   res.json({ success: true });
 });
 
@@ -2016,6 +2045,7 @@ function withLanded(orders) {
     const live = orders.filter(o => o.status !== 'Cancelled' && o.status !== 'Refunded');
     const unitFees = unitFeesByOrder(computeItemGroups(live, pricingRows, catalog));
     const rates = AutoFees.feeRates(orders, catalog);
+    const modes = AutoFees.storeModes(orders);
     attachLineCosts(orders, catalog);
     const r2 = n => Math.round(n * 100) / 100;
     for (const o of orders) {
@@ -2025,7 +2055,7 @@ function withLanded(orders) {
       const units = lines.reduce((a, l) => a + l.qty, 0);
       o.landed = { paid: r2(paid), orderFee: r2(orderFee), unitFee, fee: r2(orderFee + unitFee), total: r2(paid + orderFee + unitFee),
                    units, perUnit: units ? r2((paid + orderFee + unitFee) / units) : null, lines,
-                   feeAuto: o.fee_source === 'auto', autoFee: AutoFees.autoFeeFor(o, rates, catalog) };
+                   feeAuto: o.fee_source === 'auto', autoFee: AutoFees.autoFeeFor(o, rates, catalog, modes) };
       delete o._lineCosts;
     }
   } catch (e) { console.error('bot-orders landed:', e.message); }
@@ -2076,7 +2106,15 @@ app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
   if (o.fee_kept !== undefined && o.fee_kept !== null) db.prepare('UPDATE bot_orders SET fee_kept=? WHERE id=?').run([o.fee_kept ? 1 : 0, req.params.id]);
   // A fee you type is yours (never auto-changed, even $0); fee_auto: true hands it back to the auto fee.
   if (o.fee_auto === true)        db.prepare("UPDATE bot_orders SET fee_source='auto', finder_fee=0 WHERE id=?").run([req.params.id]);
-  else if (o.finder_fee != null)  db.prepare("UPDATE bot_orders SET fee_source='manual', fee_set_at=? WHERE id=?").run([nowIso(), req.params.id]);
+  else if (o.fee_mode === 'unit' && o.fee_unit != null) {
+    // Counted per unit: the server works out rate × units, so the fee always matches the order's items.
+    const row = db.prepare('SELECT * FROM bot_orders WHERE id=?').get([req.params.id]);
+    if (row) FeeRules.saveFee(db, row.id, FeeRules.feeFor(row, 'unit', o.fee_unit, SkuCatalog.loadCatalog(db)), nowIso());
+  }
+  else if (o.finder_fee != null) {
+    // A typed amount is the whole order's fee unless you counted it per unit.
+    db.prepare("UPDATE bot_orders SET fee_source='manual', fee_set_at=?, fee_mode='order', fee_unit=NULL WHERE id=?").run([nowIso(), req.params.id]);
+  }
   runAutoFees();
   res.json({ success: true });
 });
@@ -2416,6 +2454,11 @@ app.get('/api/admin/bot-orders/:id', auth, adminOnly, (req, res, next) => {
   res.json(all.find(x => x.id === o.id));
 });
 
+// Once: the old per-product FEE / UNIT goes into the orders it applied to, so each order has the one fee (feeRules.js).
+try {
+  const r = FeeRules.foldUnitFees(db, SkuCatalog.loadCatalog(db));
+  if (!r.skipped) console.log(`💲 fees unified: ${r.orders} order(s), $${r.added} of per-unit fee folded in`);
+} catch (e) { console.error('fee unify failed:', e.message); }
 runAutoFees();                       // on start: fill orders that came in without a fee
 app.listen(PORT, () => {
   console.log(`\n✅ Inventory Site v2 running at http://localhost:${PORT}`);
