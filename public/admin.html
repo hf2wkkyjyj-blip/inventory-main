@@ -3783,6 +3783,15 @@ function renderBotStock() {
            ${rows.length && navigator.share ? `<button class="btn btn-primary btn-sm" id="bst-buyer-send" onclick="botSendBuyerList()"><i class="fa fa-paper-plane"></i> Send list</button>` : ''}
            ${rows.length ? `<button class="btn btn-ghost btn-sm" id="bst-buyer-copy" onclick="botCopyBuyerList(this)" data-tip="Item names and quantities only — no costs"><i class="fa fa-copy"></i> Copy list for buyer</button>` : ''}`}
     </div>
+    ${(() => {
+      // Stock is what you've picked up and checked in. Say where the rest is, so an empty list doesn't look like missing items.
+      const all = _botStockItems || [];
+      const pick = all.reduce((a, i) => a + (i.toPickUp || 0), 0), way = all.reduce((a, i) => a + (i.onTheWay || 0), 0);
+      if (!pick && !way) return '';
+      return `<div id="bst-waiting" style="font-size:12px;color:var(--muted);margin-bottom:10px;">Not in stock yet: ${
+        pick ? `<b style="color:#fbbf24;">${pick}</b> delivered, waiting to be checked in — <a href="#" onclick="botSetView('pickup');return false;" style="color:#60a5fa;">To pick up</a>` : ''}${
+        pick && way ? ' · ' : ''}${way ? `<b>${way}</b> still on the way` : ''}</div>`;
+    })()}
     <div id="bst-error" style="font-size:12px;color:#f87171;margin-bottom:8px;display:none;"></div>
     <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
