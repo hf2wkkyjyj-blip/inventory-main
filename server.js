@@ -1421,8 +1421,9 @@ app.get('/api/admin/bot-packages', auth, adminOnly, (req, res) => {
   const [where, params] = botCategoryWhere(category);
   let sql = 'SELECT * FROM bot_orders WHERE ' + where;
   if (retailer) { sql += ' AND retailer=?'; params.push(retailer); }
-  if (status)   { sql += ' AND status=?';   params.push(status); }
-  else          { sql += " AND status NOT IN ('Cancelled','Refunded')"; }
+  // 'Confirmed' = every order placed: only a cancel or refund takes one out of it.
+  if (status && status !== 'Confirmed') { sql += ' AND status=?'; params.push(status); }
+  else                                  { sql += " AND status NOT IN ('Cancelled','Refunded')"; }
   const catalog = SkuCatalog.loadCatalog(db);
   const orders = withMainAddress(db.prepare(sql).all(params), { replace: true });
   attachLineCosts(orders, catalog);
@@ -1630,10 +1631,11 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
   const [where, params] = botCategoryWhere(category);
   let sql = 'SELECT * FROM bot_orders WHERE ' + where;
   if (retailer) { sql += ' AND retailer=?'; params.push(retailer); }
-  if (status)   { sql += ' AND status=?';   params.push(status); }
+  // 'Confirmed' = every order placed: only a cancel or refund takes one out of it.
+  if (status && status !== 'Confirmed') { sql += ' AND status=?'; params.push(status); }
   // Cancelled/Refunded carry no inventory, so they're excluded by default — but
   // shown when explicitly selected, otherwise picking them looks broken.
-  else          { sql += " AND status NOT IN ('Cancelled','Refunded')"; }
+  else                                  { sql += " AND status NOT IN ('Cancelled','Refunded')"; }
 
   const orders = db.prepare(sql).all(params);
 

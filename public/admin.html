@@ -539,7 +539,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   <!-- Stats Row -->
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:10px;margin-bottom:20px;" id="bot-stats-row">
     <div class="bot-stat"><div class="lbl">TOTAL</div><div class="val" id="bs-total">0</div></div>
-    <div class="bot-stat s-green clickable" onclick="botFilterStatus('Confirmed')" id="bsc-Confirmed"><div class="lbl">CONFIRMED</div><div class="val" id="bs-confirmed">0</div></div>
+    <div class="bot-stat s-green clickable" onclick="botFilterStatus('Confirmed')" id="bsc-Confirmed"><div class="lbl">CONFIRMED</div><div class="val" id="bs-confirmed">0</div><div class="sub">every order placed</div></div>
     <div class="bot-stat s-purple clickable" onclick="botFilterStatus('Shipped')" id="bsc-Shipped"><div class="lbl">SHIPPED</div><div class="val" id="bs-shipped">0</div></div>
     <div class="bot-stat s-blue clickable" onclick="botFilterStatus('Delivered')" id="bsc-Delivered"><div class="lbl">DELIVERED</div><div class="val" id="bs-delivered">0</div></div>
     <div class="bot-stat s-teal clickable" id="bsc-stock" onclick="botOpenView('stock')" data-tip="Units you have on hand and haven't sold (picked up and checked). Click to see them, sell or count.">
@@ -2452,6 +2452,10 @@ async function botRefresh() {
   btn.innerHTML = '<i class="fa fa-sync"></i> Refresh';
 }
 
+// A live order is any order that isn't cancelled or refunded. The Confirmed card, tab and filter are all of them.
+const botIsLive = o => o.status !== 'Cancelled' && o.status !== 'Refunded';
+const botStatusMatch = (o, s) => s === 'Confirmed' ? botIsLive(o) : o.status === s;
+
 function buildBotStats() {
   // Card counts honour the date range, so clicking DELIVERED with "Today"
   // selected shows how many were delivered today rather than the all-time total.
@@ -2472,7 +2476,8 @@ function buildBotStats() {
     note.textContent = lbl ? `showing ${o.length} of ${_botOrders.length} orders ${lbl}` : '';
   }
   document.getElementById('bs-total').textContent = o.length;
-  document.getElementById('bs-confirmed').textContent = counts['Confirmed'];
+  // Confirmed = every order placed. Shipping or delivering one doesn't take it out; only cancel or refund does.
+  document.getElementById('bs-confirmed').textContent = o.filter(botIsLive).length;
   document.getElementById('bs-shipped').textContent = counts['Shipped'];
   document.getElementById('bs-delivered').textContent = counts['Delivered'];
   document.getElementById('bs-cancelled').textContent = counts['Cancelled'];
@@ -2763,7 +2768,7 @@ function renderBotOrders() {
   let rows = _botOrders.filter(o => {
     if (cat !== 'All' && (o.category||'Other') !== cat) return false;
     if (retailer && o.retailer !== retailer) return false;
-    if (status && o.status !== status) return false;
+    if (status && !botStatusMatch(o, status)) return false;
     if (!botInRange(o, _botRange)) return false;
     if (addrFilter && normalizeAddr(botMainAddr(o)) !== addrFilter) return false;
     if (search) {
@@ -3637,12 +3642,14 @@ function renderBotComing() {
     </div>`).join('');
 }
 
-// ── Ordered (Confirmed card): not shipped yet, by address ──────────────────
+// ── Ordered (Confirmed card): every order placed, by address ───────────────
+// Shipping or delivering an order never takes it out of here — only a cancel or
+// a refund does. Boxes that haven't shipped yet are listed first.
 // Paid + fees for the orders on screen — same basis as the SPENT and FINDER
 // FEES cards (order total minus refunds; your orders only — a partner's are on
 // his tab). Confirmed + Shipped + Delivered add up to the cards (All time, no
 // store filter).
-const BOT_TAB_STATUSES = { ordered: ['Confirmed', 'Unship'], coming: ['Shipped', 'OFD'], delivered: ['Delivered'] };
+const BOT_TAB_STATUSES = { ordered: ['Confirmed', 'Unship', 'Shipped', 'OFD', 'Delivered'], coming: ['Shipped', 'OFD'], delivered: ['Delivered'] };
 function botMoneyOf(orders) {
   const byId = new Map((_botOrders || []).map(o => [o.id, o]));
   const fee  = new Map((_botMoney.orderFees || []).map(x => [x.id, x.fee]));
@@ -3683,42 +3690,70 @@ function botViewMoneyText(m) {
     (un.length ? ` · incl. ${un.length} order${un.length === 1 ? '' : 's'} not listed below (${un.slice(0, 5).map(o => o.order_number || '#' + o.id).join(', ')}${un.length > 5 ? '…' : ''}) — its box has another status` : '');
 }
 
+// Every package by address: boxes still to ship first, then on the way, then delivered.
+function botOrderedModel(pkgs) {
+  const byAddr = new Map();
+  for (const p of pkgs) {
+    const s0 = p.shipTo[0] || {};
+    const k = normalizeAddr(s0.address || '') || '—';
+    if (!byAddr.has(k)) byAddr.set(k, { address: s0.address || 'No address yet', owner: null, names: new Set(), pkgs: [], notShipped: [] });
+    const a = byAddr.get(k);
+    a.owner = a.owner || s0.owner || null;
+    p.shipTo.forEach(x => x.name && a.names.add(x.name));
+    a.pkgs.push(p);
+    if (p.status === 'Confirmed' || p.status === 'Unship') a.notShipped.push(p);
+  }
+  const rank = p => (p.status === 'Confirmed' || p.status === 'Unship') ? 0 : p.status === 'Delivered' ? 2 : 1;
+  return [...byAddr.values()]
+    .map(a => ({ ...a, pkgs: [...a.pkgs].sort((x, y) => rank(x) - rank(y) || String(y.order_date || '').localeCompare(String(x.order_date || ''))) }))
+    .sort((x, y) => (y.notShipped.length - x.notShipped.length) || (y.pkgs.length - x.pkgs.length) || x.address.localeCompare(y.address));
+}
+const botPkgOrders = ps => ps.reduce((a, p) => a + p.orders.length, 0);
+
 function renderBotOrdered() {
   const wrap = document.getElementById('bot-coming-wrap');
   const q = (document.getElementById('bot-item-search').value || '').toLowerCase();
   let pk = _botComing;
   if (q) pk = pk.filter(p => [...p.orders.map(o => o.order_number), ...p.shipTo.map(s => s.name), ...p.shipTo.map(s => s.address),
     ...p.contents.map(c => c.name)].filter(Boolean).join(' ').toLowerCase().includes(q));
-  const groups = _botComingGroups = botComingModel(pk);     // everything lands in notShipped
-  const orders = groups.reduce((a, g) => a + g.notShipped.length, 0);
-  const units = groups.reduce((a, g) => a + g.notShipped.reduce((b, p) => b + p.units, 0), 0);
-  document.getElementById('bot-item-count').textContent = `${orders} order${orders === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'} ordered, not shipped yet` +
-    botViewMoneyText(botTabMoney(BOT_TAB_STATUSES.ordered, groups.flatMap(g => g.notShipped), !!q));
+  const groups = _botComingGroups = botOrderedModel(pk);
+  const orders = groups.reduce((a, g) => a + botPkgOrders(g.pkgs), 0);
+  const units = groups.reduce((a, g) => a + g.pkgs.reduce((b, p) => b + p.units, 0), 0);
+  const toShip = groups.reduce((a, g) => a + botPkgOrders(g.notShipped), 0);
+  document.getElementById('bot-item-count').textContent = `${orders} order${orders === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'} placed${toShip ? ` · ${toShip} not shipped yet` : ''}` +
+    botViewMoneyText(botTabMoney(BOT_TAB_STATUSES.ordered, groups.flatMap(g => g.pkgs), !!q));
   document.getElementById('bot-unlinked-banner').innerHTML = botOwnersLink();
   if (!groups.length) {
-    wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">Nothing waiting to ship.</div>`;
+    wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">No orders.</div>`;
     return;
   }
   wrap.innerHTML = groups.map((g, gi) => {
-    const u = g.notShipped.reduce((a, p) => a + p.units, 0);
+    const u = g.pkgs.reduce((a, p) => a + p.units, 0);
     return `
     <div class="bot-coming-addr bot-ordered-addr" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:10px;overflow:hidden;">
       <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);">
         <i class="fa fa-map-marker-alt" style="color:#34d399;"></i>
         <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${botOwnerChip(g.address, g.owner)}</div>
           <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
-        <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${g.notShipped.length} order${g.notShipped.length === 1 ? '' : 's'} · ${u} unit${u === 1 ? '' : 's'}${(m => ` · <span class="bot-addr-money" style="color:var(--text);">${botMoneyFmt(m.paid + m.fees)}</span>`)(botViewMoney(g.notShipped, BOT_TAB_STATUSES.ordered))}</span>
-        ${navigator.share ? `<button class="btn btn-primary btn-sm bot-owner-send" onclick="botSendOwnerMsg(${gi})" data-tip="Text the house owner"><i class="fa fa-paper-plane"></i> Send</button>` : ''}
-        <button class="btn btn-ghost btn-sm bot-owner-copy" onclick="botCopyOwnerMsg(${gi}, this)" data-tip="Copy a heads-up for the house owner"><i class="fa fa-copy"></i> Copy for house owner</button>
+        <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${botPkgOrders(g.pkgs)} order${botPkgOrders(g.pkgs) === 1 ? '' : 's'} · ${u} unit${u === 1 ? '' : 's'}${(m => ` · <span class="bot-addr-money" style="color:var(--text);">${botMoneyFmt(m.paid + m.fees)}</span>`)(botViewMoney(g.pkgs, BOT_TAB_STATUSES.ordered))}</span>
+        ${g.notShipped.length && navigator.share ? `<button class="btn btn-primary btn-sm bot-owner-send" onclick="botSendOwnerMsg(${gi})" data-tip="Text the house owner about what hasn't shipped"><i class="fa fa-paper-plane"></i> Send</button>` : ''}
+        ${g.notShipped.length ? `<button class="btn btn-ghost btn-sm bot-owner-copy" onclick="botCopyOwnerMsg(${gi}, this)" data-tip="Copy a heads-up for the house owner (what hasn't shipped yet)"><i class="fa fa-copy"></i> Copy for house owner</button>` : ''}
       </div>
-      ${g.notShipped.map(p => `
+      ${g.pkgs.map(p => {
+        const unshipped = p.status === 'Confirmed' || p.status === 'Unship';
+        const when = p.status === 'Delivered' && p.delivered_date ? `delivered ${botShortDate(p.delivered_date)}`
+                   : (p.status === 'Shipped' || p.status === 'OFD') && p.expected_date ? `expected ${botShortDate(p.expected_date)}` : '';
+        return `
         <div class="bot-coming-box bot-ordered-box" style="display:flex;align-items:flex-start;gap:10px;padding:6px 12px 8px 12px;font-size:12px;border-bottom:1px solid var(--border);">
-          <div style="width:190px;white-space:nowrap;"><span style="color:var(--muted);">not shipped yet</span>
+          <div style="width:190px;white-space:nowrap;">${unshipped
+              ? '<span style="color:var(--muted);">not shipped yet</span>'
+              : `<span class="bpill bpill-${esc(p.status)}" style="font-size:10px;padding:1px 6px;">${esc(p.status)}</span>${p.mixedStatus ? '<span style="font-size:10px;color:var(--muted);"> (mixed)</span>' : ''}${when ? ` <span style="font-size:10px;color:var(--muted);">${esc(when)}</span>` : ''}`}
             <div style="font-size:10px;color:var(--muted);">${esc(p.retailers.join(' · '))}${p.order_date ? ' · ordered ' + esc(botShortDate(p.order_date)) : ''}</div>
+            ${p.tracking ? `<div style="font-size:10px;"><a href="${esc(p.trackUrl)}" target="_blank" rel="noopener" style="color:#60a5fa;">${esc(p.tracking)}</a></div>` : ''}
             ${botReceiverLine(p)}</div>
           <div style="flex:1;">${botTags(p)}
             ${botOrderEdits(p)}</div>
-        </div>`).join('')}
+        </div>`; }).join('')}
     </div>`; }).join('');
 }
 
@@ -4790,7 +4825,7 @@ async function loadBotItemView(cat) {
     const pk = await api('GET', '/admin/bot-packages?' + q4.toString());
     if (!pk) return;
     _botComing = view === 'ordered'
-      ? pk.filter(p => p.status === 'Confirmed' || p.status === 'Unship')
+      ? pk                                                   // every order placed (cancelled/refunded are never in here)
       : pk.filter(p => p.status === 'Shipped' || p.status === 'OFD' || (status !== 'Shipped' && status !== 'OFD' && (p.status === 'Confirmed' || p.status === 'Unship')));
     const present = new Set(_botComing.map(p => p.key));
     [..._botComingSel].forEach(k => { if (!present.has(k)) _botComingSel.delete(k); });
