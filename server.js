@@ -236,6 +236,7 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS bot_sales (
   qty INTEGER NOT NULL, unit_price REAL NOT NULL, fees REAL DEFAULT 0, channel TEXT,
   sold_at TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
 try { db.exec("ALTER TABLE bot_sales ADD COLUMN order_id INTEGER"); } catch(e) {}   // presale: tied to this order
+try { db.exec("ALTER TABLE bot_sales ADD COLUMN bundle_id TEXT"); } catch(e) {}      // sold together with other products (bundleSale.js)
 try { db.exec("UPDATE bot_orders SET status='Confirmed' WHERE status='ordered'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Shipped' WHERE status='shipped'"); } catch(e) {}
 try { db.exec("UPDATE bot_orders SET status='Delivered' WHERE status='delivered' OR status='out_for_delivery'"); } catch(e) {}
@@ -274,6 +275,7 @@ try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_kept INTEGER DEFAULT 0"); }
 const nowIso = () => new Date().toISOString();
 const AutoFees = require('./autoFees');
 const FeeRules = require('./feeRules');
+const { allocateBundle } = require('./bundleSale');
 const { resolveClose } = require('./orderClose');
 function runAutoFees() {
   try { const n = AutoFees.applyAutoFees(db, SkuCatalog.loadCatalog(db)); if (n) console.log(`💲 auto finder fee on ${n} order(s)`); return n; }
@@ -1642,7 +1644,10 @@ app.get('/api/admin/bot-items', auth, adminOnly, (req, res) => {
   // A presale belongs to its order: only show it with that order on screen.
   const shownIds = new Set(orders.map(o => o.id));
   salesRows = salesRows.filter(r => r.order_id == null || shownIds.has(r.order_id));
-  res.json(computeItemGroups(withMainAddress(orders, { replace: true }), pricingRows, SkuCatalog.loadCatalog(db), salesRows, loadStock()));
+  const groups = computeItemGroups(withMainAddress(orders, { replace: true }), pricingRows, SkuCatalog.loadCatalog(db), salesRows, loadStock());
+  const bundles = bundleInfo(salesRows);
+  for (const g of groups) for (const s of g.sales || []) if (s.bundle_id) s.bundle = bundles.get(s.bundle_id) || null;
+  res.json(groups);
 });
 
 // ── Backup: the whole database as one file ──────────────────────────────────
@@ -1699,6 +1704,7 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
   const seen = new Set();
   const sales = [];
   const partnerSales = [];
+  const bundles = bundleInfo(salesRows);
   for (const g of groups) {
     for (const s of g.sales) {
       if (s.id != null && seen.has(s.id)) continue;
@@ -1714,6 +1720,7 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
                    sold_at: s.sold_at, qty: mine.qty, unit_price: s.unit_price, channel: s.channel || null,
                    unit_cost: g.perUnitTotal, shared: parts.length > 1,
                    presale: !!s.presale, order_id: s.order_id || null, order_gone: !!s.order_gone,
+                   bundle_id: s.bundle_id || null, bundle: s.bundle_id ? (bundles.get(s.bundle_id) || null) : null,
                    revenue: r2(mine.revenue), fees: r2(mine.fees), cost: r2(mine.cost), profit: r2(mine.revenue - mine.fees - mine.cost) });
     }
   }
@@ -1932,6 +1939,45 @@ app.post('/api/admin/bot-orders/:id/presale', auth, adminOnly, (req, res) => {
   });
   res.json({ ids });
 });
+
+// ── Sell several products as one (see bundleSale.js) ────────────────────────
+// lines [{ sku_key, product_name, qty, unit_price | weight }], mode 'each' | 'total'
+// (+ total), one fee for the whole sale. One sale row per product, tied by
+// bundle_id. dryRun returns the split without saving, for the preview.
+app.post('/api/admin/bot-sales/bundle', auth, adminOnly, (req, res) => {
+  const b = req.body || {};
+  const date = b.sold_at || new Date().toISOString().slice(0, 10);
+  if (!isIsoDate(date)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  const a = allocateBundle({ lines: b.lines, mode: b.mode, total: b.total, fees: b.fees });
+  if (a.error) return res.status(400).json({ error: a.error });
+  if (b.dryRun) return res.json({ lines: a.lines, revenue: a.revenue, fees: a.fees, saved: false });
+  const bundleId = 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const channel = String(b.channel || '').trim() || null;
+  const ids = a.rows.map(r => Number(db.prepare(`INSERT INTO bot_sales (sku_key, product_name, qty, unit_price, fees, channel, sold_at, bundle_id)
+                                                 VALUES (?,?,?,?,?,?,?,?)`)
+    .run([r.sku_key, r.product_name, r.qty, r.unit_price, r.fees, channel, date, bundleId]).lastInsertRowid));
+  res.json({ bundle_id: bundleId, ids, lines: a.lines, revenue: a.revenue, fees: a.fees, saved: true });
+});
+// The whole bundle goes: it was one sale to one buyer.
+app.delete('/api/admin/bot-sales/bundle/:bid', auth, adminOnly, (req, res) => {
+  const bid = String(req.params.bid || '');
+  if (!/^b[a-z0-9]{4,40}$/.test(bid)) return res.status(400).json({ error: 'bad bundle id' });
+  const n = db.prepare('SELECT COUNT(*) c FROM bot_sales WHERE bundle_id=?').get([bid]);
+  db.prepare('DELETE FROM bot_sales WHERE bundle_id=?').run([bid]);
+  res.json({ ok: true, removed: Number(n && n.c) || 0 });
+});
+
+// bundle_id → { items: how many products, total: what the buyer paid in all } — so a sale can say "sold together".
+function bundleInfo(salesRows) {
+  const m = new Map();
+  for (const r of salesRows || []) {
+    if (!r.bundle_id) continue;
+    const x = m.get(r.bundle_id) || { keys: new Set(), total: 0 };
+    x.keys.add(r.sku_key); x.total += (Number(r.qty) || 0) * (Number(r.unit_price) || 0);
+    m.set(r.bundle_id, x);
+  }
+  return new Map([...m].map(([k, x]) => [k, { items: x.keys.size, total: Math.round(x.total * 100) / 100 }]));
+}
 
 app.delete('/api/admin/bot-sales/:id', auth, adminOnly, (req, res) => {
   const id = Number(req.params.id);

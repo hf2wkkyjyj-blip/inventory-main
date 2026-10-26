@@ -62,6 +62,17 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
   .bst-cpu{display:none;}
   input.bst-count{width:64px !important;height:40px;}
   #bot-stock-wrap .btn{flex:1 1 auto;justify-content:center;}
+  #bst-selbar{position:sticky;top:0;z-index:5;background:var(--surface);}
+  #bst-selbar .btn{flex:1 1 auto;justify-content:center;}
+
+  /* Sell together: item, qty, price, total — the per-line profit is in the summary line */
+  #bot-bundle-overlay .bn-pf, #bot-bundle-overlay .bn-pfh{display:none;}
+  #bot-bundle-overlay .bn-line .clip{max-width:90px !important;}
+  #bot-bundle-overlay thead th:nth-child(2){width:50px !important;}
+  #bot-bundle-overlay thead th:nth-child(3){width:82px !important;}
+  #bot-bundle-overlay thead th:nth-child(4){width:62px !important;}
+  #bot-bundle-overlay input.bn-qty{width:46px !important;height:40px;}
+  #bot-bundle-overlay input.bn-price{width:78px !important;height:40px;}
 
   /* Check-in dialog: roomy rows */
   #ci-lines input.ci-good{width:64px !important;height:40px;}
@@ -1221,6 +1232,45 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   </div>
 </div>
 
+<!-- ══ MODAL: SELL TOGETHER (several products, one sale) ═════════════════════ -->
+<div class="overlay" id="bot-bundle-overlay" onclick="if(event.target.id==='bot-bundle-overlay')closeBundle()">
+  <div class="modal" style="width:640px;max-width:96vw;max-height:90vh;overflow:auto;">
+    <h2 style="margin-bottom:4px;"><i class="fa fa-layer-group" style="color:var(--accent)"></i> Sell together</h2>
+    <div id="bn-sub" style="font-size:12px;color:var(--muted);margin-bottom:12px;"></div>
+    <div style="display:flex;gap:6px;margin-bottom:12px;">
+      <button class="btn btn-sm" id="bn-mode-each" onclick="bnMode('each')">Price each item</button>
+      <button class="btn btn-sm" id="bn-mode-total" onclick="bnMode('total')">One total for all</button>
+    </div>
+    <div style="overflow-x:auto;margin-bottom:10px;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="font-size:10px;letter-spacing:.06em;color:var(--muted);">
+          <th style="text-align:left;padding:4px 0;">ITEM</th><th style="width:70px;">QTY</th>
+          <th style="width:110px;text-align:right;">PRICE EACH</th><th style="width:90px;text-align:right;">TOTAL</th>
+          <th class="bn-pfh" style="width:84px;text-align:right;" data-tip="After its share of the fees and its landed cost">PROFIT</th></tr></thead>
+        <tbody id="bn-lines"></tbody>
+      </table>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Total payout ($) <span id="bn-total-hint" style="color:var(--muted);font-weight:400;"></span></label>
+        <input type="number" id="bn-total" min="0" step="0.01" placeholder="0.00" style="width:100%;" oninput="bnTotal(this.value)"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Fees ($) <span style="color:var(--muted);font-weight:400;">— for the whole sale</span></label>
+        <input type="number" id="bn-fees" min="0" step="0.01" placeholder="0.00" style="width:100%;" oninput="bnPreviewSoon()"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Date</label>
+        <input type="date" id="bn-date" style="width:100%;"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Sold on</label>
+        <select id="bn-channel" style="width:100%;">
+          <option>eBay</option><option>Local</option><option>Whatnot</option><option>Facebook</option><option>TCGplayer</option><option>Other</option>
+        </select></div>
+    </div>
+    <div id="bn-preview" style="font-size:12px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:10px;"></div>
+    <div id="bn-error" style="font-size:12px;color:#f87171;margin-bottom:8px;display:none;"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn btn-ghost btn-sm" onclick="closeBundle()">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="bn-save" onclick="saveBundle()"><i class="fa fa-save"></i> Record sale</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ MODAL: EDIT SALE ══════════════════════════════════════════════════════ -->
 <div class="overlay" id="edit-sale-overlay">
   <div class="modal" style="width:400px;">
@@ -1324,8 +1374,7 @@ async function api(method, path, body) {
 }
 
 // ── Keep every card in step ─────────────────────────────────────────────────
-// Each fee, status or check-in is saved ONCE, on the order (or the product for
-// FEE / UNIT). Every card and list reads that same saved value — so it doesn't
+// Each fee, status or check-in is saved ONCE, on the order. Every card and list reads that same saved value — so it doesn't
 // matter where you typed it. This makes sure what's on screen is re-read after
 // any change, and when you come back to the app (another device may have
 // changed something).
@@ -3732,6 +3781,7 @@ const botDaysSince = d => { const t = botParseDate(d); return isNaN(t) ? null : 
 // it as a correction (short = loss at cost, extra = found).
 let _botStockItems = [];
 let _botStockShown = [];      // what the In stock list is showing (filters applied)
+let _botStockSel = new Set(); // products ticked to sell together
 
 // Bulk list for a buyer: what's on screen, names + quantities only. Never any
 // cost — landed cost and fees are yours. Alphabetical, so it reads like a menu.
@@ -3764,6 +3814,10 @@ function renderBotStock() {
   if (q) rows = rows.filter(i => i.name.toLowerCase().includes(q));
   _botStockShown = rows;
   rows.sort((a, b) => String(a.oldestInStock || '9999').localeCompare(String(b.oldestInStock || '9999')) || a.name.localeCompare(b.name));
+  // Ticks only make sense for what's on the shelf; counting a shelf has no sell step.
+  const cbCol = !_botCounting;
+  _botStockSel = new Set([...(_botStockSel || [])].filter(k => (_botStockItems || []).some(i => i.skuKey === k && i.unitsLeft > 0)));
+  const allTicked = rows.length > 0 && rows.every(i => _botStockSel.has(i.skuKey));
   const units = rows.reduce((a, i) => a + i.unitsLeft, 0);
   const cost  = rows.reduce((a, i) => a + (i.stockAtCost || 0), 0);
   document.getElementById('bot-item-count').textContent = `${rows.length} product${rows.length === 1 ? '' : 's'} · ${units} unit${units === 1 ? '' : 's'} · ${botMoneyFmt(cost)} at cost`;
@@ -3792,11 +3846,16 @@ function renderBotStock() {
         pick ? `<b style="color:#fbbf24;">${pick}</b> delivered, waiting to be checked in — <a href="#" onclick="botSetView('pickup');return false;" style="color:#60a5fa;">To pick up</a>` : ''}${
         pick && way ? ' · ' : ''}${way ? `<b>${way}</b> still on the way` : ''}</div>`;
     })()}
+    ${cbCol && _botStockSel.size ? `<div id="bst-selbar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;padding:8px 12px;border:1px solid var(--accent);border-radius:8px;font-size:12px;">
+      <b>${_botStockSel.size} selected</b>
+      <button class="btn btn-primary btn-sm" id="bst-sell-together" onclick="botSellTogether()"><i class="fa fa-layer-group"></i> Sell together</button>
+      <a href="#" onclick="botStockSelClear();return false;" style="color:#60a5fa;">Clear</a></div>` : ''}
     <div id="bst-error" style="font-size:12px;color:#f87171;margin-bottom:8px;display:none;"></div>
     <div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
         <thead><tr>
-          <th style="${th}text-align:left;padding-left:12px;">ITEM</th>
+          ${cbCol ? `<th style="${th}width:26px;padding-left:12px;"><input type="checkbox" id="bst-all" ${allTicked ? 'checked' : ''} ${rows.length ? '' : 'disabled'} onchange="botStockSelAll(this.checked)" data-tip="Tick all"></th>` : ''}
+          <th style="${th}text-align:left;padding-left:${cbCol ? 6 : 12}px;">ITEM</th>
           <th style="${th}text-align:center;">IN HAND</th>
           <th class="bst-cpu" style="${th}text-align:right;">COST / UNIT</th>
           <th style="${th}text-align:right;">AT COST</th>
@@ -3808,7 +3867,8 @@ function renderBotStock() {
           const age  = days == null ? '—' : `${days}d`;
           const ageC = days == null ? 'var(--muted)' : days >= 90 ? '#f87171' : days >= 60 ? '#fb923c' : days >= 30 ? '#fbbf24' : 'var(--muted)';
           return `<tr class="bst-row" data-key="${esc(i.skuKey)}" style="border-top:1px solid var(--border);">
-            <td style="padding:8px 12px;"><div class="clip bst-name" data-key="${esc(i.skuKey)}" onclick="botShowStockCost(this)" data-tip="Click for landed cost" style="cursor:pointer;">${esc(i.name)}</div>
+            ${cbCol ? `<td style="padding:8px 0 8px 12px;width:26px;"><input type="checkbox" class="bst-sel" data-key="${esc(i.skuKey)}" ${_botStockSel.has(i.skuKey) ? 'checked' : ''} onchange="botStockSelToggle(this.dataset.key, this.checked)"></td>` : ''}
+            <td style="padding:8px 12px 8px ${cbCol ? 6 : 12}px;"><div class="clip bst-name" data-key="${esc(i.skuKey)}" onclick="botShowStockCost(this)" data-tip="Click for landed cost" style="cursor:pointer;">${esc(i.name)}</div>
               <div style="font-size:10px;color:var(--muted);">${esc((i.retailers || []).join(' · '))}${i.toPickUp ? ` · +${i.toPickUp} to pick up` : ''}</div></td>
             <td class="bst-left" style="text-align:center;font-weight:700;">${i.unitsLeft}</td>
             <td class="bst-cpu" style="text-align:right;font-variant-numeric:tabular-nums;"><span class="bst-cost" data-key="${esc(i.skuKey)}" onclick="botShowStockCost(this)" data-tip="Click for the breakdown"
@@ -3821,16 +3881,22 @@ function renderBotStock() {
                <td class="bst-diff" style="text-align:center;font-weight:700;"></td>`
              : `<td style="text-align:right;padding-right:10px;"><button class="btn btn-ghost btn-sm bst-sell" data-key="${esc(i.skuKey)}" onclick="botSellFromStock(this.dataset.key)" data-tip="Record a sale" style="color:#4ade80;"><i class="fa fa-dollar-sign"></i> Sell</button></td>`}
           </tr>`; }).join('')
-          : `<tr><td colspan="${_botCounting ? 7 : 6}" style="text-align:center;padding:32px;color:var(--muted);">Nothing in hand here. Check boxes in under <b>To pick up</b> first.</td></tr>`}</tbody>
+          : `<tr><td colspan="${(_botCounting ? 7 : 6) + (cbCol ? 1 : 0)}" style="text-align:center;padding:32px;color:var(--muted);">Nothing in hand here. Check boxes in under <b>To pick up</b> first.</td></tr>`}</tbody>
         ${rows.length ? `<tfoot><tr style="border-top:1px solid var(--border);font-weight:700;">
-          <td style="padding:8px 12px;">Total</td><td style="text-align:center;">${units}</td><td class="bst-cpu"></td>
+          ${cbCol ? '<td></td>' : ''}<td style="padding:8px 12px 8px 6px;">Total</td><td style="text-align:center;">${units}</td><td class="bst-cpu"></td>
           <td style="text-align:right;">${botMoneyFmt(cost)}</td><td></td>${_botCounting ? '<td></td><td></td>' : '<td></td>'}</tr></tfoot>` : ''}
       </table>
     </div>
     <div id="bst-history" style="margin-top:12px;${_botCountHistory ? '' : 'display:none;'}"></div>`;
   wrap.querySelectorAll('input.bst-count').forEach(i => { if (i.value !== '') botCountDiff(i); });
   if (_botCountHistory) renderBotCountHistory();
+  const allBox = document.getElementById('bst-all');
+  if (allBox) allBox.indeterminate = !allTicked && rows.some(i => _botStockSel.has(i.skuKey));
 }
+
+function botStockSelToggle(key, on) { if (on) _botStockSel.add(key); else _botStockSel.delete(key); renderBotStock(); }
+function botStockSelAll(on) { (_botStockShown || []).forEach(i => { if (on) _botStockSel.add(i.skuKey); else _botStockSel.delete(i.skuKey); }); renderBotStock(); }
+function botStockSelClear() { _botStockSel.clear(); renderBotStock(); }
 
 function botCountMode(on) { _botCounting = !!on; if (!on) document.querySelectorAll('input.bst-count').forEach(i => { i.value = ''; }); renderBotStock(); }
 
@@ -3917,7 +3983,7 @@ function renderBotSold() {
       <tbody>${rows.length ? rows.map(x => `
         <tr class="sold-row" style="border-top:1px solid var(--border);">
           <td style="padding:7px 8px 7px 12px;white-space:nowrap;color:var(--muted);">${esc(botShortDate(x.sold_at || ''))}</td>
-          <td style="max-width:280px;"><div class="clip" data-tip="${esc(x.product)}">${esc(x.product)}</div>${x.presale ? `<div class="sold-presale" style="font-size:10px;color:#4ade80;">presold${x.order_gone ? ' · <span style="color:#f87171;">⚠ order cancelled — refund the buyer</span>' : ''}</div>` : ''}</td>
+          <td style="max-width:280px;"><div class="clip" data-tip="${esc(x.product)}">${esc(x.product)}</div>${x.bundle ? `<div class="sold-bundle" style="font-size:10px;color:#60a5fa;" data-tip="Sold as one sale — delete removes all of it">sold together · ${x.bundle.items} item${x.bundle.items === 1 ? '' : 's'} · ${botMoneyFmt(x.bundle.total)} total</div>` : ''}${x.presale ? `<div class="sold-presale" style="font-size:10px;color:#4ade80;">presold${x.order_gone ? ' · <span style="color:#f87171;">⚠ order cancelled — refund the buyer</span>' : ''}</div>` : ''}</td>
           <td style="text-align:center;">${x.qty}</td>
           <td style="text-align:right;font-variant-numeric:tabular-nums;">$${(x.unit_price || 0).toFixed(2)}</td>
           <td style="text-align:right;color:var(--muted);">${x.fees ? '$' + x.fees.toFixed(2) : '—'}</td>
@@ -3925,7 +3991,7 @@ function renderBotSold() {
           <td style="text-align:right;font-weight:700;color:${pc(x.profit)};">${x.profit >= 0 ? '+' : ''}${botMoneyFmt(x.profit)}</td>
           <td style="text-align:right;color:var(--muted);">${x.cost > 0 ? Math.round(x.profit / x.cost * 100) + '%' : '—'}</td>
           <td style="color:var(--muted);">${esc(x.channel || '')}</td>
-          <td><button class="sold-del" onclick="botDeleteSoldRow(${Number(x.id)})" data-tip="Delete this sale" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button></td>
+          <td><button class="sold-del" onclick="botDeleteSoldRow(${Number(x.id)})" data-tip="${x.bundle ? 'Delete this bundle (all its items)' : 'Delete this sale'}" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button></td>
         </tr>`).join('')
         : `<tr><td colspan="10" style="text-align:center;padding:32px;color:var(--muted);">No sales${lbl ? ' ' + lbl : ''}. Record one with the <b>$</b> button in By product.</td></tr>`}</tbody>
       ${rows.length ? `<tfoot><tr class="sold-total" style="border-top:1px solid var(--border);font-weight:700;">
@@ -3938,8 +4004,15 @@ function renderBotSold() {
 }
 
 async function botDeleteSoldRow(id) {
-  if (!confirm('Delete this sale? The units go back into stock.')) return;
-  await api('DELETE', '/admin/bot-sales/' + id);
+  const row = (_botMoney.sales || []).find(x => Number(x.id) === Number(id));
+  if (row && row.bundle_id) {
+    // Sold together = one sale to one buyer: it goes as a whole.
+    if (!confirm(`This was sold together with ${row.bundle.items - 1} other item${row.bundle.items === 2 ? '' : 's'} (${botMoneyFmt(row.bundle.total)} in all).\n\nDelete the whole sale? The units go back into stock.`)) return;
+    await api('DELETE', '/admin/bot-sales/bundle/' + encodeURIComponent(row.bundle_id));
+  } else {
+    if (!confirm('Delete this sale? The units go back into stock.')) return;
+    await api('DELETE', '/admin/bot-sales/' + id);
+  }
   await botLoadMoney();
   renderBotSold();
 }
@@ -5045,8 +5118,8 @@ function renderBotSaleHistory() {
   box.innerHTML = sales.map(s => `
     <div class="bs-sale" style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);">
       <span style="width:84px;color:var(--muted);">${esc(s.sold_at || '')}</span>
-      <span style="flex:1;">${s.qty} × $${s.unit_price.toFixed(2)}${s.fees ? ` <span style="color:var(--muted);">− $${s.fees.toFixed(2)} fees</span>` : ''}${s.channel ? ` <span style="color:var(--muted);">· ${esc(s.channel)}</span>` : ''}</span>
-      <button class="bs-del" onclick="deleteBotSale(${s.id})" data-tip="Delete this sale" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button>
+      <span style="flex:1;">${s.qty} × $${s.unit_price.toFixed(2)}${s.fees ? ` <span style="color:var(--muted);">− $${s.fees.toFixed(2)} fees</span>` : ''}${s.channel ? ` <span style="color:var(--muted);">· ${esc(s.channel)}</span>` : ''}${s.bundle ? ` <span class="bs-bundle" style="color:#60a5fa;" data-tip="Sold as one sale — delete removes all of it">· sold together, ${s.bundle.items} item${s.bundle.items === 1 ? '' : 's'}, ${botMoneyFmt(s.bundle.total)} in all</span>` : ''}</span>
+      <button class="bs-del" onclick="deleteBotSale(${s.id})" data-tip="${s.bundle ? 'Delete this bundle (all its items)' : 'Delete this sale'}" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button>
     </div>`).join('');
 }
 
@@ -5089,9 +5162,134 @@ async function saveBotSale() {
 }
 
 async function deleteBotSale(id) {
-  if (!confirm('Delete this sale?')) return;
-  await api('DELETE', '/admin/bot-sales/' + id);
+  const sale = ((_bsItem && _bsItem.sales) || []).find(x => x.id === id);
+  if (sale && sale.bundle_id) {
+    if (!confirm(`This was sold together with ${sale.bundle.items - 1} other item${sale.bundle.items === 2 ? '' : 's'} (${botMoneyFmt(sale.bundle.total)} in all).\n\nDelete the whole sale?`)) return;
+    await api('DELETE', '/admin/bot-sales/bundle/' + encodeURIComponent(sale.bundle_id));
+  } else {
+    if (!confirm('Delete this sale?')) return;
+    await api('DELETE', '/admin/bot-sales/' + id);
+  }
   await botSaleRefresh();
+}
+
+// ── Sell together ───────────────────────────────────────────────────────────
+// Tick products in In stock → one sale: each at its own price, or one total
+// payout that the server splits by landed cost (bundleSale.js). The preview asks
+// the server (dryRun), so what you see is exactly what gets saved.
+let _bn = null, _bnTimer = null;
+const bnKey = it => it.skuKey || it.name;
+const bnLanded = it => (it.stockUnit && it.stockUnit.total) || it.perUnitTotal || 0;
+
+function botSellTogether() {
+  const items = (_botStockItems || []).filter(i => _botStockSel.has(i.skuKey) && i.unitsLeft > 0);
+  if (!items.length) { alert('Tick the items you sold together first.'); return; }
+  _bn = { items, mode: 'each', qty: {}, price: {}, total: '', lines: null };
+  items.forEach(i => { _bn.qty[bnKey(i)] = 1; _bn.price[bnKey(i)] = ''; });
+  document.getElementById('bn-total').value = '';
+  document.getElementById('bn-fees').value  = '';
+  document.getElementById('bn-date').value  = botLocalToday();
+  document.getElementById('bn-error').style.display = 'none';
+  bnRender();
+  document.getElementById('bot-bundle-overlay').classList.add('open');
+  bnPreview();
+}
+function closeBundle() { document.getElementById('bot-bundle-overlay').classList.remove('open'); _bn = null; }
+
+function bnMode(m) {
+  if (!_bn || _bn.mode === m) return;
+  // Keep what you typed: total → each fills every price with its share; each → total fills the sum.
+  if (m === 'each' && _bn.lines) _bn.items.forEach((it, i) => { _bn.price[bnKey(it)] = _bn.total === '' ? '' : _bn.lines[i].unit.toFixed(2); });
+  if (m === 'total') {
+    const sum = _bn.items.reduce((a, it) => a + (parseInt(_bn.qty[bnKey(it)], 10) || 0) * (parseFloat(_bn.price[bnKey(it)]) || 0), 0);
+    _bn.total = sum > 0 ? sum.toFixed(2) : _bn.total;
+  }
+  _bn.mode = m;
+  bnRender();
+  bnPreview();
+}
+function bnQty(i, v)   { _bn.qty[bnKey(_bn.items[i])] = v;   bnPreviewSoon(); }
+function bnPrice(i, v) { _bn.price[bnKey(_bn.items[i])] = v; bnPreviewSoon(); }
+function bnTotal(v)    { if (_bn) { _bn.total = v; bnPreviewSoon(); } }
+function bnPreviewSoon() { clearTimeout(_bnTimer); _bnTimer = setTimeout(bnPreview, 180); }
+
+function bnRender() {
+  if (!_bn) return;
+  const each = _bn.mode === 'each';
+  document.getElementById('bn-mode-each').className  = 'btn btn-sm ' + (each ? 'btn-primary' : 'btn-ghost');
+  document.getElementById('bn-mode-total').className = 'btn btn-sm ' + (each ? 'btn-ghost' : 'btn-primary');
+  document.getElementById('bn-sub').textContent = `${_bn.items.length} item${_bn.items.length === 1 ? '' : 's'} · one buyer, one sale`;
+  const tot = document.getElementById('bn-total');
+  tot.disabled = each; tot.value = each ? '' : _bn.total;
+  document.getElementById('bn-total-hint').textContent = each ? '— adds up from the prices' : '— split by landed cost, so every item keeps the same margin';
+  document.getElementById('bn-lines').innerHTML = _bn.items.map((it, i) => { const k = bnKey(it); return `
+    <tr class="bn-line" style="border-top:1px solid var(--border);">
+      <td style="padding:6px 8px 6px 0;"><div class="clip" style="max-width:240px;" data-tip="${esc(it.name)}">${esc(it.name)}</div>
+        <div style="font-size:10px;color:var(--muted);">${it.unitsLeft} in hand · landed $${bnLanded(it).toFixed(2)}</div></td>
+      <td style="text-align:center;"><input type="number" class="bn-qty" min="1" step="1" value="${esc(String(_bn.qty[k]))}" oninput="bnQty(${i}, this.value)" style="width:58px;text-align:center;"></td>
+      <td style="text-align:right;">${each
+        ? `<input type="number" class="bn-price" min="0" step="0.01" placeholder="0.00" value="${esc(String(_bn.price[k]))}" oninput="bnPrice(${i}, this.value)" style="width:96px;text-align:right;">`
+        : `<span class="bn-pe" id="bn-pe-${i}" style="color:var(--muted);">—</span>`}</td>
+      <td class="bn-lt" id="bn-lt-${i}" style="text-align:right;font-variant-numeric:tabular-nums;">—</td>
+      <td class="bn-pf" id="bn-pf-${i}" style="text-align:right;font-weight:700;font-variant-numeric:tabular-nums;">—</td>
+    </tr>`; }).join('');
+}
+
+// What goes to the server: blanks count as 0 for the preview, never for the save.
+function bnBody(dry) {
+  const lines = _bn.items.map(it => {
+    const k = bnKey(it), qty = parseInt(_bn.qty[k], 10) || 0;
+    const l = { sku_key: k, product_name: it.name, qty, weight: qty * bnLanded(it) };
+    if (_bn.mode === 'each') l.unit_price = _bn.price[k] === '' ? (dry ? 0 : undefined) : parseFloat(_bn.price[k]);
+    return l;
+  });
+  const total = _bn.total === '' ? (dry ? 0 : undefined) : parseFloat(_bn.total);
+  return { lines, mode: _bn.mode, total: _bn.mode === 'total' ? total : undefined, fees: parseFloat(document.getElementById('bn-fees').value) || 0,
+           sold_at: document.getElementById('bn-date').value || botLocalToday(), channel: document.getElementById('bn-channel').value, dryRun: !!dry };
+}
+
+async function bnPreview() {
+  if (!_bn) return;
+  const money = n => (n < 0 ? '−' : '') + '$' + Math.abs(n || 0).toFixed(2);
+  const body = bnBody(true);
+  const box = document.getElementById('bn-preview');
+  if (body.lines.some(l => !(l.qty >= 1))) { box.innerHTML = '<span style="color:var(--muted);">Enter a quantity for every item.</span>'; return; }
+  const r = await api('POST', '/admin/bot-sales/bundle', body);
+  if (!r || !_bn) return;
+  _bn.lines = r.lines;
+  let landed = 0, profit = 0, warn = [];
+  _bn.items.forEach((it, i) => {
+    const l = r.lines[i], cost = l.qty * bnLanded(it), p = l.revenue - l.fees - cost;
+    landed += cost; profit += p;
+    const set = (id, t, color) => { const el = document.getElementById(id); if (el) { el.textContent = t; if (color) el.style.color = color; } };
+    set('bn-lt-' + i, money(l.revenue));
+    set('bn-pf-' + i, (p >= 0 ? '+' : '') + money(p), p >= 0 ? '#4ade80' : '#f87171');
+    set('bn-pe-' + i, money(l.unit));
+    if (l.qty > it.unitsLeft) warn.push(`${it.name}: only ${it.unitsLeft} in hand`);
+  });
+  if (_bn.mode === 'each') { const t = document.getElementById('bn-total'); t.value = r.revenue.toFixed(2); _bn.total = r.revenue.toFixed(2); }
+  box.innerHTML = `${money(r.revenue)} − ${money(r.fees)} fees − ${money(landed)} landed = <b style="color:${profit >= 0 ? '#4ade80' : '#f87171'};">${profit >= 0 ? '+' : ''}${money(profit)}</b>` +
+    (warn.length ? `<div style="color:#fbbf24;margin-top:4px;">⚠ ${esc(warn.join(' · '))} — check in the rest first, or save anyway.</div>` : '');
+}
+
+async function saveBundle() {
+  if (!_bn) return;
+  const err = document.getElementById('bn-error');
+  const body = bnBody(false);
+  const bad = m => { err.textContent = m; err.style.display = ''; };
+  if (body.lines.some(l => !(l.qty >= 1)))                                   return bad('Enter a quantity for every item.');
+  if (_bn.mode === 'each' && body.lines.some(l => !(l.unit_price >= 0)))     return bad('Enter a price for every item.');
+  if (_bn.mode === 'total' && !(body.total >= 0))                            return bad('Enter the total payout.');
+  err.style.display = 'none';
+  const btn = document.getElementById('bn-save'); btn.disabled = true;
+  try {
+    const r = await api('POST', '/admin/bot-sales/bundle', body);
+    if (!r) return bad('Could not save the sale — check the numbers and try again.');
+    _botStockSel.clear();
+    closeBundle();
+    botLoadMoney();
+    await loadBotItemView(botCurCat());
+  } finally { btn.disabled = false; }
 }
 
 // ── Item view edit/delete ─────────────────────────────────────────────────────

@@ -331,7 +331,7 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
       .map(r => ({
         id: r.id ?? null, qty: Number(r.qty) || 0, unit_price: Number(r.unit_price) || 0,
         fees: Number(r.fees) || 0, channel: r.channel || null, sold_at: r.sold_at || null,
-        order_id: r.order_id ?? null, presale: r.order_id != null,
+        order_id: r.order_id ?? null, presale: r.order_id != null, bundle_id: r.bundle_id || null,
         _line: r.order_id != null ? presaleLine.get(`${r.order_id}|${itemKey(r.sku_key)}`) || null : undefined,
       }))
       .sort((a, b) => String(b.sold_at || '').localeCompare(String(a.sold_at || '')) || (b.id || 0) - (a.id || 0));
