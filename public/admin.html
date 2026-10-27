@@ -3690,23 +3690,37 @@ function botViewMoneyText(m) {
     (un.length ? ` · incl. ${un.length} order${un.length === 1 ? '' : 's'} not listed below (${un.slice(0, 5).map(o => o.order_number || '#' + o.id).join(', ')}${un.length > 5 ? '…' : ''}) — its box has another status` : '');
 }
 
+// Fold an address to its header line. Remembered on this device; the membership
+// fees group starts folded, until you open it.
+function botOrderedFolds() { try { return JSON.parse(localStorage.getItem('bot_ordered_folds') || '{}') || {}; } catch (_) { return {}; } }
+function botOrderedSetFold(key, folded) { try { const f = botOrderedFolds(); f[key] = folded; localStorage.setItem('bot_ordered_folds', JSON.stringify(f)); } catch (_) {} }
+const botOrderedFolded = g => { const v = botOrderedFolds()[g.key]; return v === undefined ? !!g.fee : !!v; };
+function botOrderedToggle(gi) {
+  const g = (_botComingGroups || [])[gi]; if (!g) return;
+  botOrderedSetFold(g.key, !botOrderedFolded(g));
+  renderBotOrdered();
+}
+function botOrderedHeadClick(ev, gi) { if (!ev.target.closest('button, a, input, select')) botOrderedToggle(gi); }
+function botOrderedFoldAll(folded) { (_botComingGroups || []).forEach(g => botOrderedSetFold(g.key, folded)); renderBotOrdered(); }
+
 // Every package by address: boxes still to ship first, then on the way, then delivered.
 function botOrderedModel(pkgs) {
   const byAddr = new Map();
   for (const p of pkgs) {
+    // A membership fee is never shipped: all of them go in one group of their own, folded until you open it.
+    const fee = (p.contents || []).length > 0 && p.contents.every(c => /membership fee/i.test(c.name));
     const s0 = p.shipTo[0] || {};
-    const k = normalizeAddr(s0.address || '') || '—';
-    if (!byAddr.has(k)) byAddr.set(k, { address: s0.address || 'No address yet', owner: null, names: new Set(), pkgs: [], notShipped: [] });
+    const k = fee ? '__membership' : (normalizeAddr(s0.address || '') || '—');
+    if (!byAddr.has(k)) byAddr.set(k, { key: k, fee, address: fee ? 'Membership fees' : (s0.address || 'No address yet'), owner: null, names: new Set(), pkgs: [], notShipped: [] });
     const a = byAddr.get(k);
-    a.owner = a.owner || s0.owner || null;
-    p.shipTo.forEach(x => x.name && a.names.add(x.name));
+    if (!fee) { a.owner = a.owner || s0.owner || null; p.shipTo.forEach(x => x.name && a.names.add(x.name)); }
     a.pkgs.push(p);
-    if (p.status === 'Confirmed' || p.status === 'Unship') a.notShipped.push(p);
+    if (!fee && (p.status === 'Confirmed' || p.status === 'Unship')) a.notShipped.push(p);
   }
   const rank = p => (p.status === 'Confirmed' || p.status === 'Unship') ? 0 : p.status === 'Delivered' ? 2 : 1;
   return [...byAddr.values()]
     .map(a => ({ ...a, pkgs: [...a.pkgs].sort((x, y) => rank(x) - rank(y) || String(y.order_date || '').localeCompare(String(x.order_date || ''))) }))
-    .sort((x, y) => (y.notShipped.length - x.notShipped.length) || (y.pkgs.length - x.pkgs.length) || x.address.localeCompare(y.address));
+    .sort((x, y) => (x.fee - y.fee) || (y.notShipped.length - x.notShipped.length) || (y.pkgs.length - x.pkgs.length) || x.address.localeCompare(y.address));
 }
 const botPkgOrders = ps => ps.reduce((a, p) => a + p.orders.length, 0);
 
@@ -3727,25 +3741,30 @@ function renderBotOrdered() {
     wrap.innerHTML = `<div style="border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:32px;text-align:center;color:var(--muted);">No orders.</div>`;
     return;
   }
-  wrap.innerHTML = groups.map((g, gi) => {
+  const foldBar = groups.length > 1 ? `<div class="bot-ordered-foldbar" style="display:flex;justify-content:flex-end;gap:14px;font-size:12px;margin-bottom:6px;">
+      <a href="#" onclick="botOrderedFoldAll(true);return false;" style="color:#60a5fa;">Collapse all</a>
+      <a href="#" onclick="botOrderedFoldAll(false);return false;" style="color:#60a5fa;">Expand all</a></div>` : '';
+  wrap.innerHTML = foldBar + groups.map((g, gi) => {
     const u = g.pkgs.reduce((a, p) => a + p.units, 0);
+    const folded = botOrderedFolded(g);
     return `
-    <div class="bot-coming-addr bot-ordered-addr" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:10px;overflow:hidden;">
-      <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);">
-        <i class="fa fa-map-marker-alt" style="color:#34d399;"></i>
-        <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${botOwnerChip(g.address, g.owner)}</div>
-          <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
+    <div class="bot-coming-addr bot-ordered-addr${folded ? ' folded' : ''}" style="border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:10px;overflow:hidden;">
+      <div class="bot-ordered-head" onclick="botOrderedHeadClick(event, ${gi})" style="display:flex;align-items:center;gap:10px;padding:9px 12px;${folded ? '' : 'border-bottom:1px solid var(--border);'}background:rgba(255,255,255,.02);cursor:pointer;" data-tip="${folded ? 'Click to show these orders' : 'Click to collapse'}">
+        <i class="fa fa-chevron-${folded ? 'right' : 'down'}" style="color:var(--muted);font-size:10px;width:10px;"></i>
+        <i class="fa ${g.fee ? 'fa-id-card' : 'fa-map-marker-alt'}" style="color:${g.fee ? 'var(--muted)' : '#34d399'};"></i>
+        <div style="flex:1;min-width:0;"><div style="display:flex;align-items:center;min-width:0;"><b class="clip">${esc(g.address)}</b>${g.fee ? '' : botOwnerChip(g.address, g.owner)}</div>
+          <div style="font-size:11px;color:var(--muted);" class="clip" data-tip="${esc([...g.names].join(', '))}">${g.fee ? 'the one-time Mattel membership — nothing ships' : g.names.size > 3 ? `${g.names.size} names on the labels` : esc([...g.names].join(', '))}</div></div>
         <span class="bot-coming-sum" style="font-size:12px;color:var(--muted);white-space:nowrap;">${botPkgOrders(g.pkgs)} order${botPkgOrders(g.pkgs) === 1 ? '' : 's'} · ${u} unit${u === 1 ? '' : 's'}${(m => ` · <span class="bot-addr-money" style="color:var(--text);">${botMoneyFmt(m.paid + m.fees)}</span>`)(botViewMoney(g.pkgs, BOT_TAB_STATUSES.ordered))}</span>
         ${g.notShipped.length && navigator.share ? `<button class="btn btn-primary btn-sm bot-owner-send" onclick="botSendOwnerMsg(${gi})" data-tip="Text the house owner about what hasn't shipped"><i class="fa fa-paper-plane"></i> Send</button>` : ''}
         ${g.notShipped.length ? `<button class="btn btn-ghost btn-sm bot-owner-copy" onclick="botCopyOwnerMsg(${gi}, this)" data-tip="Copy a heads-up for the house owner (what hasn't shipped yet)"><i class="fa fa-copy"></i> Copy for house owner</button>` : ''}
       </div>
-      ${g.pkgs.map(p => {
+      ${folded ? '' : g.pkgs.map(p => {
         const unshipped = p.status === 'Confirmed' || p.status === 'Unship';
         const when = p.status === 'Delivered' && p.delivered_date ? `delivered ${botShortDate(p.delivered_date)}`
                    : (p.status === 'Shipped' || p.status === 'OFD') && p.expected_date ? `expected ${botShortDate(p.expected_date)}` : '';
         return `
         <div class="bot-coming-box bot-ordered-box" style="display:flex;align-items:flex-start;gap:10px;padding:6px 12px 8px 12px;font-size:12px;border-bottom:1px solid var(--border);">
-          <div style="width:190px;white-space:nowrap;">${unshipped
+          <div style="width:190px;white-space:nowrap;">${g.fee ? '<span style="color:var(--muted);">membership fee</span>' : unshipped
               ? '<span style="color:var(--muted);">not shipped yet</span>'
               : `<span class="bpill bpill-${esc(p.status)}" style="font-size:10px;padding:1px 6px;">${esc(p.status)}</span>${p.mixedStatus ? '<span style="font-size:10px;color:var(--muted);"> (mixed)</span>' : ''}${when ? ` <span style="font-size:10px;color:var(--muted);">${esc(when)}</span>` : ''}`}
             <div style="font-size:10px;color:var(--muted);">${esc(p.retailers.join(' · '))}${p.order_date ? ' · ordered ' + esc(botShortDate(p.order_date)) : ''}</div>
