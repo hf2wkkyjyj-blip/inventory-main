@@ -674,6 +674,7 @@ function parseProductHtml(html, source) {
     const bc = crumbs.join(' ').toLowerCase();
     if (/floor|tile|hardwood|laminate|vinyl plank|carpet/.test(bc)) product.category = 'Flooring';
     else if (/vanit|bath|medicine cabinet|sink/.test(bc)) product.category = 'Vanity';
+    else if (/\bdoors?\b/.test(bc) && !/hardware|knob|handle|lock/.test(bc)) product.category = 'Doors';
     else if (/tool|drill|saw|hardware|fastener/.test(bc)) product.category = 'Tools';
     else product.category = 'Other';
   }
@@ -779,6 +780,7 @@ app.post('/api/admin/fetch-product', auth, async (req, res) => {
         const bc = crumbs.join(' ').toLowerCase();
         if (/floor|tile|hardwood|laminate|vinyl plank|carpet/.test(bc)) d.category = 'Flooring';
         else if (/vanit|bath|medicine cabinet|sink/.test(bc)) d.category = 'Vanity';
+        else if (/\bdoors?\b/.test(bc) && !/hardware|knob|handle|lock/.test(bc)) d.category = 'Doors';
         else if (/tool|drill|saw|hardware|fastener/.test(bc)) d.category = 'Tools';
         else d.category = 'Other';
       }
