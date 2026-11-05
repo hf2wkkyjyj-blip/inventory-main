@@ -379,6 +379,8 @@ catch (e) { console.error('⚠️  baseline import failed:', e.message); }
 
 // Collapse duplicate rows left behind by the bot API (see orderMerge.js).
 // Idempotent: once merged, later startups find nothing to do.
+try { OrderMerge.cleanNames(db); }
+catch (e) { console.error('⚠️  name cleanup failed:', e.message); }
 try { OrderMerge.mergeDuplicateOrders(db); }
 catch (e) { console.error('⚠️  duplicate merge failed:', e.message); }
 OrderMerge.reconcileDelivered(db);

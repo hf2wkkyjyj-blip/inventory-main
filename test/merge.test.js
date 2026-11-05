@@ -3,6 +3,8 @@
 // scraper's row (priced items, total, tracking) plus the bot API's duplicate
 // (buyer name only, unpriced item, no total).
 
+process.removeAllListeners('warning');
+const { DatabaseSync } = require('node:sqlite');
 const M = require('../orderMerge');
 
 let passed = 0, failed = 0;
@@ -20,6 +22,7 @@ function makeDb(rows) {
       const s = sql.replace(/\s+/g, ' ').trim();
       return {
         all(p = []) {
+          if (!/bot_orders/i.test(s)) return [];
           if (/GROUP BY order_number HAVING/i.test(s)) {
             const c = {};
             table.filter(r => r.order_number && String(r.order_number).trim())
@@ -32,6 +35,7 @@ function makeDb(rows) {
           return [];
         },
         run(p = []) {
+          if (!/bot_orders/i.test(s)) return;      // check-ins, issues, sales: not modelled here
           if (/^UPDATE/i.test(s)) {
             const id = p[p.length - 1];
             const cols = s.match(/SET (.+) WHERE/i)[1].split(',').map(c => c.split('=')[0].trim());
@@ -130,6 +134,58 @@ console.log('\n── Bot API: findExisting + fillExisting ──');
   eq('only empty field filled', filled.join(','), 'shipping_name');
   eq('total not clobbered by bot 0', db.table[0].order_total, 65.09);
   eq('priced items not clobbered', /@ \$29\.99/.test(db.table[0].items), true);
+}
+
+console.log('\n── Topps: scraper says "Shopify Store", the bot says "Topps" ──');
+{
+  const raw = new DatabaseSync(':memory:');
+  const a = p => (p === undefined ? [] : Array.isArray(p) ? p : [p]);
+  const real = {
+    exec: sql => raw.exec(sql),
+    prepare: sql => { const st = raw.prepare(sql); return { all: p => st.all(...a(p)), get: p => st.get(...a(p)), run: p => st.run(...a(p)) }; },
+  };
+  raw.exec(`CREATE TABLE bot_orders (id INTEGER PRIMARY KEY, order_number TEXT, retailer TEXT, category TEXT, status TEXT, items TEXT,
+    order_total REAL, tax_amount REAL, ship_cost REAL, finder_fee REAL, tracking TEXT, shipping_name TEXT, shipping_address TEXT, account_email TEXT)`);
+  raw.exec('CREATE TABLE bot_checkins (order_id INTEGER PRIMARY KEY, checked_at TEXT)');
+  raw.exec('CREATE TABLE bot_issues (id INTEGER PRIMARY KEY, order_id INTEGER, item_key TEXT)');
+  raw.exec('CREATE TABLE bot_sales (id INTEGER PRIMARY KEY, order_id INTEGER)');
+  const add = (id, no, shop, o = {}) => raw.prepare(`INSERT INTO bot_orders (id, order_number, retailer, status, items, order_total, shipping_name, account_email)
+    VALUES (?,?,?,?,?,?,?,?)`).run(id, no, shop, 'Confirmed', o.items || '[]', o.total || 0, o.name || null, o.email || null);
+
+  add(1, 'US-15162323-S', 'Shopify Store', { items: '["2026 Topps Chrome\u00ae Update Series Baseball \u00b7 Jumbo Box @ $79.99"]', total: 86.39, name: '---------------- Sang Nguyen' });
+  add(2, 'US-15162323-S', 'Topps',         { name: 'Sang Nguyen', email: 'buyer@example.com' });
+  raw.exec("INSERT INTO bot_checkins VALUES (2, '2026-11-04')");                 // you checked in the bot's copy
+  raw.exec("INSERT INTO bot_issues (order_id, item_key) VALUES (2, 'box')");
+  raw.exec("INSERT INTO bot_sales (order_id) VALUES (2)");
+  add(3, '25164', 'Bear Walker',   { total: 125.48 });                           // short Shopify numbers can collide…
+  add(4, '25164', 'Shopify Store', { total: 22 });                               // …two different shops: left alone
+  add(5, 'US-777-S', 'Topps', {}); add(6, 'US-777-S', 'Walmart', {});            // two real shops: left alone
+
+  eq('clean the dashed name',          M.cleanNames(real, silent), 1);
+  eq('name is just the name',          raw.prepare('SELECT shipping_name n FROM bot_orders WHERE id=1').get().n, 'Sang Nguyen');
+  eq('clean again: nothing to do',     M.cleanNames(real, silent), 0);
+
+  const r = M.mergeDuplicateOrders(real, silent);
+  eq('one order merged',               r.merged, 1);
+  eq('two pairs left alone',           r.skipped, 2);
+  const all = raw.prepare('SELECT id, retailer FROM bot_orders ORDER BY id').all();
+  eq('the copy is gone, others stay',  JSON.stringify(all.map(x => x.id)), '[1,3,4,5,6]');
+  eq('shop name beats "Shopify Store"', all[0].retailer, 'Topps');
+  eq('kept the priced row',            raw.prepare('SELECT order_total t FROM bot_orders WHERE id=1').get().t, 86.39);
+  eq('gained the buyer account',       raw.prepare('SELECT account_email e FROM bot_orders WHERE id=1').get().e, 'buyer@example.com');
+  eq('check-in moved to the kept row', JSON.stringify(raw.prepare('SELECT order_id FROM bot_checkins').all().map(x => x.order_id)), '[1]');
+  eq('issue moved',                    JSON.stringify(raw.prepare('SELECT order_id FROM bot_issues').all().map(x => x.order_id)), '[1]');
+  eq('presale link moved',             JSON.stringify(raw.prepare('SELECT order_id FROM bot_sales').all().map(x => x.order_id)), '[1]');
+
+  console.log('\n── The bot posting the same order again ──');
+  raw.exec("DELETE FROM bot_orders"); raw.exec('DELETE FROM bot_checkins');
+  add(1, 'US-15162345-S', 'Shopify Store', { total: 86.39 });
+  const hit = M.findExisting(real, 'US-15162345-S', 'Topps');
+  eq('finds the scraper row under its other label', hit && hit.id, 1);
+  M.fillExisting(real, hit, { retailer: 'Topps', shipping_name: 'Sang Nguyen' });
+  eq('and names the shop',             raw.prepare('SELECT retailer r FROM bot_orders WHERE id=1').get().r, 'Topps');
+  add(2, '25164', 'Bear Walker'); 
+  eq('short number, different shop: no match', M.findExisting(real, '25164', 'Shopify Store'), null);
 }
 
 console.log(`\n${'─'.repeat(60)}`);

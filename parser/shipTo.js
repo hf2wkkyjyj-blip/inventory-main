@@ -26,6 +26,9 @@ const STREET   = /^0*\d+[a-z]?(?:-\S+)?\s+\S/i;
 // words — past them comes the STORE's own address, which must never be taken.
 const JUNK     = /^(united states|usa|us|https?:|track|view|manage|edit|change|my account|account|help|contact|customer service|privacy|terms|unsubscribe|shop|community|membership|please|©|\(c\)|copyright)\b/i;
 
+// A line of only dashes / equals / underscores / asterisks: a divider, not content.
+const RULE     = /^[-=_*~\s]{3,}$/;
+
 function clean(s) {
   return String(s || '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\s+/g, ' ').trim();
 }
@@ -55,7 +58,9 @@ function extractShipTo(text) {
     /\b(US|USA|United States)\s+(?=(?:Shipping Address|Ship(?:ping)? To|Delivery Address|Deliver(?:s|ing)? to|Shipped to|Shipment Address)\b)/gi,
     '$1\n'
   );
-  const lines = normalized.split(/\r?\n/).map(clean).filter(Boolean);
+  // Plain-text Shopify mail underlines each heading ("Shipping address" then
+  // "----------------"). That rule is not part of the name.
+  const lines = normalized.split(/\r?\n/).map(clean).filter(l => l && !RULE.test(l));
 
   // 1 — "Delivers to:" (Target), value on the same line or the next.
   for (let i = 0; i < lines.length; i++) {

@@ -128,6 +128,12 @@ eq('empty',                        extractShipTo(''), null);
   const pm = await parseOrderEmail({ html, text: '', subject: 'Your Mattel Creations Order #CHP0000099 has shipped', from: 'orders@mattel.com' });
   eq('Mattel HTML: address found', pm && pm.shippingAddress, '42 Example Blvd, unit 109, Springfield, Minnesota 55003');
 
+  // Shopify plain text underlines each heading — the underline is not part of the name.
+  const SHOPIFY = `Order summary\n\nShipping address\n----------------\nTest Buyer\n42 Example Blvd\nSpringfield, MN 55003\nUnited States\n\nBilling address\n---------------\nTest Buyer\n42 Example Blvd\nSpringfield, MN 55003`;
+  const sh = extractShipTo(SHOPIFY);
+  eq('Shopify underline: name',    sh && sh.name, 'Test Buyer');
+  eq('Shopify underline: address', sh && sh.address, '42 Example Blvd, Springfield, MN 55003');
+
   console.log(`\n${'─'.repeat(60)}`);
   console.log(`${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
