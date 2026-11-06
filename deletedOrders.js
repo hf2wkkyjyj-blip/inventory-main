@@ -104,26 +104,28 @@ function restoreDeleted(db, archiveIds, at = new Date().toISOString()) {
 /**
  * The last `last` order numbers on the block list (what you deleted most recently)
  * and which saved emails mention them.
- * @returns {{numbers: string[], messageIds: Set<string>, noEmail: string[]}}
+ * @returns {{numbers: string[], messageIds: Set<string>, noEmail: string[], details: {number, subject, from, date}[]}}
  */
 function planRebuild(db, last) {
   const live = new Set();
   try { db.prepare('SELECT order_number FROM bot_orders WHERE order_number IS NOT NULL').all().forEach(r => live.add(String(r.order_number))); } catch (_) {}
   const numbers = loadBlocked(db).map(String).filter(n => n && !live.has(n)).slice(-Math.max(1, last | 0));
-  const found = new Set(), messageIds = new Set();
+  const found = new Set(), messageIds = new Set(), first = new Map();
   if (numbers.length) {
     const re = new RegExp(numbers.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
     let rows = [];
     try {
-      rows = db.prepare(`SELECT message_id, subject, CASE WHEN text IS NULL OR text='' THEN html ELSE text END AS body FROM raw_emails`).all();
+      rows = db.prepare(`SELECT message_id, subject, from_email, email_date, CASE WHEN text IS NULL OR text='' THEN html ELSE text END AS body FROM raw_emails ORDER BY email_date ASC`).all();
     } catch (_) {}
     for (const r of rows) {
       const hay = `${r.subject || ''}\n${r.body || ''}`;
       const m = hay.match(re);
-      if (m) { messageIds.add(r.message_id); m.forEach(x => found.add(x)); }
+      if (m) { messageIds.add(r.message_id); m.forEach(x => { found.add(x); if (!first.has(x)) first.set(x, { subject: r.subject || null, from: r.from_email || null, date: r.email_date || null }); }); }
     }
   }
-  return { numbers, messageIds, noEmail: numbers.filter(n => !found.has(n)) };
+  // What the first saved email for each says — its date and subject show which orders these were.
+  const details = numbers.map(n => ({ number: n, ...(first.get(n) || { subject: null, from: null, date: null }) }));
+  return { numbers, messageIds, noEmail: numbers.filter(n => !found.has(n)), details };
 }
 
 module.exports = { ensureTable, archiveOrders, listDeleted, restoreDeleted, planRebuild, unblock, loadBlocked, saveBlocked };

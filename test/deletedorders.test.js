@@ -17,7 +17,7 @@ raw.exec(`CREATE TABLE bot_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, email_i
   finder_fee REAL, fee_source TEXT, notes TEXT)`);
 raw.exec('CREATE TABLE bot_checkins (order_id INTEGER PRIMARY KEY, checked_at TEXT)');
 raw.exec('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)');
-raw.exec('CREATE TABLE raw_emails (message_id TEXT PRIMARY KEY, subject TEXT, html TEXT, text TEXT)');
+raw.exec('CREATE TABLE raw_emails (message_id TEXT PRIMARY KEY, subject TEXT, from_email TEXT, email_date TEXT, html TEXT, text TEXT)');
 const add = (id, no, status, extra = {}) => raw.prepare('INSERT INTO bot_orders (id, email_id, order_number, retailer, status, items, finder_fee, fee_source, notes) VALUES (?,?,?,?,?,?,?,?,?)')
   .run(id, 'e' + id, no, 'Topps', status, '["2x Box @ $10.00"]', extra.fee ?? 0, extra.src ?? null, extra.notes ?? null);
 const live = () => raw.prepare('SELECT id FROM bot_orders ORDER BY id').all().map(r => r.id);
@@ -56,13 +56,15 @@ eq('both exist, different ids',   nums().filter(n => n === 'US-20-S' || n === 'U
 console.log('\n── Deleted before copies were kept: rebuild from saved emails ──');
 raw.exec('DELETE FROM bot_orders'); raw.exec('DELETE FROM settings');
 D.saveBlocked(db, ['OLD-1', 'US-15162323-S', 'US-15162131-S', 'US-15161821-S']);   // OLD-1 was deleted long ago
-raw.exec("INSERT INTO raw_emails VALUES ('m1','Order US-15162323-S confirmed','', 'Thanks! Order US-15162323-S')");
-raw.exec("INSERT INTO raw_emails VALUES ('m2','Shipped','<p>Order US-15162131-S</p>', '')");      // text empty → html is searched
-raw.exec("INSERT INTO raw_emails VALUES ('m3','Unrelated','', 'nothing here')");
+raw.exec("INSERT INTO raw_emails VALUES ('m1','Order US-15162323-S confirmed','shop@x.com','2026-11-02T10:00:00Z','', 'Thanks! Order US-15162323-S')");
+raw.exec("INSERT INTO raw_emails VALUES ('m2','Shipped','shop@x.com','2026-11-03T10:00:00Z','<p>Order US-15162131-S</p>', '')");      // text empty → html is searched
+raw.exec("INSERT INTO raw_emails VALUES ('m3','Unrelated','a@b.com','2026-11-03T11:00:00Z','', 'nothing here')");
 const plan = D.planRebuild(db, 3);
 eq('the last 3 deleted, not older ones', plan.numbers, ['US-15162323-S', 'US-15162131-S', 'US-15161821-S']);
 eq('finds their emails',                 [...plan.messageIds].sort(), ['m1', 'm2']);
 eq('one has no saved email',             plan.noEmail, ['US-15161821-S']);
+eq('shows each one\'s email date + subject', plan.details.map(d => [d.number, d.date && d.date.slice(0, 10), d.subject]),
+   [['US-15162323-S', '2026-11-02', 'Order US-15162323-S confirmed'], ['US-15162131-S', '2026-11-03', 'Shipped'], ['US-15161821-S', null, null]]);
 eq('unblock the ones asked for',         D.unblock(db, plan.numbers), 3);
 eq('older block stays',                  D.loadBlocked(db), ['OLD-1']);
 add(5, 'US-15162323-S', 'Confirmed');

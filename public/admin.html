@@ -1248,6 +1248,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <button class="btn btn-primary btn-sm" id="bd-go" onclick="botRebuildDeleted(false)" disabled>Rebuild</button>
       </div>
       <div id="bd-msg" style="font-size:12px;color:var(--muted);margin-top:8px;white-space:pre-wrap;"></div>
+      <div id="bd-preview"></div>
     </div>
     <div style="text-align:right;margin-top:14px;"><button class="btn btn-ghost btn-sm" onclick="botCloseDeleted()">Close</button></div>
   </div>
@@ -5539,6 +5540,7 @@ async function deleteBotItemByName(idx) {
 async function botOpenDeleted() {
   document.getElementById('bot-deleted-overlay').classList.add('open');
   document.getElementById('bd-msg').textContent = '';
+  document.getElementById('bd-preview').innerHTML = '';
   document.getElementById('bd-go').disabled = true;
   await botDeletedLoad();
 }
@@ -5584,7 +5586,15 @@ async function botRebuildDeleted(dry) {
     msg.textContent = `Found ${r.asked} recently deleted order number(s). ${r.withEmail} have a saved email to rebuild from` +
       (r.noEmail.length ? `, ${r.noEmail.length} do not.` : '.') + `\nOldest: ${r.numbers[0] || '—'}   Newest: ${r.numbers[r.numbers.length - 1] || '—'}`;
     document.getElementById('bd-go').disabled = !r.withEmail;
+    // Newest first, numbered: find where your accident ends and type that number.
+    document.getElementById('bd-preview').innerHTML = '<div style="font-size:11px;color:var(--muted);margin:8px 0 4px;">Newest first. Find where your accident ends and type that number.</div>' +
+      '<div style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;">' +
+      r.details.slice().reverse().map((d, i) => `<div style="display:flex;gap:8px;padding:5px 10px;border-bottom:1px solid var(--border);font-size:11px;">
+        <span style="width:26px;color:var(--muted);">${i + 1}</span><span style="font-weight:600;white-space:nowrap;">${esc(d.number)}</span>
+        <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);">${d.subject ? esc(d.subject) : 'no saved email'}</span>
+        <span style="color:var(--muted);white-space:nowrap;">${esc(String(d.date || '').slice(0, 10))}</span></div>`).join('') + '</div>';
   } else {
+    document.getElementById('bd-preview').innerHTML = '';
     msg.textContent = `Brought back ${r.back} of ${r.asked} order(s).` + (r.missing.length ? `\nNot found in your saved emails: ${r.missing.join(', ')}` : '');
     document.getElementById('bd-go').disabled = true;
     loadBotOrders();

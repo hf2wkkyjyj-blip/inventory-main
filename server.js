@@ -2215,7 +2215,7 @@ app.post('/api/admin/bot-orders/rebuild-deleted', auth, adminOnly, async (req, r
     const last = Math.min(500, Math.max(1, parseInt(req.body && req.body.last) || 0));
     if (!(parseInt(req.body && req.body.last) > 0)) return res.status(400).json({ error: 'last (how many) required' });
     const plan = DeletedOrders.planRebuild(db, last);
-    const info = { asked: plan.numbers.length, withEmail: plan.numbers.length - plan.noEmail.length, noEmail: plan.noEmail, numbers: plan.numbers };
+    const info = { asked: plan.numbers.length, withEmail: plan.numbers.length - plan.noEmail.length, noEmail: plan.noEmail, numbers: plan.numbers, details: plan.details };
     if (req.body.dryRun) return res.json(info);
     DeletedOrders.unblock(db, plan.numbers);
     await reparseStoredEmails(db, { onlyMessageIds: plan.messageIds });
