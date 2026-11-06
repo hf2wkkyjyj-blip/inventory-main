@@ -1189,10 +1189,12 @@ function saveRawEmail(db, parsed, html, text) {
 // rebuildStatus:true also re-derives every status from scratch, which is the only
 // way to clear statuses written by earlier buggy detection (e.g. shipping emails
 // misread as Cancelled because their footer contained the word "cancel").
-async function reparseStoredEmails(db, { rebuildStatus = false } = {}) {
+// onlyMessageIds: re-read just these saved emails (e.g. the ones about orders being rebuilt).
+async function reparseStoredEmails(db, { rebuildStatus = false, onlyMessageIds = null } = {}) {
   ensureRawEmailTable(db);
   // Oldest first so status progresses Confirmed → Shipped → Delivered naturally.
-  const rows = db.prepare('SELECT * FROM raw_emails ORDER BY email_date ASC').all();
+  let rows = db.prepare('SELECT * FROM raw_emails ORDER BY email_date ASC').all();
+  if (onlyMessageIds) rows = rows.filter(r => onlyMessageIds.has(r.message_id));
   console.log(`🔁 Reparsing ${rows.length} archived email(s)${rebuildStatus ? ' with status rebuild' : ''} — no IMAP needed`);
 
   const before = statusCounts(db);

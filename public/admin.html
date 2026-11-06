@@ -596,6 +596,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       </div>
       <button class="btn btn-ghost btn-sm" id="bot-refresh-btn" onclick="botRefresh()"><i class="fa fa-sync"></i> Refresh</button>
       <button class="btn btn-ghost btn-sm" id="bot-partners-btn" onclick="botOpenPartnersPage()"><i class="fa fa-handshake"></i> Partners</button>
+      <button class="btn btn-ghost btn-sm" id="bot-deleted-btn" onclick="botOpenDeleted()" title="Put back orders you deleted"><i class="fa fa-trash-can-arrow-up"></i> Deleted</button>
       <button class="btn btn-primary btn-sm" onclick="showBotAddForm()"><i class="fa fa-plus"></i> Add Order</button>
     </div>
   </div>
@@ -1233,6 +1234,25 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 </div>
 
 <!-- ══ MODAL: SELL TOGETHER (several products, one sale) ═════════════════════ -->
+<div class="overlay" id="bot-deleted-overlay" onclick="if(event.target.id==='bot-deleted-overlay')botCloseDeleted()">
+  <div class="modal" style="width:640px;max-width:96vw;max-height:90vh;overflow:auto;">
+    <h2 style="margin-bottom:4px;"><i class="fa fa-trash-can-arrow-up" style="color:var(--accent)"></i> Deleted orders</h2>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">A copy is kept of every order you delete. Restore puts it back exactly as it was.</div>
+    <div id="bd-list" style="margin-bottom:14px;"></div>
+    <div style="border-top:1px solid var(--border);padding-top:12px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px;">Deleted before this list existed?</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Rebuild the most recently deleted orders from your saved emails. Things you typed by hand (fees, notes, check-ins) can't come back this way.</div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <input type="number" id="bd-last" min="1" max="500" placeholder="How many?" style="width:110px;font-size:12px;padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+        <button class="btn btn-ghost btn-sm" onclick="botRebuildDeleted(true)">Preview</button>
+        <button class="btn btn-primary btn-sm" id="bd-go" onclick="botRebuildDeleted(false)" disabled>Rebuild</button>
+      </div>
+      <div id="bd-msg" style="font-size:12px;color:var(--muted);margin-top:8px;white-space:pre-wrap;"></div>
+    </div>
+    <div style="text-align:right;margin-top:14px;"><button class="btn btn-ghost btn-sm" onclick="botCloseDeleted()">Close</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="bot-bundle-overlay" onclick="if(event.target.id==='bot-bundle-overlay')closeBundle()">
   <div class="modal" style="width:640px;max-width:96vw;max-height:90vh;overflow:auto;">
     <h2 style="margin-bottom:4px;"><i class="fa fa-layer-group" style="color:var(--accent)"></i> Sell together</h2>
@@ -5064,7 +5084,7 @@ function renderBotItemView() {
       <td style="padding:8px;white-space:nowrap;">
         <button title="Record a sale" onclick="openBotSale(${idx})" style="background:var(--surface);border:1px solid var(--border);color:#4ade80;width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:3px;"><i class="fa fa-dollar-sign" style="font-size:10px;"></i></button>
         <button title="Edit item" onclick="openBotItemEdit(${idx})" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);width:26px;height:26px;border-radius:6px;cursor:pointer;margin-right:3px;"><i class="fa fa-pen" style="font-size:10px;"></i></button>
-        <button title="Delete all orders for this item" onclick="deleteBotItemByName(${idx})" style="background:var(--surface);border:1px solid var(--border);color:#f87171;width:26px;height:26px;border-radius:6px;cursor:pointer;"><i class="fa fa-trash" style="font-size:10px;"></i></button>
+        <button title="Delete the orders in this row" onclick="deleteBotItemByName(${idx})" style="background:var(--surface);border:1px solid var(--border);color:#f87171;width:26px;height:26px;border-radius:6px;cursor:pointer;"><i class="fa fa-trash" style="font-size:10px;"></i></button>
       </td>
     </tr>${expanded ? botOrdersPanel(item, idx) : ''}`;
   }).join('');
@@ -5501,18 +5521,73 @@ async function botAcceptAllSuggestions() {
 async function deleteBotItemByName(idx) {
   const item = _botItemRows[idx];
   if (!item) { alert('Could not find this item — try refreshing.'); return; }
-  const name   = item.name;
-  const qty    = item.qty;
-  const titles = item.rawNames && item.rawNames.length ? item.rawNames : [name];
-  if (!confirm(`Delete ALL ${item.orders || ''} order(s) for "${name}" (${qty} units)?\n\n` +
-               (titles.length > 1 ? `This covers ${titles.length} store titles grouped under this product.\n\n` : '') +
-               `This cannot be undone. Those orders will also be blocked from being re-created by the scraper.`)) return;
-  // Send every store title in the group — the short display name matches none
-  // of the order text on its own.
-  const r = await api('DELETE', '/admin/bot-items/by-name', { names: titles });
+  // Exactly the orders this row lists — not every order that happens to hold this product.
+  const lines = (item.orderLines || []).filter(l => l.id != null);
+  if (!lines.length) { alert('Could not find this row\'s orders — try refreshing.'); return; }
+  const by = {}; lines.forEach(l => { by[l.status || 'Confirmed'] = (by[l.status || 'Confirmed'] || 0) + 1; });
+  const split = Object.entries(by).map(([k, n]) => `${n} ${k}`).join(', ');
+  if (!confirm(`Delete these ${lines.length} order(s) for "${item.name}"?\n\n${split}\n\n` +
+               `Whole orders are deleted, including anything else in them. You can bring them back from the Deleted button.`)) return;
+  const r = await api('DELETE', '/admin/bot-orders', { ids: lines.map(l => l.id) });
   if (r) {
-    alert(`Deleted ${r.deleted} order(s).`);
+    alert(`Deleted ${r.deleted} order(s). They're in Deleted if you need them back.`);
     if (botItemViewActive()) loadBotItemView(botCurCat());
+  }
+}
+
+// ── Deleted orders: restore, or rebuild from saved emails ────────────────────
+async function botOpenDeleted() {
+  document.getElementById('bot-deleted-overlay').classList.add('open');
+  document.getElementById('bd-msg').textContent = '';
+  document.getElementById('bd-go').disabled = true;
+  await botDeletedLoad();
+}
+function botCloseDeleted() { document.getElementById('bot-deleted-overlay').classList.remove('open'); }
+
+async function botDeletedLoad() {
+  const box = document.getElementById('bd-list');
+  const r = await api('GET', '/admin/bot-orders/deleted');
+  const rows = (r && r.deleted) || [];
+  if (!rows.length) { box.innerHTML = '<div style="font-size:12px;color:var(--muted);">Nothing deleted since copies were kept.</div>'; return; }
+  const items = x => { try { return JSON.parse(x || '[]').join(' · '); } catch (_) { return ''; } };
+  box.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+      <span style="font-size:12px;color:var(--muted);">${rows.length} deleted order${rows.length === 1 ? '' : 's'}</span>
+      <button class="btn btn-primary btn-sm" onclick="botRestoreDeleted('all')">Restore all</button></div>
+    <div style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:8px;">` +
+    rows.map(d => `<div style="display:flex;gap:8px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--border);font-size:12px;">
+      <div style="flex:1;min-width:0;"><div style="font-weight:600;">${esc(d.order_number || '(no number)')} <span style="font-weight:400;color:var(--muted);">${esc(d.retailer || '')} · ${esc(d.status || '')}</span></div>
+        <div style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(items(d.items))}</div></div>
+      <div style="color:var(--muted);white-space:nowrap;">${esc(String(d.deleted_at || '').slice(0, 10))}</div>
+      <button class="btn btn-ghost btn-sm" onclick="botRestoreDeleted(${d.id})">Restore</button></div>`).join('') + '</div>';
+  window._botDeletedIds = rows.map(d => d.id);
+}
+
+async function botRestoreDeleted(which) {
+  const ids = which === 'all' ? (window._botDeletedIds || []) : [which];
+  if (!ids.length) return;
+  const r = await api('POST', '/admin/bot-orders/deleted/restore', { ids });
+  if (r) {
+    document.getElementById('bd-msg').textContent = `Restored ${r.restored}` + (r.already ? `, ${r.already} already back` : '') + (r.failed ? `, ${r.failed} could not be restored` : '') + '.';
+    await botDeletedLoad();
+    loadBotOrders();
+  }
+}
+
+async function botRebuildDeleted(dry) {
+  const last = parseInt(document.getElementById('bd-last').value);
+  const msg = document.getElementById('bd-msg');
+  if (!(last > 0)) { msg.textContent = 'Type how many of your most recent deletes to look for.'; return; }
+  msg.textContent = dry ? 'Looking…' : 'Rebuilding from saved emails…';
+  const r = await api('POST', '/admin/bot-orders/rebuild-deleted', { last, dryRun: dry });
+  if (!r) { msg.textContent = 'That did not work — try again.'; return; }
+  if (dry) {
+    msg.textContent = `Found ${r.asked} recently deleted order number(s). ${r.withEmail} have a saved email to rebuild from` +
+      (r.noEmail.length ? `, ${r.noEmail.length} do not.` : '.') + `\nOldest: ${r.numbers[0] || '—'}   Newest: ${r.numbers[r.numbers.length - 1] || '—'}`;
+    document.getElementById('bd-go').disabled = !r.withEmail;
+  } else {
+    msg.textContent = `Brought back ${r.back} of ${r.asked} order(s).` + (r.missing.length ? `\nNot found in your saved emails: ${r.missing.join(', ')}` : '');
+    document.getElementById('bd-go').disabled = true;
+    loadBotOrders();
   }
 }
 

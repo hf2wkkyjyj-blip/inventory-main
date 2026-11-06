@@ -50,6 +50,7 @@ function withMainAddress(orders, { replace = false } = {}) {
   });
 }
 const OrderMerge = require('./orderMerge');
+const DeletedOrders = require('./deletedOrders');
 const { recategorizeOrders } = require('./category');
 const Retailers = require('./retailers');
 
@@ -277,6 +278,24 @@ const AutoFees = require('./autoFees');
 const FeeRules = require('./feeRules');
 const { allocateBundle } = require('./bundleSale');
 const { resolveClose } = require('./orderClose');
+// The one way an order is deleted: save a copy first (so Deleted → Restore can put
+// it back), block its number so the scraper doesn't recreate it, then delete.
+// If the copy can't be saved nothing is deleted.
+function removeOrders(ids, reason) {
+  ids = [...new Set(ids.map(Number).filter(Number.isInteger))];
+  if (!ids.length) return 0;
+  const rows = ids.map(id => db.prepare('SELECT id, order_number FROM bot_orders WHERE id=?').get([id])).filter(Boolean);
+  if (!rows.length) return 0;
+  DeletedOrders.archiveOrders(db, rows.map(r => r.id), reason);
+  try {
+    const blocked = DeletedOrders.loadBlocked(db);
+    for (const r of rows) if (r.order_number && !blocked.includes(r.order_number)) blocked.push(r.order_number);
+    DeletedOrders.saveBlocked(db, blocked);
+  } catch (_) {}
+  db.prepare(`DELETE FROM bot_orders WHERE id IN (${rows.map(() => '?').join(',')})`).run(rows.map(r => r.id));
+  return rows.length;
+}
+
 function runAutoFees() {
   try { const n = AutoFees.applyAutoFees(db, SkuCatalog.loadCatalog(db)); if (n) console.log(`💲 auto finder fee on ${n} order(s)`); return n; }
   catch (e) { console.error('auto fees failed:', e.message); return 0; }
@@ -2055,18 +2074,10 @@ app.delete('/api/admin/bot-items/by-name', auth, adminOnly, (req, res) => {
     const titles = arr.flatMap(splitItemParts).map(parseItemName);
     if (titles.some(n => targets.has(itemKey(n)))) toDelete.push(o);
   }
-  // Add to blocklist
-  try {
-    const raw = db.prepare("SELECT value FROM settings WHERE key='scraper_blocked_orders'").get();
-    const blocked = raw ? JSON.parse(raw.value) : [];
-    for (const o of toDelete) if (o.order_number && !blocked.includes(o.order_number)) blocked.push(o.order_number);
-    db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('scraper_blocked_orders',?)").run([JSON.stringify(blocked)]);
-  } catch(_) {}
-  if (toDelete.length) {
-    const ids = toDelete.map(o=>o.id);
-    db.prepare(`DELETE FROM bot_orders WHERE id IN (${ids.map(()=>'?').join(',')})`).run(ids);
-  }
-  res.json({ deleted: toDelete.length });
+  let deleted = 0;
+  try { deleted = removeOrders(toDelete.map(o => o.id), 'product row (by name)'); }
+  catch (e) { return res.status(500).json({ error: 'Nothing deleted: could not save a copy first (' + e.message + ')' }); }
+  res.json({ deleted });
 });
 
 // Fee typed per unit on a product (FEE / UNIT) × that order's units of it.
@@ -2172,20 +2183,49 @@ app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
 });
 
 app.delete('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
-  // Before deleting, remember this order_number so the scraper doesn't recreate it
-  const row = db.prepare('SELECT order_number FROM bot_orders WHERE id=?').get([req.params.id]);
-  if (row && row.order_number) {
-    try {
-      const raw = db.prepare("SELECT value FROM settings WHERE key='scraper_blocked_orders'").get();
-      const blocked = raw ? JSON.parse(raw.value) : [];
-      if (!blocked.includes(row.order_number)) {
-        blocked.push(row.order_number);
-        db.prepare("INSERT OR REPLACE INTO settings (key,value) VALUES ('scraper_blocked_orders',?)").run([JSON.stringify(blocked)]);
-      }
-    } catch(_) {}
-  }
-  db.prepare('DELETE FROM bot_orders WHERE id=?').run([req.params.id]);
+  try { removeOrders([req.params.id], 'one order'); }
+  catch (e) { return res.status(500).json({ error: 'Nothing deleted: could not save a copy first (' + e.message + ')' }); }
   res.json({ success: true });
+});
+
+// Delete exactly these orders (what a product row shows), not everything sharing a product.
+app.delete('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids : [];
+  if (!ids.length) return res.status(400).json({ error: 'ids required' });
+  try { res.json({ deleted: removeOrders(ids, 'chosen orders') }); }
+  catch (e) { res.status(500).json({ error: 'Nothing deleted: could not save a copy first (' + e.message + ')' }); }
+});
+
+// Deleted → Restore: orders that have a saved copy.
+app.get('/api/admin/bot-orders/deleted', auth, adminOnly, (req, res) => {
+  try { res.json({ deleted: DeletedOrders.listDeleted(db) }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/api/admin/bot-orders/deleted/restore', auth, adminOnly, (req, res) => {
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+  if (!ids.length) return res.status(400).json({ error: 'ids required' });
+  try { const r = DeletedOrders.restoreDeleted(db, ids); runAutoFees(); res.json(r); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Orders deleted before copies were kept: read them again from the saved emails.
+// {last: N} = the N most recently deleted. {dryRun: true} only shows what it would do.
+app.post('/api/admin/bot-orders/rebuild-deleted', auth, adminOnly, async (req, res) => {
+  try {
+    const last = Math.min(500, Math.max(1, parseInt(req.body && req.body.last) || 0));
+    if (!(parseInt(req.body && req.body.last) > 0)) return res.status(400).json({ error: 'last (how many) required' });
+    const plan = DeletedOrders.planRebuild(db, last);
+    const info = { asked: plan.numbers.length, withEmail: plan.numbers.length - plan.noEmail.length, noEmail: plan.noEmail, numbers: plan.numbers };
+    if (req.body.dryRun) return res.json(info);
+    DeletedOrders.unblock(db, plan.numbers);
+    await reparseStoredEmails(db, { onlyMessageIds: plan.messageIds });
+    try { importBaselineOrders(db); } catch (_) {}          // retailers the scraper can't read
+    try { OrderMerge.mergeDuplicateOrders(db); } catch (_) {}
+    runAutoFees();
+    const live = new Set(db.prepare('SELECT order_number FROM bot_orders WHERE order_number IS NOT NULL').all().map(r => String(r.order_number)));
+    const back = plan.numbers.filter(n => live.has(n));
+    res.json({ ...info, back: back.length, missing: plan.numbers.filter(n => !live.has(n)) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── ORDER TRACKER (admin-only, not in /public) ──────────────────────────────
