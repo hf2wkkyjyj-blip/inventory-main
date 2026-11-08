@@ -998,6 +998,17 @@ app.post('/api/admin/expenses', auth, (req, res) => {
   res.json({ id: result.lastInsertRowid });
 });
 
+app.put('/api/admin/expenses/:id', auth, (req, res) => {
+  const { category, amount, payment_method, notes, expense_date } = req.body || {};
+  const amt = parseFloat(amount);
+  if (!(amt > 0)) return res.status(400).json({ error: 'Amount required' });
+  const old = db.prepare('SELECT id, expense_date FROM expenses WHERE id=?').get([req.params.id]);
+  if (!old) return res.status(404).json({ error: 'Expense not found' });
+  db.prepare('UPDATE expenses SET category=?, amount=?, payment_method=?, notes=?, expense_date=? WHERE id=?')
+    .run([category || 'Other', amt, payment_method || 'Cash', notes || null, expense_date || old.expense_date, req.params.id]);
+  res.json({ success: true });
+});
+
 app.delete('/api/admin/expenses/:id', auth, (req, res) => {
   db.prepare('DELETE FROM expenses WHERE id=?').run([req.params.id]);
   res.json({ success: true });
@@ -1105,6 +1116,16 @@ app.post('/api/admin/members/:id/payments', auth, adminOnly, (req, res) => {
   if (!amount) return res.status(400).json({ error: 'Amount required' });
   const r = db.prepare('INSERT INTO member_payments (member_id,amount,notes) VALUES (?,?,?)').run([req.params.id, parseFloat(amount)||0, notes||null]);
   res.json({ id: r.lastInsertRowid });
+});
+
+app.put('/api/admin/member-payments/:id', auth, adminOnly, (req, res) => {
+  const { amount, notes } = req.body || {};
+  const amt = parseFloat(amount);
+  if (!(amt > 0)) return res.status(400).json({ error: 'Amount required' });
+  const r = db.prepare('SELECT id FROM member_payments WHERE id=?').get([req.params.id]);
+  if (!r) return res.status(404).json({ error: 'Payment not found' });
+  db.prepare('UPDATE member_payments SET amount=?, notes=? WHERE id=?').run([amt, notes || null, req.params.id]);
+  res.json({ success: true });
 });
 
 app.delete('/api/admin/member-payments/:id', auth, adminOnly, (req, res) => {
@@ -1285,6 +1306,17 @@ app.post('/api/admin/bot-partners/:id/payouts', auth, adminOnly, (req, res) => {
   if (!isIsoDate(day)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
   db.prepare('INSERT INTO bot_partner_payouts (partner_id, amount, paid_at, note) VALUES (?,?,?,?)')
     .run([Number(req.params.id), Math.round(amount * 100) / 100, day, String((req.body || {}).note || '').trim() || null]);
+  res.json({ ok: true });
+});
+app.put('/api/admin/bot-partner-payouts/:id', auth, adminOnly, (req, res) => {
+  const b = req.body || {};
+  const amount = Number(b.amount);
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Amount must be more than 0' });
+  if (!isIsoDate(b.paid_at)) return res.status(400).json({ error: 'Date must be YYYY-MM-DD' });
+  const r = db.prepare('SELECT id FROM bot_partner_payouts WHERE id=?').get([Number(req.params.id)]);
+  if (!r) return res.status(404).json({ error: 'Payment not found' });
+  db.prepare('UPDATE bot_partner_payouts SET amount=?, paid_at=?, note=? WHERE id=?')
+    .run([Math.round(amount * 100) / 100, b.paid_at, String(b.note || '').trim() || null, Number(req.params.id)]);
   res.json({ ok: true });
 });
 app.delete('/api/admin/bot-partner-payouts/:id', auth, adminOnly, (req, res) => {
@@ -2146,6 +2178,36 @@ app.post('/api/admin/bot-orders', auth, adminOnly, (req, res) => {
     .run([category||'Other',retailer||null,order_number||null,account_email||null,order_date||null,shipping_name||null,shipping_address||null,status||'Confirmed',JSON.stringify(items||[]),parseFloat(order_total)||0,notes||null]);
   runAutoFees();
   res.json({ id: r.lastInsertRowid });
+});
+
+// Addresses screen: rename the address on exactly these orders, or clear it
+// (address '' — the orders stay, they just show no address). The owner name you
+// gave the old address follows it to the new one when the new one has none yet.
+app.post('/api/admin/bot-orders/bulk-address', auth, adminOnly, (req, res) => {
+  const b = req.body || {};
+  const ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return res.status(400).json({ error: 'ids required' });
+  if (ids.length > 2000) return res.status(400).json({ error: 'Too many orders at once' });
+  const address = String(b.address || '').trim().slice(0, 300);
+  const oldKeys = new Set();
+  let changed = 0;
+  for (const id of ids) {
+    const row = db.prepare('SELECT shipping_address FROM bot_orders WHERE id=?').get([id]);
+    if (!row) continue;
+    const k = addressKey(row.shipping_address); if (k) oldKeys.add(k);
+    db.prepare('UPDATE bot_orders SET shipping_address=? WHERE id=?').run([address || null, id]);
+    changed++;
+  }
+  try {
+    const nk = address && addressKey(address);
+    if (nk && !db.prepare('SELECT 1 FROM bot_address_owners WHERE addr_key=?').get([nk])) {
+      for (const k of oldKeys) {
+        const o = db.prepare('SELECT owner FROM bot_address_owners WHERE addr_key=?').get([k]);
+        if (o && o.owner) { saveOwner(o.owner, address); break; }
+      }
+    }
+  } catch (_) {}
+  res.json({ updated: changed });
 });
 
 app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {

@@ -596,6 +596,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       </div>
       <button class="btn btn-ghost btn-sm" id="bot-refresh-btn" onclick="botRefresh()"><i class="fa fa-sync"></i> Refresh</button>
       <button class="btn btn-ghost btn-sm" id="bot-partners-btn" onclick="botOpenPartnersPage()"><i class="fa fa-handshake"></i> Partners</button>
+      <button class="btn btn-ghost btn-sm" id="bot-addresses-btn" onclick="botOpenAddresses()" title="Rename or remove an address"><i class="fa fa-location-dot"></i> Addresses</button>
       <button class="btn btn-ghost btn-sm" id="bot-deleted-btn" onclick="botOpenDeleted()" title="Put back orders you deleted"><i class="fa fa-trash-can-arrow-up"></i> Deleted</button>
       <button class="btn btn-primary btn-sm" onclick="showBotAddForm()"><i class="fa fa-plus"></i> Add Order</button>
     </div>
@@ -1254,6 +1255,16 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   </div>
 </div>
 
+<div class="overlay" id="bot-addresses-overlay" onclick="if(event.target.id==='bot-addresses-overlay')botCloseAddresses()">
+  <div class="modal" style="width:640px;max-width:96vw;max-height:90vh;overflow:auto;">
+    <h2 style="margin-bottom:4px;"><i class="fa fa-location-dot" style="color:var(--accent)"></i> Addresses</h2>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;"><b>Rename</b> changes the address on all its orders. <b>Remove address</b> keeps the orders but clears the address. <b>Delete orders</b> deletes them (a copy is kept in Deleted).</div>
+    <input type="text" id="ba-q" placeholder="Search addresses…" oninput="botAddrRender()" autocomplete="off" style="width:100%;font-size:13px;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);margin-bottom:10px;">
+    <div id="ba-list"></div>
+    <div style="text-align:right;margin-top:14px;"><button class="btn btn-ghost btn-sm" onclick="botCloseAddresses()">Close</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="bot-bundle-overlay" onclick="if(event.target.id==='bot-bundle-overlay')closeBundle()">
   <div class="modal" style="width:640px;max-width:96vw;max-height:90vh;overflow:auto;">
     <h2 style="margin-bottom:4px;"><i class="fa fa-layer-group" style="color:var(--accent)"></i> Sell together</h2>
@@ -1317,7 +1328,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 <!-- ══ MODAL: EXPENSE ═══════════════════════════════════════════════════════ -->
 <div class="overlay" id="expense-overlay">
   <div class="modal" style="width:440px;">
-    <h2><i class="fa fa-receipt" style="color:var(--yellow)"></i> Add Expense</h2>
+    <h2><i class="fa fa-receipt" style="color:var(--yellow)"></i> <span id="exp-title">Add Expense</span></h2>
     <div class="form-row">
       <div class="form-group" style="margin:0"><label>Category *</label>
         <select id="exp-cat">
@@ -2024,6 +2035,7 @@ async function loadExpenses() {
   if (month) { params.set('from', month+'-01'); params.set('to', month+'-31'); }
   const expenses = await api('GET', '/admin/expenses'+(params.toString()?'?'+params:''));
   if (!expenses) return;
+  _expRows = expenses;
 
   // Summary
   const total = expenses.reduce((s,e)=>s+e.amount,0);
@@ -2046,18 +2058,22 @@ async function loadExpenses() {
       <td class="fw7 text-red">$${Number(e.amount).toFixed(2)}</td>
       <td class="text-muted fs12">${esc(e.payment_method||'')}</td>
       <td class="text-muted fs12">${esc(e.notes||'')}</td>
-      <td><button class="btn btn-danger btn-xs" onclick="deleteExpense(${e.id})"><i class="fa fa-trash"></i></button></td>
+      <td style="white-space:nowrap;"><button class="btn btn-ghost btn-xs" onclick="editExpense(${e.id})" title="Edit"><i class="fa fa-pen"></i></button> <button class="btn btn-danger btn-xs" onclick="deleteExpense(${e.id})" title="Delete"><i class="fa fa-trash"></i></button></td>
     </tr>`).join('');
 }
 
-function openExpenseModal() {
-  document.getElementById('exp-amount').value = '';
-  document.getElementById('exp-cat').value = 'Gas / Fuel';
-  document.getElementById('exp-payment').value = 'Cash';
-  document.getElementById('exp-date').value = todayStr();
-  document.getElementById('exp-notes').value = '';
+let _expEditId = null, _expRows = [];
+function openExpenseModal(e) {
+  _expEditId = e ? e.id : null;
+  document.getElementById('exp-amount').value = e ? e.amount : '';
+  document.getElementById('exp-cat').value = e ? e.category : 'Gas / Fuel';
+  document.getElementById('exp-payment').value = e ? (e.payment_method || 'Cash') : 'Cash';
+  document.getElementById('exp-date').value = e ? String(e.expense_date || '').slice(0, 10) : todayStr();
+  document.getElementById('exp-notes').value = e ? (e.notes || '') : '';
+  document.getElementById('exp-title').textContent = e ? 'Edit Expense' : 'Add Expense';
   document.getElementById('expense-overlay').classList.add('open');
 }
+function editExpense(id) { const e = _expRows.find(x => x.id === id); if (e) openExpenseModal(e); }
 function closeExpenseModal() { document.getElementById('expense-overlay').classList.remove('open'); }
 document.getElementById('expense-overlay').addEventListener('click', e => { if(e.target.id==='expense-overlay') closeExpenseModal(); });
 
@@ -2070,7 +2086,8 @@ async function saveExpense() {
     notes: document.getElementById('exp-notes').value.trim()||null,
     expense_date: document.getElementById('exp-date').value||null,
   };
-  await api('POST', '/admin/expenses', body);
+  const r = _expEditId ? await api('PUT', '/admin/expenses/' + _expEditId, body) : await api('POST', '/admin/expenses', body);
+  if (!r) { alert('Could not save the expense.'); return; }
   closeExpenseModal();
   loadExpenses();
 }
@@ -2373,7 +2390,7 @@ async function renderMemberPayments(id) {
           <td style="padding:5px 8px;color:var(--muted);">${p.paid_at ? p.paid_at.slice(0,10) : ''}</td>
           <td style="padding:5px 8px;font-weight:700;color:var(--green);">$${Number(p.amount).toFixed(2)}</td>
           <td style="padding:5px 8px;color:var(--muted);">${esc(p.notes||'')}</td>
-          <td style="padding:5px 8px;"><button class="btn btn-danger btn-sm" style="padding:2px 6px;font-size:10px;" onclick="deletePayment(${p.id},${id})"><i class="fa fa-trash"></i></button></td>
+          <td style="padding:5px 8px;white-space:nowrap;"><button class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:10px;" title="Edit" onclick="editPayment(${p.id},${id},${Number(p.amount)},this.dataset.note)" data-note="${esc(p.notes||'')}"><i class="fa fa-pen"></i></button> <button class="btn btn-danger btn-sm" style="padding:2px 6px;font-size:10px;" title="Delete" onclick="deletePayment(${p.id},${id})"><i class="fa fa-trash"></i></button></td>
         </tr>`).join('')}</tbody>
       </table>` : '<div style="color:var(--muted);font-size:12px;">No payments recorded yet.</div>'}
     </div>`;
@@ -2386,6 +2403,18 @@ async function recordPayment(memberId) {
   await api('POST', '/admin/members/'+memberId+'/payments', { amount: amt, notes: note });
   await loadMembers();
   document.getElementById('mbr-payments-'+memberId).style.display = 'block';
+  await renderMemberPayments(memberId);
+}
+
+async function editPayment(payId, memberId, amount, note) {
+  const a = window.prompt('Amount ($):', amount); if (a === null) return;
+  const amt = parseFloat(a);
+  if (!(amt > 0)) { alert('Enter an amount more than 0.'); return; }
+  const n = window.prompt('Notes:', note || ''); if (n === null) return;
+  const r = await api('PUT', '/admin/member-payments/' + payId, { amount: amt, notes: n.trim() });
+  if (!r) { alert('Could not save the payment.'); return; }
+  await loadMembers();
+  document.getElementById('mbr-payments-' + memberId).style.display = 'block';
   await renderMemberPayments(memberId);
 }
 
@@ -3250,7 +3279,8 @@ function renderPartners() {
           <span style="width:90px;color:var(--muted);">${esc(botShortDate(x.sold_at || ''))}</span><span style="flex:1;">${esc(x.product)} ×${x.qty}</span><span>${m(x.revenue - x.fees)}</span></div>`).join('') : ''}
         ${p.payouts.length ? `<div style="margin-top:6px;font-weight:700;color:var(--muted);">PAYMENTS TO HIM</div>` + p.payouts.map(x => `<div style="display:flex;gap:10px;padding:2px 0;">
           <span style="width:90px;color:var(--muted);">${esc(x.paid_at || '')}</span><span style="flex:1;">${esc(x.note || '')}</span><span>${m(x.amount)}</span>
-          <button onclick="deletePayout(${x.id})" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button></div>`).join('') : ''}
+          <button onclick="editPayout(${x.id}, ${Number(x.amount)}, this.dataset.day, this.dataset.note)" data-day="${esc(x.paid_at || '')}" data-note="${esc(x.note || '')}" title="Edit this payment" style="background:none;border:none;color:var(--muted);cursor:pointer;"><i class="fa fa-pen"></i></button>
+          <button onclick="deletePayout(${x.id})" title="Delete this payment" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button></div>`).join('') : ''}
       </div>` : ''}
     </div>`).join('') : '<div style="font-size:12px;color:var(--muted);">No partners yet — add one below.</div>';
 }
@@ -3302,6 +3332,17 @@ async function addPayout(id, btn) {
   const amount = parseFloat(card.querySelector('.pt-pay-amt').value);
   if (!(amount > 0)) { alert('Enter how much you paid him.'); return; }
   const r = await api('POST', `/admin/bot-partners/${id}/payouts`, { amount, paid_at: card.querySelector('.pt-pay-date').value || botLocalToday() });
+  if (!r) { alert('Could not save the payment.'); return; }
+  await botLoadMoney(); renderPartners();
+}
+async function editPayout(id, amount, day, note) {
+  const a = window.prompt('Amount paid ($):', amount); if (a === null) return;
+  const amt = parseFloat(a);
+  if (!(amt > 0)) { alert('Enter an amount more than 0.'); return; }
+  const d = window.prompt('Date (YYYY-MM-DD):', day || botLocalToday()); if (d === null) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d.trim())) { alert('Date must look like 2026-11-08.'); return; }
+  const n = window.prompt('Note:', note || ''); if (n === null) return;
+  const r = await api('PUT', '/admin/bot-partner-payouts/' + id, { amount: amt, paid_at: d.trim(), note: n.trim() });
   if (!r) { alert('Could not save the payment.'); return; }
   await botLoadMoney(); renderPartners();
 }
@@ -5539,6 +5580,74 @@ async function deleteBotItemByName(idx) {
     alert(`Deleted ${r.deleted} order(s). They're in Deleted if you need them back.`);
     if (botItemViewActive()) loadBotItemView(botCurCat());
   }
+}
+
+// ── Addresses: rename one, remove one, or delete its orders ──────────────────
+// One row per MAIN address (the same list as the "All addresses" filter). Every
+// action works on exactly the orders listed in that row.
+let _botAddrList = [];
+function botAddrGroups() {
+  const g = new Map();
+  (_botOrders || []).forEach(o => {
+    const main = botMainAddr(o); if (!main) return;
+    const norm = normalizeAddr(main); if (!norm) return;
+    if (!g.has(norm)) g.set(norm, { label: main, owner: '', ids: [] });
+    const x = g.get(norm); x.ids.push(o.id); if (o.owner && !x.owner) x.owner = o.owner;
+  });
+  return [...g.values()].sort((a, b) => b.ids.length - a.ids.length || a.label.localeCompare(b.label));
+}
+function botOpenAddresses() {
+  document.getElementById('ba-q').value = '';
+  document.getElementById('bot-addresses-overlay').classList.add('open');
+  botAddrRender();
+}
+function botCloseAddresses() { document.getElementById('bot-addresses-overlay').classList.remove('open'); }
+function botAddrRender() {
+  _botAddrList = botAddrGroups();
+  const q = document.getElementById('ba-q').value.trim().toLowerCase();
+  const rows = _botAddrList.map((a, i) => ({ a, i })).filter(({ a }) => !q || `${a.label} ${a.owner}`.toLowerCase().includes(q));
+  const btn = 'background:none;border:1px solid var(--border);border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer;color:var(--text);';
+  document.getElementById('ba-list').innerHTML = !rows.length
+    ? `<div style="font-size:12px;color:var(--muted);">${q ? 'No address matches.' : 'No addresses on file.'}</div>`
+    : rows.map(({ a, i }) => `
+      <div style="padding:9px 0;border-top:1px solid var(--border);">
+        <div style="font-size:13px;font-weight:600;word-break:break-word;">${esc(a.label)}</div>
+        <div style="font-size:11px;color:var(--muted);margin:2px 0 6px;">${a.ids.length} order${a.ids.length === 1 ? '' : 's'}${a.owner ? ' · ' + esc(a.owner) : ''}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button style="${btn}" onclick="botAddrRename(${i})"><i class="fa fa-pen"></i> Rename</button>
+          <button style="${btn}" onclick="botAddrClear(${i})"><i class="fa fa-eraser"></i> Remove address</button>
+          <button style="${btn}color:#f87171;" onclick="botAddrDelete(${i})"><i class="fa fa-trash"></i> Delete orders</button>
+        </div>
+      </div>`).join('');
+}
+async function botAddrApply(a, address) {
+  const r = await api('POST', '/admin/bot-orders/bulk-address', { ids: a.ids, address });
+  if (!r) { alert('Could not save — nothing was changed.'); return false; }
+  await loadBotOrders({ keepPage: true });
+  botAddrRender();
+  return true;
+}
+async function botAddrRename(i) {
+  const a = _botAddrList[i]; if (!a) return;
+  const next = window.prompt(`New address for these ${a.ids.length} order${a.ids.length === 1 ? '' : 's'}:`, a.label);
+  if (next === null) return;
+  const address = next.trim();
+  if (!address) { alert('Type the new address — or use Remove address to clear it.'); return; }
+  if (address === a.label) return;
+  await botAddrApply(a, address);
+}
+async function botAddrClear(i) {
+  const a = _botAddrList[i]; if (!a) return;
+  if (!confirm(`Remove this address from ${a.ids.length} order${a.ids.length === 1 ? '' : 's'}?\n\n${a.label}\n\nThe orders stay — they just show no address.`)) return;
+  await botAddrApply(a, '');
+}
+async function botAddrDelete(i) {
+  const a = _botAddrList[i]; if (!a) return;
+  if (!confirm(`Delete the ${a.ids.length} order${a.ids.length === 1 ? '' : 's'} sent to this address?\n\n${a.label}\n\nA copy is kept — Deleted → Restore puts them back.`)) return;
+  const r = await api('DELETE', '/admin/bot-orders', { ids: a.ids });
+  if (!r) { alert('Could not delete — nothing was changed.'); return; }
+  await loadBotOrders({ keepPage: true });
+  botAddrRender();
 }
 
 // ── Deleted orders: restore, or rebuild from saved emails ────────────────────
