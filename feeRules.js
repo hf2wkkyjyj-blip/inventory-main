@@ -40,21 +40,27 @@ function saveFee(db, id, f, at) {
 
 /**
  * A product's per-unit fee set from its row: each of these orders gets
- * rate × units. Only orders where this is the one product (a box of several
- * products has to be set as a whole), and never one you counted as a whole order.
+ * rate × units. Never an order you counted as a whole order.
+ *
+ * A box of several products has ONE fee for the whole box, so for those the rate
+ * counts every unit in the box (the other items in it get the same rate). They
+ * are only touched when `includeMixed` is set; otherwise they're left alone and
+ * counted in skippedMixed. `mixedSet` is how many of the `set` orders were such boxes.
  */
-function setUnitFee(db, catalog, orderIds, perUnit, { dryRun = false, at = new Date().toISOString() } = {}) {
-  const out = { orders: 0, set: 0, same: 0, changed: 0, skippedMixed: 0, skippedWhole: 0 };
+function setUnitFee(db, catalog, orderIds, perUnit, { dryRun = false, at = new Date().toISOString(), includeMixed = false } = {}) {
+  const out = { orders: 0, set: 0, same: 0, changed: 0, skippedMixed: 0, skippedWhole: 0, mixedSet: 0 };
   for (const id of orderIds) {
     const o = db.prepare('SELECT * FROM bot_orders WHERE id=?').get([id]);
     if (!o || DEAD.has(o.status)) continue;
     out.orders++;
-    if (productKeysOf(o, catalog).size !== 1) { out.skippedMixed++; continue; }
+    const mixed = productKeysOf(o, catalog).size !== 1;
+    if (mixed && !includeMixed)               { out.skippedMixed++; continue; }
     if (o.fee_mode === 'order')               { out.skippedWhole++; continue; }
     const f = feeFor(o, 'unit', perUnit, catalog);
     const had = Number(o.finder_fee) || 0;
     if (Math.abs(had - f.fee) < 0.005 && o.fee_source === 'manual' && o.fee_mode === 'unit') { out.same++; continue; }
     out.set++;
+    if (mixed) out.mixedSet++;
     if (had > 0 && Math.abs(had - f.fee) >= 0.005) out.changed++;     // replaces a different fee
     if (!dryRun) saveFee(db, o.id, f, at);
   }

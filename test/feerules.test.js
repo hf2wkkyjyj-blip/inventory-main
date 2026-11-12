@@ -40,7 +40,7 @@ ins(4, ['2x Test Box @ $25.00'], { fee: 12, src: 'manual', mode: 'order' }); // 
 ins(5, ['2x Test Box @ $25.00'], { status: 'Cancelled' });
 const ids = [1, 2, 3, 4, 5];
 const dry = setUnitFee(db, cat, ids, 3, { dryRun: true });
-eq('preview counts',                     dry, { orders: 4, set: 2, same: 0, changed: 1, skippedMixed: 1, skippedWhole: 1 });
+eq('preview counts',                     dry, { orders: 4, set: 2, same: 0, changed: 1, skippedMixed: 1, skippedWhole: 1, mixedSet: 0 });
 eq('preview writes nothing',             [row(1).f, row(2).f], [0, 7]);
 setUnitFee(db, cat, ids, 3);
 eq('no-fee order: 2 × $3',               row(1), { f: 6, s: 'manual', m: 'unit', u: 3 });
@@ -50,6 +50,24 @@ eq('whole-order fee left alone',         row(4), { f: 12, s: 'manual', m: 'order
 eq('cancelled left alone',               row(5).f, 0);
 eq('again → nothing to change',          setUnitFee(db, cat, ids, 3, { dryRun: true }).set, 0);
 eq('new rate follows',                   (setUnitFee(db, cat, ids, 4), [row(1).f, row(2).f]), [8, 12]);
+
+console.log('\n── A product row can include boxes of several products ──');
+raw.exec('DELETE FROM bot_orders');
+ins(1, ['2x Test Box @ $25.00']);                                                         // only this product
+ins(2, ['2x Test Box @ $25.00', '1x Display @ $90.00', '1x Bundle @ $27.00'], { fee: 57.5, src: 'manual', mode: 'unit', unit: 14.38 }); // a box of 4 units
+ins(3, ['2x Test Box @ $25.00', '2x Display @ $90.00'], { fee: 12, src: 'manual', mode: 'order' });   // box counted as a whole
+ins(4, ['2x Test Box @ $25.00', '1x Display @ $90.00'], { status: 'Cancelled' });
+const ids2 = [1, 2, 3, 4];
+eq('default: boxes left alone',          setUnitFee(db, cat, ids2, 25, { dryRun: true }), { orders: 3, set: 1, same: 0, changed: 0, skippedMixed: 2, skippedWhole: 0, mixedSet: 0 });
+const incl = setUnitFee(db, cat, ids2, 25, { dryRun: true, includeMixed: true });
+eq('with boxes: preview counts',         incl, { orders: 3, set: 2, same: 0, changed: 1, skippedMixed: 0, skippedWhole: 1, mixedSet: 1 });
+eq('preview writes nothing',             [row(1).f, row(2).f], [0, 57.5]);
+setUnitFee(db, cat, ids2, 25, { includeMixed: true });
+eq('single-product order: 2 × $25',      row(1), { f: 50, s: 'manual', m: 'unit', u: 25 });
+eq('box of 4 units: 4 × $25 = $100',     row(2), { f: 100, s: 'manual', m: 'unit', u: 25 });
+eq('box counted as a whole stays',       row(3), { f: 12, s: 'manual', m: 'order', u: null });
+eq('cancelled box untouched',            row(4).f, 0);
+eq('again → nothing to change',          setUnitFee(db, cat, ids2, 25, { dryRun: true, includeMixed: true }).set, 0);
 
 console.log('\n── Old FEE / UNIT folds into the orders once ──');
 raw.exec('DELETE FROM bot_orders');

@@ -1087,7 +1087,10 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <button class="btn btn-ghost btn-sm" onclick="botItemApplyFee()">Apply to orders</button>
       </div>
       <div id="bie-fee-hint" style="font-size:11px;color:var(--muted);margin-top:4px;"></div>
-      <button class="btn btn-ghost btn-sm" id="bie-fee-boxes" onclick="botItemOpenPackages()" style="display:none;margin-top:8px;"></button>
+      <label id="bie-fee-boxes" style="display:none;margin-top:8px;font-size:12px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;">
+        <input type="checkbox" id="bie-fee-mixed" checked style="width:auto;margin-right:6px;vertical-align:middle;">
+        Include boxes with several products <span style="color:var(--muted);">(<span id="bie-fee-boxes-n"></span>). A box has one fee, so this rate counts every unit in it — the other items change too.</span>
+      </label>
     </div>
 
     <div class="form-group" style="margin-bottom:14px;">
@@ -5195,60 +5198,61 @@ function showLandedBreakdown(idx, anchorEl) {
 
 // A product's fee per unit, typed on its row: each of its orders gets units × it,
 // saved on the order like any other fee (so every tab shows the same number).
-// A box of several products, and orders you counted as a whole, are left alone.
+// A box of several products has one fee for the whole box, so that rate counts every
+// unit in it — the row asks before including those. Orders you counted as a whole stay.
 async function botSetUnitFee(idx, inputEl) {
   const item = _botItemRows[idx];
   if (!item) return;
   const raw = inputEl.value.trim();
   const perUnit = raw === '' ? 0 : parseFloat(raw);
-  if (!(perUnit >= 0) || !await botApplyUnitFee(item, perUnit)) { renderBotItemView(); return; }
+  if (!(perUnit >= 0) || !await botApplyUnitFee(item, perUnit, 'ask')) { renderBotItemView(); return; }
   botLoadMoney();
   await loadBotItemView(botCurCat());
 }
 
-// The one per-unit fee all of a product's single-product orders share, or null when they differ.
+// The one per-unit fee this product's orders (boxes included) share, or null when they differ.
 function botUniformUnitFee(item) {
-  const solos = (item.orderLines || []).filter(l => l.solo && l.feeMode !== 'order');
-  return solos.length && new Set(solos.map(l => l.feeUnit)).size === 1 ? solos[0].feeUnit : null;
+  const ls = (item.orderLines || []).filter(l => l.feeMode !== 'order' && l.status !== 'Cancelled' && l.status !== 'Refunded');
+  return ls.length && new Set(ls.map(l => l.feeUnit)).size === 1 ? ls[0].feeUnit : null;
 }
 
 // Asks first (says how many orders change), then saves. True only if it saved.
-async function botApplyUnitFee(item, perUnit) {
+// `mixed`: true = include boxes with several products, false = leave them, 'ask' = ask when there are some.
+async function botApplyUnitFee(item, perUnit, mixed) {
   const orderIds = (item.orderLines || []).map(l => l.id).filter(id => id != null);
-  const dry = await api('POST', '/admin/bot-items/unit-fee', { orderIds, perUnit, dryRun: true });
+  const call = (includeMixed, dryRun) => api('POST', '/admin/bot-items/unit-fee', { orderIds, perUnit, includeMixed, dryRun });
+  const money = n => '$' + n.toFixed(2);
+  let include = mixed === true;
+  let dry = await call(include, true);
   if (!dry) return false;
+  if (mixed === 'ask' && dry.skippedMixed) {
+    const withBoxes = await call(true, true);
+    if (withBoxes && confirm(`"${item.name}" is also in ${dry.skippedMixed} box${dry.skippedMixed === 1 ? '' : 'es'} with several products.\n\n` +
+        `A box has one fee, so ${money(perUnit)} per unit counts every unit in it — the other items in those boxes change too.\n\n` +
+        `OK = include those boxes.\nCancel = only the orders that have just this product.`)) { include = true; dry = withBoxes; }
+  }
   const left = [];
-  if (dry.skippedMixed) left.push(`${dry.skippedMixed} order${dry.skippedMixed === 1 ? '' : 's'} with several products — set those in By package (box fee) or with ✎ on the order.`);
+  if (dry.skippedMixed) left.push(`${dry.skippedMixed} box${dry.skippedMixed === 1 ? '' : 'es'} with several products.`);
   if (dry.skippedWhole) left.push(`${dry.skippedWhole} order${dry.skippedWhole === 1 ? '' : 's'} counted as a whole order.`);
   if (!dry.set) { alert('Nothing to change — ' + (left.length ? 'left alone:\n' + left.join('\n') : 'every order is already at this fee.')); return false; }
-  const msg = [`Set $${perUnit.toFixed(2)} per unit on ${dry.set} order${dry.set === 1 ? '' : 's'} of "${item.name}"?`,
-    `Each order's fee becomes its units × $${perUnit.toFixed(2)}.`];
+  const msg = [`Set ${money(perUnit)} per unit on ${dry.set} order${dry.set === 1 ? '' : 's'} of "${item.name}"?`,
+    `Each order's fee becomes its units × ${money(perUnit)}.`];
+  if (dry.mixedSet) msg.push(`${dry.mixedSet} of them ${dry.mixedSet === 1 ? 'is a box' : 'are boxes'} with several products: every unit in the box gets ${money(perUnit)}, not only this product.`);
   if (dry.changed) msg.push(`${dry.changed} already ${dry.changed === 1 ? 'has a different fee, which is' : 'have different fees, which are'} replaced.`);
   if (left.length) msg.push('Left alone: ' + left.join(' '));
   if (!confirm(msg.join('\n\n'))) return false;
-  await api('POST', '/admin/bot-items/unit-fee', { orderIds, perUnit });
+  await call(include, false);
   return true;
 }
 
-// A box with several products has one fee for the whole box. By package is where that is set
-// (per unit or whole box, then copied to the similar orders), narrowed to this product's boxes.
-function botItemOpenPackages() {
-  const item = _bieItem;
-  if (!item) return;
-  const name = item.name;
-  closeBotItemEdit();
-  document.getElementById('bot-item-search').value = name;
-  botOpenView('package');
-}
-
-// Same thing from the Edit product dialog.
+// Same thing from the Edit product dialog (its box says whether boxes with several products count).
 async function botItemApplyFee() {
   const item = _bieItem;
   if (!item) return;
   const raw = document.getElementById('bie-fee').value.trim();
   const perUnit = parseFloat(raw);
   if (raw === '' || !(perUnit >= 0)) { alert('Type the fee per unit first (0 clears it).'); return; }
-  if (!await botApplyUnitFee(item, perUnit)) return;
+  if (!await botApplyUnitFee(item, perUnit, document.getElementById('bie-fee-mixed').checked)) return;
   closeBotItemEdit();
   botLoadMoney();
   await loadBotItemView(botCurCat());
@@ -5510,12 +5514,12 @@ async function openBotItemEdit(idx) {
   document.getElementById('bie-fee-hint').textContent =
     (uniform != null ? `Right now: $${Number(uniform).toFixed(2)} per unit on these orders. `
       : (item.perUnitFinder || 0) > 0 ? 'Right now these orders have different fees. ' : 'No fee on these orders yet. ') +
-    'Boxes with several products carry one fee for the whole box, and orders counted as a whole order keep theirs — so those are left alone here.';
-  // Those boxes get their fee in By package (box fee, which can copy it to the similar orders).
-  const boxes = (item.orderLines || []).filter(l => !l.solo).length;
-  const boxBtn = document.getElementById('bie-fee-boxes');
-  boxBtn.style.display = boxes ? '' : 'none';
-  boxBtn.textContent = `${boxes} order${boxes === 1 ? ' is a box' : 's are boxes'} with several products — set their fee in By package →`;
+    'Orders you counted as a whole order keep their fee.';
+  // A box with several products has one fee, so the rate counts every unit in it.
+  const boxes = (item.orderLines || []).filter(l => !l.solo && l.status !== 'Cancelled' && l.status !== 'Refunded').length;
+  document.getElementById('bie-fee-boxes').style.display = boxes ? '' : 'none';
+  document.getElementById('bie-fee-boxes-n').textContent = `${boxes} order${boxes === 1 ? ' is a box' : 's are boxes'} with several products`;
+  document.getElementById('bie-fee-mixed').checked = true;
 
   renderBieTitles();
 

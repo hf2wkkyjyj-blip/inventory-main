@@ -1601,14 +1601,15 @@ app.post('/api/admin/bot-orders/bulk-fee', auth, adminOnly, (req, res) => {
 });
 
 // A product's fee per unit, from its row in By product: each of its orders gets units × this.
+// A box of several products is only included with includeMixed (its one fee then counts every unit in it).
 // dryRun says how many orders it would set / replace / leave, for the confirm box.
 app.post('/api/admin/bot-items/unit-fee', auth, adminOnly, (req, res) => {
-  const { orderIds, perUnit, dryRun } = req.body || {};
+  const { orderIds, perUnit, dryRun, includeMixed } = req.body || {};
   const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
   const amount = Number(perUnit);
   if (!ids.length)                            return res.status(400).json({ error: 'orderIds required' });
   if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'Fee must be a number' });
-  const r = FeeRules.setUnitFee(db, SkuCatalog.loadCatalog(db), ids, amount, { dryRun: !!dryRun, at: nowIso() });
+  const r = FeeRules.setUnitFee(db, SkuCatalog.loadCatalog(db), ids, amount, { dryRun: !!dryRun, at: nowIso(), includeMixed: !!includeMixed });
   if (!dryRun) runAutoFees();
   res.json({ ...r, saved: !dryRun });
 });
