@@ -297,8 +297,8 @@ $('menu-btn').onclick = () => {
 };
 
 let products = [], activeType = '';   // '' = all; '__ex' = exclusive line; otherwise a lower-cased type key
-// The exclusive line is whatever has "Duraplex" as its source (set it in the admin to add more).
-const isEx = p => /duraplex/i.test(p.source || '');
+// The exclusive line is whatever has "Duraplex" as its brand or source (set it in the admin to add more).
+const isEx = p => /duraplex/i.test((p.brand || '') + ' ' + (p.source || ''));
 
 // Types are typed by hand in the admin, so "Laminate" and "laminate" must count as one.
 const typeKey = s => String(s || '').trim().toLowerCase();

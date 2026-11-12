@@ -1665,7 +1665,11 @@ function openModal(data) {
     document.getElementById('p-price').value = data.price!=null?data.price:'';
     document.getElementById('p-cost-price').value = data.cost_price!=null?data.cost_price:'';
     document.getElementById('p-unit').value = data.price_unit||'each';
-    document.getElementById('p-source').value = data.source||'Home Depot';
+    { // a source the list doesn't offer (e.g. "Duraplex") must survive a save, not reset to "Other"
+      const sel = document.getElementById('p-source'), v = data.source || 'Home Depot';
+      if (![...sel.options].some(o => o.value === v)) sel.add(new Option(v, v));
+      sel.value = v;
+    }
     document.getElementById('p-stock').value = data.stock||'in_stock';
     document.getElementById('p-featured').value = data.featured?'1':'0';
     document.getElementById('p-qty').value = data.quantity!=null?data.quantity:0;

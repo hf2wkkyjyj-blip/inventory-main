@@ -46,7 +46,7 @@ window.Site = (() => {
     (isFlooring(b) - isFlooring(a)) || live(by[b]).length - live(by[a]).length || a.localeCompare(b));
   const firstImg = items => { for (const p of items || []) { try { const im = (JSON.parse(p.images || '[]') || [])[0]; if (im) return im; } catch (e) {} } return ''; };
   // A product photo for the category (Duraplex first for Flooring) until you add your own /cat-<name>.jpg.
-  const photo = (c, items) => { const l = live(items); return firstImg(isFlooring(c) ? l.filter(p => /duraplex/i.test(p.source || '')).concat(l) : l); };
+  const photo = (c, items) => { const l = live(items); return firstImg(isFlooring(c) ? l.filter(p => /duraplex/i.test((p.brand || '') + ' ' + (p.source || ''))).concat(l) : l); };
   // Calls ok(url) if you've added your own photo for this category.
   const probe = (c, ok) => { const u = '/cat-' + slug(c) + '.jpg', im = new Image(); im.onload = () => ok(u); im.src = u; };
   const minPrice = items => { const v = live(items).map(p => p.price).filter(x => x != null && x > 0); return v.length ? Math.min(...v) : null; };

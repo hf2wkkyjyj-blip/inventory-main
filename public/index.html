@@ -342,8 +342,8 @@ async function loadCatalog() {
   }).join('') : '<div class="tiles-empty">Our catalog is being updated. Request a quote and we\'ll help directly.</div>';
   document.querySelectorAll('#tiles .ph').forEach(el => Site.probe(el.dataset.cat, url => { el.classList.remove('none'); el.innerHTML = ''; el.style.backgroundImage = `url('${url}')`; }));
 
-  // Exclusive line (products whose source is "Duraplex"): shown only once they exist.
-  const ex = products.filter(p => /duraplex/i.test(p.source || '') && p.stock !== 'out_stock');
+  // Exclusive line (products whose brand or source is "Duraplex"): shown only once they exist.
+  const ex = products.filter(p => /duraplex/i.test((p.brand || '') + ' ' + (p.source || '')) && p.stock !== 'out_stock');
   if (ex.length) {
     $('exclusive-wrap').style.display = '';
     $('ex-strip').innerHTML = ex.slice(0, 6).map(p => {
