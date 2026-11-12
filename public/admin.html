@@ -1087,6 +1087,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
         <button class="btn btn-ghost btn-sm" onclick="botItemApplyFee()">Apply to orders</button>
       </div>
       <div id="bie-fee-hint" style="font-size:11px;color:var(--muted);margin-top:4px;"></div>
+      <button class="btn btn-ghost btn-sm" id="bie-fee-boxes" onclick="botItemOpenPackages()" style="display:none;margin-top:8px;"></button>
     </div>
 
     <div class="form-group" style="margin-bottom:14px;">
@@ -5217,7 +5218,7 @@ async function botApplyUnitFee(item, perUnit) {
   const dry = await api('POST', '/admin/bot-items/unit-fee', { orderIds, perUnit, dryRun: true });
   if (!dry) return false;
   const left = [];
-  if (dry.skippedMixed) left.push(`${dry.skippedMixed} order${dry.skippedMixed === 1 ? '' : 's'} with several products — set those with ✎ or the box fee.`);
+  if (dry.skippedMixed) left.push(`${dry.skippedMixed} order${dry.skippedMixed === 1 ? '' : 's'} with several products — set those in By package (box fee) or with ✎ on the order.`);
   if (dry.skippedWhole) left.push(`${dry.skippedWhole} order${dry.skippedWhole === 1 ? '' : 's'} counted as a whole order.`);
   if (!dry.set) { alert('Nothing to change — ' + (left.length ? 'left alone:\n' + left.join('\n') : 'every order is already at this fee.')); return false; }
   const msg = [`Set $${perUnit.toFixed(2)} per unit on ${dry.set} order${dry.set === 1 ? '' : 's'} of "${item.name}"?`,
@@ -5227,6 +5228,17 @@ async function botApplyUnitFee(item, perUnit) {
   if (!confirm(msg.join('\n\n'))) return false;
   await api('POST', '/admin/bot-items/unit-fee', { orderIds, perUnit });
   return true;
+}
+
+// A box with several products has one fee for the whole box. By package is where that is set
+// (per unit or whole box, then copied to the similar orders), narrowed to this product's boxes.
+function botItemOpenPackages() {
+  const item = _bieItem;
+  if (!item) return;
+  const name = item.name;
+  closeBotItemEdit();
+  document.getElementById('bot-item-search').value = name;
+  botOpenView('package');
 }
 
 // Same thing from the Edit product dialog.
@@ -5498,7 +5510,12 @@ async function openBotItemEdit(idx) {
   document.getElementById('bie-fee-hint').textContent =
     (uniform != null ? `Right now: $${Number(uniform).toFixed(2)} per unit on these orders. `
       : (item.perUnitFinder || 0) > 0 ? 'Right now these orders have different fees. ' : 'No fee on these orders yet. ') +
-    'Boxes with several products, and orders counted as a whole order, are left alone — change those with the pen on the order (▸ arrow on the row).';
+    'Boxes with several products carry one fee for the whole box, and orders counted as a whole order keep theirs — so those are left alone here.';
+  // Those boxes get their fee in By package (box fee, which can copy it to the similar orders).
+  const boxes = (item.orderLines || []).filter(l => !l.solo).length;
+  const boxBtn = document.getElementById('bie-fee-boxes');
+  boxBtn.style.display = boxes ? '' : 'none';
+  boxBtn.textContent = `${boxes} order${boxes === 1 ? ' is a box' : 's are boxes'} with several products — set their fee in By package →`;
 
   renderBieTitles();
 
