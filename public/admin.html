@@ -1293,7 +1293,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Total payout ($) <span id="bn-total-hint" style="color:var(--muted);font-weight:400;"></span></label>
-        <input type="number" id="bn-total" min="0" step="0.01" placeholder="0.00" style="width:100%;" oninput="bnTotal(this.value)"></div>
+        <input type="number" id="bn-total" min="0" step="0.01" placeholder="0.00" style="width:100%;" oninput="bnTotal(this.value)" onfocus="bnTotalFocus()" onclick="bnTotalFocus()"></div>
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Fees ($) <span style="color:var(--muted);font-weight:400;">— for the whole sale</span></label>
         <input type="number" id="bn-fees" min="0" step="0.01" placeholder="0.00" style="width:100%;" oninput="bnPreviewSoon()"></div>
       <div class="form-group" style="margin:0;"><label style="font-size:11px;">Date</label>
@@ -5394,6 +5394,13 @@ function bnMode(m) {
   bnRender();
   bnPreview();
 }
+// Clicking the (read-only) total while pricing each item = "I want to type one total".
+function bnTotalFocus() {
+  if (!_bn || _bn.mode !== 'each') return;
+  bnMode('total');
+  const t = document.getElementById('bn-total');
+  t.focus(); t.select();
+}
 function bnQty(i, v)   { _bn.qty[bnKey(_bn.items[i])] = v;   bnPreviewSoon(); }
 function bnPrice(i, v) { _bn.price[bnKey(_bn.items[i])] = v; bnPreviewSoon(); }
 function bnTotal(v)    { if (_bn) { _bn.total = v; bnPreviewSoon(); } }
@@ -5406,8 +5413,9 @@ function bnRender() {
   document.getElementById('bn-mode-total').className = 'btn btn-sm ' + (each ? 'btn-ghost' : 'btn-primary');
   document.getElementById('bn-sub').textContent = `${_bn.items.length} item${_bn.items.length === 1 ? '' : 's'} · one buyer, one sale`;
   const tot = document.getElementById('bn-total');
-  tot.disabled = each; tot.value = each ? '' : _bn.total;
-  document.getElementById('bn-total-hint').textContent = each ? '— adds up from the prices' : '— split by landed cost, so every item keeps the same margin';
+  tot.readOnly = each; tot.value = each ? '' : _bn.total;       // read-only (not disabled) so a click can switch to "One total for all"
+  tot.style.cursor = each ? 'pointer' : '';
+  document.getElementById('bn-total-hint').textContent = each ? '— adds up from the prices · click to type one total instead' : '— split by landed cost, so every item keeps the same margin';
   document.getElementById('bn-lines').innerHTML = _bn.items.map((it, i) => { const k = bnKey(it); return `
     <tr class="bn-line" style="border-top:1px solid var(--border);">
       <td style="padding:6px 8px 6px 0;"><div class="clip" style="max-width:240px;" data-tip="${esc(it.name)}">${esc(it.name)}</div>
