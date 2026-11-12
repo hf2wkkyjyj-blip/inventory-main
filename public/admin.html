@@ -1080,6 +1080,15 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <div style="font-size:11px;color:var(--muted);margin-top:4px;">Pick one to combine these into it. Units, cost and pricing roll together.</div>
     </div>
 
+    <div class="form-group" style="margin-bottom:12px;">
+      <label style="font-size:11px;">Finder fee per unit <span style="color:var(--muted);font-weight:400;">— sets every order of this product to its units × this</span></label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input type="number" step="0.01" min="0" id="bie-fee" placeholder="0.00" style="width:120px;" onkeydown="if(event.key==='Enter'){event.preventDefault();botItemApplyFee();}">
+        <button class="btn btn-ghost btn-sm" onclick="botItemApplyFee()">Apply to orders</button>
+      </div>
+      <div id="bie-fee-hint" style="font-size:11px;color:var(--muted);margin-top:4px;"></div>
+    </div>
+
     <div class="form-group" style="margin-bottom:14px;">
       <label style="font-size:11px;">Store titles grouped here</label>
       <div id="bie-titles" style="border:1px solid var(--border);border-radius:8px;padding:6px 8px;max-height:180px;overflow:auto;font-size:12px;"></div>
@@ -5074,8 +5083,7 @@ function renderBotItemView() {
       : `${item.qty} ordered`;
     // One fee per order. The box holds the per-unit fee when this product's orders
     // agree on it; typing one sets each of those orders to units × it.
-    const solos = (item.orderLines || []).filter(l => l.solo && l.feeMode !== 'order');
-    const uniform = solos.length && new Set(solos.map(l => l.feeUnit)).size === 1 ? solos[0].feeUnit : null;
+    const uniform = botUniformUnitFee(item);
     const feeAvg = item.perUnitFinder || 0;
     const feeTotalHtml = feeAvg > 0
       ? `<div class="fee-total" style="font-size:12px;font-weight:700;color:#fbbf24;font-variant-numeric:tabular-nums;margin-bottom:2px;">$${feeAvg.toFixed(2)}</div>`
@@ -5192,20 +5200,44 @@ async function botSetUnitFee(idx, inputEl) {
   if (!item) return;
   const raw = inputEl.value.trim();
   const perUnit = raw === '' ? 0 : parseFloat(raw);
-  if (!(perUnit >= 0)) { renderBotItemView(); return; }
+  if (!(perUnit >= 0) || !await botApplyUnitFee(item, perUnit)) { renderBotItemView(); return; }
+  botLoadMoney();
+  await loadBotItemView(botCurCat());
+}
+
+// The one per-unit fee all of a product's single-product orders share, or null when they differ.
+function botUniformUnitFee(item) {
+  const solos = (item.orderLines || []).filter(l => l.solo && l.feeMode !== 'order');
+  return solos.length && new Set(solos.map(l => l.feeUnit)).size === 1 ? solos[0].feeUnit : null;
+}
+
+// Asks first (says how many orders change), then saves. True only if it saved.
+async function botApplyUnitFee(item, perUnit) {
   const orderIds = (item.orderLines || []).map(l => l.id).filter(id => id != null);
   const dry = await api('POST', '/admin/bot-items/unit-fee', { orderIds, perUnit, dryRun: true });
-  if (!dry) { renderBotItemView(); return; }
+  if (!dry) return false;
   const left = [];
   if (dry.skippedMixed) left.push(`${dry.skippedMixed} order${dry.skippedMixed === 1 ? '' : 's'} with several products — set those with ✎ or the box fee.`);
   if (dry.skippedWhole) left.push(`${dry.skippedWhole} order${dry.skippedWhole === 1 ? '' : 's'} counted as a whole order.`);
-  if (!dry.set) { alert('Nothing to change — ' + (left.length ? 'left alone:\n' + left.join('\n') : 'every order is already at this fee.')); renderBotItemView(); return; }
+  if (!dry.set) { alert('Nothing to change — ' + (left.length ? 'left alone:\n' + left.join('\n') : 'every order is already at this fee.')); return false; }
   const msg = [`Set $${perUnit.toFixed(2)} per unit on ${dry.set} order${dry.set === 1 ? '' : 's'} of "${item.name}"?`,
     `Each order's fee becomes its units × $${perUnit.toFixed(2)}.`];
   if (dry.changed) msg.push(`${dry.changed} already ${dry.changed === 1 ? 'has a different fee, which is' : 'have different fees, which are'} replaced.`);
   if (left.length) msg.push('Left alone: ' + left.join(' '));
-  if (!confirm(msg.join('\n\n'))) { renderBotItemView(); return; }
+  if (!confirm(msg.join('\n\n'))) return false;
   await api('POST', '/admin/bot-items/unit-fee', { orderIds, perUnit });
+  return true;
+}
+
+// Same thing from the Edit product dialog.
+async function botItemApplyFee() {
+  const item = _bieItem;
+  if (!item) return;
+  const raw = document.getElementById('bie-fee').value.trim();
+  const perUnit = parseFloat(raw);
+  if (raw === '' || !(perUnit >= 0)) { alert('Type the fee per unit first (0 clears it).'); return; }
+  if (!await botApplyUnitFee(item, perUnit)) return;
+  closeBotItemEdit();
   botLoadMoney();
   await loadBotItemView(botCurCat());
 }
@@ -5460,6 +5492,13 @@ async function openBotItemEdit(idx) {
     : `${item.qty} unit${item.qty === 1 ? '' : 's'} across ${item.orders || 0} order${item.orders === 1 ? '' : 's'}`;
   document.getElementById('bie-name').value       = item.name;
   document.getElementById('bie-delete-product').style.display = item.productId ? '' : 'none';
+
+  const uniform = botUniformUnitFee(item) || null;   // 0 = no fee
+  document.getElementById('bie-fee').value = uniform != null ? uniform : '';
+  document.getElementById('bie-fee-hint').textContent =
+    (uniform != null ? `Right now: $${Number(uniform).toFixed(2)} per unit on these orders. `
+      : (item.perUnitFinder || 0) > 0 ? 'Right now these orders have different fees. ' : 'No fee on these orders yet. ') +
+    'Boxes with several products, and orders counted as a whole order, are left alone — change those with the pen on the order (▸ arrow on the row).';
 
   renderBieTitles();
 
