@@ -27,7 +27,18 @@ const round2 = n => Math.round(n * 100) / 100;
  * shipping and the order's finder fee. The single source for these numbers —
  * the product view and the claims list both use it.
  * Returns an array of lines, with .taxEstimated / .costKnown set on the array.
+ *
+ * The order's finder fee is one number. By default it is spread over the lines
+ * by price. A fee typed on one ITEM (bot_orders.fee_lines = { itemKey: per unit })
+ * pins that item to qty × rate, and the rest of the order's fee is spread over
+ * the other lines — so the item's fee is the same in every order and box, and the
+ * lines still add up to finder_fee. (Ignored if the pinned fees outgrow the total.)
  */
+function feeLinesOf(order) {
+  if (!order.fee_lines) return null;
+  try { const o = JSON.parse(order.fee_lines); return o && typeof o === 'object' && !Array.isArray(o) ? o : null; } catch (_) { return null; }
+}
+
 function orderLineCosts(order) {
   let arr; try { arr = JSON.parse(order.items || '[]'); } catch (_) { arr = []; }
   const expanded = (Array.isArray(arr) ? arr : [arr]).flatMap(splitItemParts);
@@ -61,6 +72,24 @@ function orderLineCosts(order) {
   }
   const costKnown = hasPrices || orderTotal > 0;
 
+  // Items with a fee of their own (see above): idx → per unit, and what is left for the rest.
+  let pinned = null;
+  const fl = feeLinesOf(order);
+  if (fl) {
+    const rate = new Map(); let pinnedTotal = 0;
+    expanded.forEach((it, i) => {
+      const r = Number(fl[itemKey(parseItemName(it))]);
+      if (Number.isFinite(r) && r >= 0) { rate.set(i, r); pinnedTotal += r * parseQty(it); }
+    });
+    if (rate.size && pinnedTotal <= finderFee + 0.005) {
+      const free = expanded.map((_, i) => i).filter(i => !rate.has(i));
+      const freeQty   = free.reduce((s, i) => s + parseQty(expanded[i]), 0);
+      const freeValue = free.reduce((s, i) => s + (itemPrices[i] || 0) * parseQty(expanded[i]), 0);
+      const byPrice   = hasPrices && free.every(i => itemPrices[i] !== null) && freeValue > 0;
+      pinned = { rate, rest: Math.max(0, finderFee - pinnedTotal), freeQty, freeValue, byPrice };
+    }
+  }
+
   for (let idx = 0; idx < expanded.length; idx++) {
     const s       = expanded[idx];
     const rawName = parseItemName(s);
@@ -82,6 +111,11 @@ function orderLineCosts(order) {
       unitTax    = taxAmount / totalOrderQty;
       unitShip   = shipCost  / totalOrderQty;
       unitFinder = finderFee / totalOrderQty;
+    }
+    if (pinned) {
+      if (pinned.rate.has(idx)) unitFinder = pinned.rate.get(idx);
+      else if (!pinned.freeQty) unitFinder = 0;
+      else unitFinder = pinned.byPrice ? (pinned.rest * ((iPrice * qty) / pinned.freeValue)) / qty : pinned.rest / pinned.freeQty;
     }
     const unitTotal = unitItem + unitTax + unitShip + unitFinder;
     out.push({ rawName, qty, iPrice, unitItem, unitTax, unitShip, unitFinder, unitTotal });
@@ -479,4 +513,4 @@ function computeItemGroups(orders, pricingRows, catalog, salesRows, stock) {
   }).sort((a, b) => (a.unlinked === b.unlinked ? a.name.localeCompare(b.name) : (a.unlinked ? 1 : -1)));
 }
 
-module.exports = { computeItemGroups, orderLineCosts };
+module.exports = { computeItemGroups, orderLineCosts, feeLinesOf };

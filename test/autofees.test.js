@@ -10,7 +10,7 @@ const raw = new DatabaseSync(':memory:');
 const db = { prepare: sql => { const st = raw.prepare(sql); const a = p => (p === undefined ? [] : Array.isArray(p) ? p : [p]);
   return { all: p => st.all(...a(p)), get: p => st.get(...a(p)), run: p => st.run(...a(p)) }; } };
 raw.exec(`CREATE TABLE bot_orders (id INTEGER PRIMARY KEY, retailer TEXT, order_number TEXT, status TEXT, items TEXT, order_total REAL,
-  tax_amount REAL, ship_cost REAL, finder_fee REAL, fee_source TEXT, fee_set_at TEXT, fee_mode TEXT, fee_unit REAL, order_date TEXT, received_at TEXT, created_at TEXT)`);
+  tax_amount REAL, ship_cost REAL, finder_fee REAL, fee_source TEXT, fee_set_at TEXT, fee_mode TEXT, fee_unit REAL, fee_lines TEXT, order_date TEXT, received_at TEXT, created_at TEXT)`);
 const cat = { products: new Map(), aliases: new Map() };
 const ins = (id, retailer, items, fee, extra = {}) => raw.prepare(`INSERT INTO bot_orders (id, retailer, order_number, status, items, order_total, finder_fee, fee_source, fee_set_at, order_date)
   VALUES (?,?,?,?,?,?,?,?,?,?)`).run(id, retailer, 'T' + id, extra.status || 'Confirmed', JSON.stringify(items), extra.total || 50, fee, extra.src || null, extra.at || null, extra.date || '2026-10-01');
@@ -56,6 +56,21 @@ applyAutoFees(db, cat);
 eq('whole-order store: same $12, not 5 × a rate', tail(22), { f: 12, s: 'auto', m: 'order', u: null });
 eq('per-unit store: 3 × $5, remembers the rate',  tail(24), { f: 15, s: 'auto', m: 'unit', u: 5 });
 eq('a whole-order fee is no per-unit rate',       feeRates(raw.prepare('SELECT * FROM bot_orders').all(), cat).size, 1);
+eq('running again changes nothing',               applyAutoFees(db, cat), 0);
+
+console.log('\n── A box of several items: each item carries its own rate ──');
+raw.exec('DELETE FROM bot_orders');
+ins(31, 'Mix Shop', ['2x Test Box @ $25.00'], 50, { src: 'manual', at: '2026-10-13T10:00:00Z', date: '2026-10-13' });            // $25 per Test Box
+ins(32, 'Mix Shop', ['1x Other Thing @ $90.00'], 4, { src: 'manual', at: '2026-10-13T10:00:00Z', date: '2026-10-13' });          // $4 per Other Thing
+ins(33, 'Mix Shop', ['2x Test Box @ $25.00', '1x Other Thing @ $90.00'], 0, { total: 140 });                                      // a box of both, no fee yet
+raw.prepare("UPDATE bot_orders SET fee_mode='unit', fee_unit=25 WHERE id=31").run();
+applyAutoFees(db, cat);
+const box = raw.prepare('SELECT finder_fee f, fee_source s, fee_lines l FROM bot_orders WHERE id=33').get();
+eq('box: 2 × $25 + 1 × $4 = $54, auto',           [box.f, box.s], [54, 'auto']);
+eq('… and each item keeps its rate in the box',   JSON.parse(box.l), { 'test box': 25, 'other thing': 4 });
+const bl = require('../itemView').orderLineCosts(raw.prepare('SELECT * FROM bot_orders WHERE id=33').get());
+eq('… so every view shows $25 and $4 per unit',   bl.map(l => Math.round(l.unitFinder * 100) / 100), [25, 4]);
+eq('a single-item order keeps no item fees',      raw.prepare('SELECT fee_lines l FROM bot_orders WHERE id=32').get().l, null);
 eq('running again changes nothing',               applyAutoFees(db, cat), 0);
 
 console.log(`\n${'─'.repeat(60)}`);

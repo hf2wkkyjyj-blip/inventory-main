@@ -1081,16 +1081,12 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     </div>
 
     <div class="form-group" style="margin-bottom:12px;">
-      <label style="font-size:11px;">Finder fee per unit <span style="color:var(--muted);font-weight:400;">— sets every order of this product to its units × this</span></label>
+      <label style="font-size:11px;">Finder fee per unit <span style="color:var(--muted);font-weight:400;">— for this item only, in every order and box that has it</span></label>
       <div style="display:flex;gap:8px;align-items:center;">
         <input type="number" step="0.01" min="0" id="bie-fee" placeholder="0.00" style="width:120px;" onkeydown="if(event.key==='Enter'){event.preventDefault();botItemApplyFee();}">
         <button class="btn btn-ghost btn-sm" onclick="botItemApplyFee()">Apply to orders</button>
       </div>
       <div id="bie-fee-hint" style="font-size:11px;color:var(--muted);margin-top:4px;"></div>
-      <label id="bie-fee-boxes" style="display:none;margin-top:8px;font-size:12px;font-weight:400;text-transform:none;letter-spacing:0;cursor:pointer;">
-        <input type="checkbox" id="bie-fee-mixed" checked style="width:auto;margin-right:6px;vertical-align:middle;">
-        Include boxes with several products <span style="color:var(--muted);">(<span id="bie-fee-boxes-n"></span>). A box has one fee, so this rate counts every unit in it — the other items change too.</span>
-      </label>
     </div>
 
     <div class="form-group" style="margin-bottom:14px;">
@@ -5135,7 +5131,7 @@ function renderBotItemView() {
       <td style="padding:8px;text-align:right;">
         ${feeTotalHtml}
         <input type="number" step="0.01" value="${uniform || ''}" placeholder="${feeAvg > 0 && uniform == null ? 'mixed' : '0.00'}" style="${inStyle}"
-          onchange="botSetUnitFee(${idx},this)" data-tip="Fee per unit — sets each of this product's orders to its units × this">
+          onchange="botSetUnitFee(${idx},this)" data-tip="Fee per unit for this item only — in every order and box that has it. A box's total fee stays the same; the other items share what is left.">
       </td>
       <td style="padding:8px;text-align:center;white-space:nowrap;">
         <button class="bot-sold" onclick="openBotSale(${idx})" data-tip="${soldTip}"
@@ -5196,63 +5192,57 @@ function showLandedBreakdown(idx, anchorEl) {
   }, 0);
 }
 
-// A product's fee per unit, typed on its row: each of its orders gets units × it,
-// saved on the order like any other fee (so every tab shows the same number).
-// A box of several products has one fee for the whole box, so that rate counts every
-// unit in it — the row asks before including those. Orders you counted as a whole stay.
+// A product's fee per unit, typed on its row: the fee for THAT ITEM only, the same in every order and
+// box that has it. In a box with other items the box's total fee stays as it is: this item takes
+// units × rate and the other items share what is left. Saved on the order (every tab shows it).
 async function botSetUnitFee(idx, inputEl) {
   const item = _botItemRows[idx];
   if (!item) return;
   const raw = inputEl.value.trim();
   const perUnit = raw === '' ? 0 : parseFloat(raw);
-  if (!(perUnit >= 0) || !await botApplyUnitFee(item, perUnit, 'ask')) { renderBotItemView(); return; }
+  if (!(perUnit >= 0) || !await botApplyUnitFee(item, perUnit)) { renderBotItemView(); return; }
   botLoadMoney();
   await loadBotItemView(botCurCat());
 }
 
-// The one per-unit fee this product's orders (boxes included) share, or null when they differ.
+// The one per-unit fee this item carries in all its orders (boxes included), or null when they differ.
 function botUniformUnitFee(item) {
   const ls = (item.orderLines || []).filter(l => l.feeMode !== 'order' && l.status !== 'Cancelled' && l.status !== 'Refunded');
   return ls.length && new Set(ls.map(l => l.feeUnit)).size === 1 ? ls[0].feeUnit : null;
 }
 
 // Asks first (says how many orders change), then saves. True only if it saved.
-// `mixed`: true = include boxes with several products, false = leave them, 'ask' = ask when there are some.
-async function botApplyUnitFee(item, perUnit, mixed) {
+async function botApplyUnitFee(item, perUnit) {
   const orderIds = (item.orderLines || []).map(l => l.id).filter(id => id != null);
-  const call = (includeMixed, dryRun) => api('POST', '/admin/bot-items/unit-fee', { orderIds, perUnit, includeMixed, dryRun });
+  const rawNames = item.rawNames || [];
+  const call = dryRun => api('POST', '/admin/bot-items/unit-fee', { orderIds, rawNames, perUnit, dryRun });
   const money = n => '$' + n.toFixed(2);
-  let include = mixed === true;
-  let dry = await call(include, true);
+  const dry = await call(true);
   if (!dry) return false;
-  if (mixed === 'ask' && dry.skippedMixed) {
-    const withBoxes = await call(true, true);
-    if (withBoxes && confirm(`"${item.name}" is also in ${dry.skippedMixed} box${dry.skippedMixed === 1 ? '' : 'es'} with several products.\n\n` +
-        `A box has one fee, so ${money(perUnit)} per unit counts every unit in it — the other items in those boxes change too.\n\n` +
-        `OK = include those boxes.\nCancel = only the orders that have just this product.`)) { include = true; dry = withBoxes; }
-  }
   const left = [];
-  if (dry.skippedMixed) left.push(`${dry.skippedMixed} box${dry.skippedMixed === 1 ? '' : 'es'} with several products.`);
-  if (dry.skippedWhole) left.push(`${dry.skippedWhole} order${dry.skippedWhole === 1 ? '' : 's'} counted as a whole order.`);
+  if (dry.skippedWhole) left.push(`${dry.skippedWhole} order${dry.skippedWhole === 1 ? '' : 's'} with just this item that you counted as a whole order.`);
+  if (dry.tooBig) left.push(`${dry.tooBig} box${dry.tooBig === 1 ? '' : 'es'} whose total fee is smaller than this item's fee here (change the box's total first, with ✎).`);
   if (!dry.set) { alert('Nothing to change — ' + (left.length ? 'left alone:\n' + left.join('\n') : 'every order is already at this fee.')); return false; }
-  const msg = [`Set ${money(perUnit)} per unit on ${dry.set} order${dry.set === 1 ? '' : 's'} of "${item.name}"?`,
-    `Each order's fee becomes its units × ${money(perUnit)}.`];
-  if (dry.mixedSet) msg.push(`${dry.mixedSet} of them ${dry.mixedSet === 1 ? 'is a box' : 'are boxes'} with several products: every unit in the box gets ${money(perUnit)}, not only this product.`);
-  if (dry.changed) msg.push(`${dry.changed} already ${dry.changed === 1 ? 'has a different fee, which is' : 'have different fees, which are'} replaced.`);
+  const msg = [`Set ${money(perUnit)} per unit for "${item.name}" in ${dry.set} order${dry.set === 1 ? '' : 's'}?`,
+    `In each order, this item's fee becomes its units × ${money(perUnit)}.`];
+  const keeps = (dry.inBoxes || 0) - (dry.totalMoves || 0);
+  if (keeps > 0) msg.push(`${keeps} of them ${keeps === 1 ? 'is a box' : 'are boxes'} with other items: the box's total fee stays the same — this item takes its part and the other items share what is left.`);
+  if (dry.totalMoves) msg.push(`${dry.totalMoves} ${dry.totalMoves === 1 ? 'box has' : 'boxes have'} no fee of ${dry.totalMoves === 1 ? 'its' : 'their'} own (or an auto fee), so ${dry.totalMoves === 1 ? 'its' : 'their'} total follows this item's fee.`);
+  if (dry.changed) msg.push(`${dry.changed} already ${dry.changed === 1 ? 'has a different fee for this item, which is' : 'have a different fee for this item, which is'} replaced.`);
   if (left.length) msg.push('Left alone: ' + left.join(' '));
   if (!confirm(msg.join('\n\n'))) return false;
-  await call(include, false);
+  await call(false);
   return true;
 }
 
-// Same thing from the Edit product dialog (its box says whether boxes with several products count).
+// Same thing from the Edit product dialog.
 async function botItemApplyFee() {
   const item = _bieItem;
   if (!item) return;
   const raw = document.getElementById('bie-fee').value.trim();
   const perUnit = parseFloat(raw);
   if (raw === '' || !(perUnit >= 0)) { alert('Type the fee per unit first (0 clears it).'); return; }
-  if (!await botApplyUnitFee(item, perUnit, document.getElementById('bie-fee-mixed').checked)) return;
+  if (!await botApplyUnitFee(item, perUnit)) return;
   closeBotItemEdit();
   botLoadMoney();
   await loadBotItemView(botCurCat());
@@ -5512,14 +5502,9 @@ async function openBotItemEdit(idx) {
   const uniform = botUniformUnitFee(item) || null;   // 0 = no fee
   document.getElementById('bie-fee').value = uniform != null ? uniform : '';
   document.getElementById('bie-fee-hint').textContent =
-    (uniform != null ? `Right now: $${Number(uniform).toFixed(2)} per unit on these orders. `
-      : (item.perUnitFinder || 0) > 0 ? 'Right now these orders have different fees. ' : 'No fee on these orders yet. ') +
-    'Orders you counted as a whole order keep their fee.';
-  // A box with several products has one fee, so the rate counts every unit in it.
-  const boxes = (item.orderLines || []).filter(l => !l.solo && l.status !== 'Cancelled' && l.status !== 'Refunded').length;
-  document.getElementById('bie-fee-boxes').style.display = boxes ? '' : 'none';
-  document.getElementById('bie-fee-boxes-n').textContent = `${boxes} order${boxes === 1 ? ' is a box' : 's are boxes'} with several products`;
-  document.getElementById('bie-fee-mixed').checked = true;
+    (uniform != null ? `Right now: $${Number(uniform).toFixed(2)} per unit for this item. `
+      : (item.perUnitFinder || 0) > 0 ? 'Right now this item has different fees in different orders. ' : 'No fee on this item yet. ') +
+    'In a box with other items the box\'s total fee stays the same: this item takes its part and the others share what is left. A fee set on the whole box (✎ or By package) replaces it.';
 
   renderBieTitles();
 

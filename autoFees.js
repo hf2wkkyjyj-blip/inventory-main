@@ -37,6 +37,7 @@ const setAt = o => String(o.fee_set_at || when(o));
 function linesOf(o, catalog) {
   return orderLineCosts(o).map(l => ({
     key: itemKey(productNameFor(l.rawName, catalog)), name: productNameFor(l.rawName, catalog),
+    rawKey: itemKey(l.rawName),                         // the store title: what fee_lines is keyed by
     qty: l.qty, perUnitFee: l.unitFinder,
   }));
 }
@@ -77,7 +78,7 @@ function autoFeeFor(o, rates, catalog, modes) {
     const r = rates.get(`${norm(o.retailer)}|${l.key}`);
     if (!r) continue;
     fee += r.perUnit * l.qty;
-    used.push({ name: l.name, qty: l.qty, perUnit: r.perUnit, from: r.order_number });
+    used.push({ name: l.name, rawKey: l.rawKey, qty: l.qty, perUnit: r.perUnit, from: r.order_number });
   }
   return used.length ? { fee: r2(fee), used } : null;
 }
@@ -96,10 +97,14 @@ function applyAutoFees(db, catalog) {
     const a = autoFeeFor(o, rates, catalog, modes);
     if (!a) continue;
     const mode = a.flat ? 'order' : 'unit';
-    if (isAuto(o) && Math.abs((Number(o.finder_fee) || 0) - a.fee) < 0.005 && o.fee_mode === mode) continue;
-    const units = a.flat ? 0 : linesOf(o, catalog).reduce((s, l) => s + l.qty, 0);
-    db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='auto', fee_mode=?, fee_unit=? WHERE id=?")
-      .run([a.fee, mode, a.flat || !units ? null : r2(a.fee / units), o.id]);
+    const ls = a.flat ? [] : linesOf(o, catalog);
+    // A box of several products: each product carries its own rate, so every view shows that rate for it (itemView.js).
+    const pinned = !a.flat && new Set(ls.map(l => l.key)).size > 1
+      ? JSON.stringify(Object.fromEntries(a.used.map(u => [u.rawKey, u.perUnit]))) : null;
+    if (isAuto(o) && Math.abs((Number(o.finder_fee) || 0) - a.fee) < 0.005 && o.fee_mode === mode && (o.fee_lines || null) === pinned) continue;
+    const units = ls.reduce((s, l) => s + l.qty, 0);
+    db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='auto', fee_mode=?, fee_unit=?, fee_lines=? WHERE id=?")
+      .run([a.fee, mode, a.flat || !units ? null : r2(a.fee / units), pinned, o.id]);
     changed++;
   }
   return changed;

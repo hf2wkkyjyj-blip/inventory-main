@@ -271,6 +271,8 @@ try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_source TEXT"); } catch(e) {
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_mode TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_unit REAL"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_set_at TEXT"); } catch(e) {}   // when you last typed its fee
+// A fee typed on one ITEM of a box: JSON { itemKey: fee per unit }. Those items carry qty × rate; the rest of finder_fee goes to the other items (itemView.js).
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_lines TEXT"); } catch(e) {}
 // 1 = on a Cancelled/Refunded order, the finder fee still has to be paid (not refunded), so it stays in your costs.
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_kept INTEGER DEFAULT 0"); } catch(e) {}
 const nowIso = () => new Date().toISOString();
@@ -1601,15 +1603,18 @@ app.post('/api/admin/bot-orders/bulk-fee', auth, adminOnly, (req, res) => {
 });
 
 // A product's fee per unit, from its row in By product: each of its orders gets units × this.
-// A box of several products is only included with includeMixed (its one fee then counts every unit in it).
+// It is the fee for THAT ITEM only (rawNames = the store titles grouped under it): the same in every
+// order and box that has it. In a box the total fee stays; the item takes its part and the others share the rest (see feeRules.setUnitFee).
 // dryRun says how many orders it would set / replace / leave, for the confirm box.
 app.post('/api/admin/bot-items/unit-fee', auth, adminOnly, (req, res) => {
-  const { orderIds, perUnit, dryRun, includeMixed } = req.body || {};
+  const { orderIds, perUnit, dryRun, rawNames } = req.body || {};
   const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
+  const names = (Array.isArray(rawNames) ? rawNames : []).filter(n => typeof n === 'string' && n.trim());
   const amount = Number(perUnit);
   if (!ids.length)                            return res.status(400).json({ error: 'orderIds required' });
+  if (!names.length)                          return res.status(400).json({ error: 'rawNames required' });
   if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'Fee must be a number' });
-  const r = FeeRules.setUnitFee(db, SkuCatalog.loadCatalog(db), ids, amount, { dryRun: !!dryRun, at: nowIso(), includeMixed: !!includeMixed });
+  const r = FeeRules.setUnitFee(db, SkuCatalog.loadCatalog(db), ids, amount, { rawNames: names, dryRun: !!dryRun, at: nowIso() });
   if (!dryRun) runAutoFees();
   res.json({ ...r, saved: !dryRun });
 });
@@ -1646,7 +1651,7 @@ app.post('/api/admin/bot-orders/bulk-restore', auth, adminOnly, (req, res) => {
       .run([p.status, orNull(p.tracking_status), orNull(p.delivered_date), orNull(p.expected_date), orNull(p.status_changed_at), orNull(p.status_source), id]);
     if (p.refunded_amount !== undefined && Number.isFinite(Number(p.refunded_amount))) db.prepare('UPDATE bot_orders SET refunded_amount=? WHERE id=?').run([Number(p.refunded_amount), id]);
     if (p.finder_fee !== undefined && Number.isFinite(Number(p.finder_fee)))
-      db.prepare('UPDATE bot_orders SET finder_fee=?, fee_source=?, fee_set_at=?, fee_kept=? WHERE id=?').run([Number(p.finder_fee), orNull(p.fee_source), orNull(p.fee_set_at), Number(p.fee_kept) ? 1 : 0, id]);
+      db.prepare('UPDATE bot_orders SET finder_fee=?, fee_source=?, fee_set_at=?, fee_kept=?, fee_lines=? WHERE id=?').run([Number(p.finder_fee), orNull(p.fee_source), orNull(p.fee_set_at), Number(p.fee_kept) ? 1 : 0, orNull(p.fee_lines), id]);
     restored++;
   }
   res.json({ restored });
@@ -1660,18 +1665,18 @@ app.post('/api/admin/bot-orders/bulk-restore', auth, adminOnly, (req, res) => {
 // `previous` is returned so the page can offer Undo (bulk-restore puts it back).
 app.post('/api/admin/bot-orders/:id/close', auth, adminOnly, (req, res) => {
   const id = Number(req.params.id);
-  const o = db.prepare('SELECT id, status, order_total, refunded_amount, tracking_status, delivered_date, expected_date, status_changed_at, status_source, finder_fee, fee_source, fee_set_at, fee_kept FROM bot_orders WHERE id=?').get([id]);
+  const o = db.prepare('SELECT id, status, order_total, refunded_amount, tracking_status, delivered_date, expected_date, status_changed_at, status_source, finder_fee, fee_source, fee_set_at, fee_kept, fee_lines FROM bot_orders WHERE id=?').get([id]);
   if (!o) return res.status(404).json({ error: 'No such order' });
   const r = resolveClose(o, req.body);          // the arithmetic lives in orderClose.js (tested)
   if (r.error) return res.status(400).json({ error: r.error });
   const previous = { id: o.id, status: o.status, tracking_status: o.tracking_status, delivered_date: o.delivered_date, expected_date: o.expected_date,
                      status_changed_at: o.status_changed_at, status_source: o.status_source, refunded_amount: o.refunded_amount || 0,
-                     finder_fee: o.finder_fee || 0, fee_source: o.fee_source || null, fee_set_at: o.fee_set_at || null, fee_kept: o.fee_kept || 0 };
+                     finder_fee: o.finder_fee || 0, fee_source: o.fee_source || null, fee_set_at: o.fee_set_at || null, fee_kept: o.fee_kept || 0, fee_lines: o.fee_lines || null };
   const today = new Date().toISOString().slice(0, 10);   // a date, like the bulk Delivered action uses
   if (r.statusChanged) db.prepare("UPDATE bot_orders SET status=?, refunded_amount=?, status_changed_at=?, status_source='manual' WHERE id=?").run([r.status, r.refunded, today, id]);
   else                 db.prepare('UPDATE bot_orders SET refunded_amount=? WHERE id=?').run([r.refunded, id]);   // partial refund: status and its date stay as they were
   if (r.feeOwed !== null) {
-    db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='manual', fee_set_at=?, fee_kept=? WHERE id=?").run([r.feeOwed, nowIso(), r.feeKept ? 1 : 0, id]);
+    db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='manual', fee_set_at=?, fee_kept=?, fee_lines=NULL WHERE id=?").run([r.feeOwed, nowIso(), r.feeKept ? 1 : 0, id]);
   }
   runAutoFees();
   res.json({ ok: true, status: r.status, refunded_amount: r.refunded, fee_kept: r.feeKept, partial: r.partial, previous });
@@ -2231,7 +2236,7 @@ app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
     db.prepare('UPDATE bot_orders SET status_changed_at=? WHERE id=?').run([new Date().toISOString().slice(0, 10), req.params.id]);
   if (o.fee_kept !== undefined && o.fee_kept !== null) db.prepare('UPDATE bot_orders SET fee_kept=? WHERE id=?').run([o.fee_kept ? 1 : 0, req.params.id]);
   // A fee you type is yours (never auto-changed, even $0); fee_auto: true hands it back to the auto fee.
-  if (o.fee_auto === true)        db.prepare("UPDATE bot_orders SET fee_source='auto', finder_fee=0 WHERE id=?").run([req.params.id]);
+  if (o.fee_auto === true)        db.prepare("UPDATE bot_orders SET fee_source='auto', finder_fee=0, fee_lines=NULL WHERE id=?").run([req.params.id]);
   else if (o.fee_mode === 'unit' && o.fee_unit != null) {
     // Counted per unit: the server works out rate × units, so the fee always matches the order's items.
     const row = db.prepare('SELECT * FROM bot_orders WHERE id=?').get([req.params.id]);
@@ -2239,7 +2244,7 @@ app.patch('/api/admin/bot-orders/:id', auth, adminOnly, (req, res) => {
   }
   else if (o.finder_fee != null) {
     // A typed amount is the whole order's fee unless you counted it per unit.
-    db.prepare("UPDATE bot_orders SET fee_source='manual', fee_set_at=?, fee_mode='order', fee_unit=NULL WHERE id=?").run([nowIso(), req.params.id]);
+    db.prepare("UPDATE bot_orders SET fee_source='manual', fee_set_at=?, fee_mode='order', fee_unit=NULL, fee_lines=NULL WHERE id=?").run([nowIso(), req.params.id]);
   }
   runAutoFees();
   res.json({ success: true });

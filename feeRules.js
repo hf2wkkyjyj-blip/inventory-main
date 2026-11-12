@@ -16,6 +16,7 @@
 
 const { orderLines } = require('./packageView');
 const { itemKey } = require('./itemNames');
+const { orderLineCosts, feeLinesOf } = require('./itemView');
 
 const r2 = n => Math.round((Number(n) || 0) * 100) / 100;
 const DEAD = new Set(['Cancelled', 'Refunded']);
@@ -32,37 +33,76 @@ function feeFor(o, mode, amount, catalog) {
   return { mode: 'order', unit: null, fee: r2(a), units };
 }
 
-/** Save a fee you set yourself (never touched by the auto fee). */
+/** Save a fee you set yourself (never touched by the auto fee). A fee on the whole order replaces any fees typed on its items. */
 function saveFee(db, id, f, at) {
-  db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='manual', fee_set_at=?, fee_mode=?, fee_unit=? WHERE id=?")
+  db.prepare("UPDATE bot_orders SET finder_fee=?, fee_source='manual', fee_set_at=?, fee_mode=?, fee_unit=?, fee_lines=NULL WHERE id=?")
     .run([f.fee, at, f.mode, f.unit, id]);
 }
 
 /**
- * A product's per-unit fee set from its row: each of these orders gets
- * rate × units. Never an order you counted as a whole order.
- *
- * A box of several products has ONE fee for the whole box, so for those the rate
- * counts every unit in the box (the other items in it get the same rate). They
- * are only touched when `includeMixed` is set; otherwise they're left alone and
- * counted in skippedMixed. `mixedSet` is how many of the `set` orders were such boxes.
+ * A product's fee per unit, typed on its row in By product. It is the fee for THAT
+ * ITEM only, the same in every order and box that has it:
+ *   • an order with just this item gets units × rate (counted per unit);
+ *   • a box with other items: the box's TOTAL fee stays as it is (it was right) and only
+ *     how it is shared changes — this item carries units × rate, the other items share
+ *     what is left. The rate is remembered on the order (fee_lines) so every view shows it.
+ *     A box with no fee yet (or an auto fee) just adds up its item fees. A box whose typed
+ *     total is smaller than this item's fee (plus the fees already fixed on its other items)
+ *     is left alone and counted in tooBig.
+ * totalMoves = boxes (of inBoxes) whose total did change because it only added up item fees.
+ * `rawNames` are the store titles grouped under the product. Never touches a cancelled /
+ * refunded order, or an order with just this item that you counted as a whole order.
  */
-function setUnitFee(db, catalog, orderIds, perUnit, { dryRun = false, at = new Date().toISOString(), includeMixed = false } = {}) {
-  const out = { orders: 0, set: 0, same: 0, changed: 0, skippedMixed: 0, skippedWhole: 0, mixedSet: 0 };
+function setUnitFee(db, catalog, orderIds, perUnit, { rawNames = [], dryRun = false, at = new Date().toISOString() } = {}) {
+  const out = { orders: 0, set: 0, same: 0, changed: 0, inBoxes: 0, totalMoves: 0, skippedWhole: 0, tooBig: 0 };
+  const want = new Set((rawNames || []).map(n => itemKey(n)));
+  const rate = r2(perUnit);
   for (const id of orderIds) {
     const o = db.prepare('SELECT * FROM bot_orders WHERE id=?').get([id]);
     if (!o || DEAD.has(o.status)) continue;
+    const lines = orderLineCosts(o);
+    const mine = lines.filter(l => want.has(itemKey(l.rawName)));
+    if (!mine.length) continue;                                       // this item isn't in that order
     out.orders++;
-    const mixed = productKeysOf(o, catalog).size !== 1;
-    if (mixed && !includeMixed)               { out.skippedMixed++; continue; }
-    if (o.fee_mode === 'order')               { out.skippedWhole++; continue; }
-    const f = feeFor(o, 'unit', perUnit, catalog);
+
+    const qty = mine.reduce((s, l) => s + l.qty, 0);
+    const oldShare = r2(mine.reduce((s, l) => s + l.unitFinder * l.qty, 0));      // what this item carries now
+    const newShare = r2(qty * rate);
     const had = Number(o.finder_fee) || 0;
-    if (Math.abs(had - f.fee) < 0.005 && o.fee_source === 'manual' && o.fee_mode === 'unit') { out.same++; continue; }
+    const solo = mine.length === lines.length;                       // nothing else in the order
+    if (solo && o.fee_mode === 'order') { out.skippedWhole++; continue; }         // its whole-order amount would change
+
+    const keys = [...new Set(mine.map(l => itemKey(l.rawName)))];
+    const pinned = feeLinesOf(o) || {};
+    if (solo) {
+      const total = newShare;
+      if (o.fee_source === 'manual' && Math.abs(had - total) < 0.005 && o.fee_mode === 'unit') { out.same++; continue; }
+      out.set++;
+      if (oldShare > 0 && Math.abs(oldShare - newShare) >= 0.005) out.changed++;
+      if (!dryRun) saveFee(db, o.id, feeFor(o, 'unit', rate, catalog), at);
+      continue;
+    }
+
+    // A box with other items. Fees already fixed on those other items stay as they are.
+    const others = lines.filter(l => !mine.includes(l) && Number.isFinite(Number(pinned[itemKey(l.rawName)])));
+    const fixedElsewhere = r2(others.reduce((s, l) => s + Number(pinned[itemKey(l.rawName)]) * l.qty, 0));
+    const needs = r2(newShare + fixedElsewhere);
+    // A fee you typed for the box is right, so it stays. A box with no fee yet, or an auto fee, is just
+    // the sum of its item fees (marked "_total": "items") — that follows them.
+    const fromItems = had <= 0 || (o.fee_source === 'auto' && o.fee_mode !== 'order') || pinned._total === 'items';
+    let total = had;
+    if (fromItems) total = needs;
+    else if (needs > had + 0.005) { out.tooBig++; continue; }                     // more than the box's fee: left alone
+    if (o.fee_source === 'manual' && Math.abs(had - total) < 0.005 && keys.every(k => Number(pinned[k]) === rate)) { out.same++; continue; }
     out.set++;
-    if (mixed) out.mixedSet++;
-    if (had > 0 && Math.abs(had - f.fee) >= 0.005) out.changed++;     // replaces a different fee
-    if (!dryRun) saveFee(db, o.id, f, at);
+    out.inBoxes++;
+    if (Math.abs(total - had) >= 0.005) out.totalMoves++;                          // an auto / empty fee that follows its items
+    if (oldShare > 0 && Math.abs(oldShare - newShare) >= 0.005) out.changed++;     // replaces a different fee for this item
+    if (dryRun) continue;
+    for (const k of keys) pinned[k] = rate;
+    if (fromItems) pinned._total = 'items';
+    db.prepare(`UPDATE bot_orders SET finder_fee=?, fee_source='manual', fee_set_at=?, fee_lines=?${Math.abs(total - had) < 0.005 ? '' : ', fee_mode=NULL, fee_unit=NULL'} WHERE id=?`)
+      .run([total, at, JSON.stringify(pinned), o.id]);
   }
   return out;
 }
