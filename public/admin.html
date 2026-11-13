@@ -3210,6 +3210,12 @@ function partnerShowFee(pid, oid, el) {
     [o.feeAuto ? 'Finder fee <span style="color:#60a5fa;font-size:10px;">auto — your last fee for this product here</span>' : 'Finder fee (order/box)', o.orderFee || 0, true],
   ], o.fee, o.fee ? '' : 'No fee saved on this order. Add it with ✎ (Finder fee) or the box fee in By package.', 'FEES ON THIS ORDER');
 }
+// Check mark "done and paid" on his orders (your own tracking — it doesn't change what you owe him).
+async function partnerSetPaid(ids, paid) {
+  const r = await api('POST', '/admin/bot-orders/partner-paid', { orderIds: ids, paid: !!paid });
+  if (!r) { alert('Could not save the check mark.'); renderPartners(); return; }
+  await botLoadMoney(); renderPartners();
+}
 async function partnerSetOwner(orderId, partnerId) {
   await api('PUT', '/admin/bot-orders/' + orderId + '/owner', { partner_id: partnerId });
   await loadBotOrders(); await botLoadMoney(); renderPartners();
@@ -3245,7 +3251,15 @@ function renderPartners() {
         on <input type="date" class="pt-pay-date" value="${botLocalToday()}" style="font-size:12px;">
         <button class="btn btn-ghost btn-sm pt-pay" onclick="addPayout(${p.id}, this)"><i class="fa fa-money-bill"></i> Record payment</button>
         <span style="flex:1;"></span>
-        <a href="#" onclick="_ptOpen.has(${p.id}) ? _ptOpen.delete(${p.id}) : _ptOpen.add(${p.id}); renderPartners(); return false;" style="color:#60a5fa;">${_ptOpen.has(p.id) ? 'Hide' : 'Show'} his orders, sales & payments</a>
+        <a href="#" onclick="_ptOpen.has(${p.id}) ? _ptOpen.delete(${p.id}) : _ptOpen.add(${p.id}); renderPartners(); return false;" style="color:#60a5fa;">${_ptOpen.has(p.id) ? 'Hide' : 'Show'} his orders & sales</a>
+      </div>
+      <div class="pt-payments" style="margin-top:10px;font-size:12px;">
+        <div style="font-size:10px;letter-spacing:.05em;font-weight:700;color:var(--muted);margin-bottom:2px;">PAYMENTS TO HIM${p.payouts.length ? ` · ${p.payouts.length} · ${m(p.paid)}` : ''}</div>
+        ${p.payouts.length ? p.payouts.map(x => `<div class="pt-payment" style="display:flex;gap:10px;align-items:center;padding:3px 0;border-top:1px solid var(--border);">
+          <span style="width:90px;color:var(--muted);">${esc(x.paid_at || '')}</span><span style="flex:1;color:var(--muted);">${esc(x.note || '')}</span><b style="font-variant-numeric:tabular-nums;">${m(x.amount)}</b>
+          <button onclick="editPayout(${x.id}, ${Number(x.amount)}, this.dataset.day, this.dataset.note)" data-day="${esc(x.paid_at || '')}" data-note="${esc(x.note || '')}" title="Edit this payment" style="background:none;border:none;color:var(--muted);cursor:pointer;"><i class="fa fa-pen"></i></button>
+          <button onclick="deletePayout(${x.id})" title="Delete this payment" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button></div>`).join('')
+          : '<div style="color:var(--muted);padding:3px 0;border-top:1px solid var(--border);">No payments recorded yet.</div>'}
       </div>
       ${(p.checkList || []).length ? `<div class="pt-check" style="margin-top:8px;border:1px dashed #b45309;border-radius:8px;padding:8px;font-size:11px;">
         <div style="font-weight:700;color:#fbbf24;margin-bottom:4px;">CHECK THESE (${p.checkList.length}) — maybe his, still counted as yours</div>
@@ -3257,10 +3271,18 @@ function renderPartners() {
           <button class="btn btn-ghost btn-sm pt-mine" onclick="partnerSetOwner(${o.id}, 0)">Mine</button></div>`).join('')}
       </div>` : ''}
       ${_ptOpen.has(p.id) ? `<div style="margin-top:8px;font-size:11px;">
-        ${p.orderList.length ? `<div style="display:flex;gap:10px;padding:2px 0;font-size:10px;letter-spacing:.05em;color:var(--muted);">
+        ${p.orderList.length ? `<div class="pt-paidbar" style="display:flex;gap:12px;align-items:center;padding:2px 0 6px;font-size:11px;">
+          <b class="pt-paid-count">${p.orderList.filter(o => o.paid).length} of ${p.orderList.length} orders checked as done and paid</b>
+          <span style="flex:1;"></span>
+          <a href="#" onclick="partnerSetPaid([${p.orderList.map(o => o.id).join(',')}], true); return false;" style="color:#60a5fa;">Check all</a>
+          <a href="#" onclick="partnerSetPaid([${p.orderList.map(o => o.id).join(',')}], false); return false;" style="color:var(--muted);">Clear all</a></div>
+        <div style="display:flex;gap:10px;padding:2px 0;font-size:10px;letter-spacing:.05em;color:var(--muted);">
+          <span style="width:34px;text-align:center;">PAID</span>
           <span style="flex:1;">ORDER · ITEMS (tap an item for its landed cost)</span>
           <span style="width:78px;text-align:right;">ORDER</span><span style="width:62px;text-align:right;">FEES</span><span style="width:84px;text-align:right;">LANDED</span><span style="width:178px;"></span></div>` : ''}
-        ${[...p.orderList].sort((x, y) => String(y.order_date || '').localeCompare(String(x.order_date || ''))).map(o => `<div class="pt-order" data-id="${o.id}" style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--border);">
+        ${[...p.orderList].sort((x, y) => String(y.order_date || '').localeCompare(String(x.order_date || ''))).map(o => `<div class="pt-order${o.paid ? ' pt-is-paid' : ''}" data-id="${o.id}" style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px solid var(--border);${o.paid ? 'opacity:.55;' : ''}">
+          <label class="pt-paid" title="Check when this order is done and paid" style="width:34px;display:flex;justify-content:center;padding-top:2px;cursor:pointer;">
+            <input type="checkbox" ${o.paid ? 'checked' : ''} onchange="partnerSetPaid([${o.id}], this.checked)" style="width:16px;height:16px;cursor:pointer;"></label>
           <div style="flex:1;min-width:0;">
             <div><b style="font-weight:600;">${esc(o.order_number || '')}</b>
               <span style="color:var(--muted);margin-left:6px;">${esc(o.retailer || '')} · ${esc(o.status || '')}${o.order_date ? ' · ' + esc(botShortDate(o.order_date)) : ''}</span></div>
@@ -3290,10 +3312,6 @@ function renderPartners() {
           <span style="width:84px;text-align:right;color:#60a5fa;">${m(p.totalIn)}</span><span style="width:118px;"></span></div>` : ''}
         ${p.sales.length ? `<div style="margin-top:6px;font-weight:700;color:var(--muted);">SALES OF HIS UNITS</div>` + p.sales.map(x => `<div style="display:flex;gap:10px;padding:2px 0;">
           <span style="width:90px;color:var(--muted);">${esc(botShortDate(x.sold_at || ''))}</span><span style="flex:1;">${esc(x.product)} ×${x.qty}</span><span>${m(x.revenue - x.fees)}</span></div>`).join('') : ''}
-        ${p.payouts.length ? `<div style="margin-top:6px;font-weight:700;color:var(--muted);">PAYMENTS TO HIM</div>` + p.payouts.map(x => `<div style="display:flex;gap:10px;padding:2px 0;">
-          <span style="width:90px;color:var(--muted);">${esc(x.paid_at || '')}</span><span style="flex:1;">${esc(x.note || '')}</span><span>${m(x.amount)}</span>
-          <button onclick="editPayout(${x.id}, ${Number(x.amount)}, this.dataset.day, this.dataset.note)" data-day="${esc(x.paid_at || '')}" data-note="${esc(x.note || '')}" title="Edit this payment" style="background:none;border:none;color:var(--muted);cursor:pointer;"><i class="fa fa-pen"></i></button>
-          <button onclick="deletePayout(${x.id})" title="Delete this payment" style="background:none;border:none;color:#f87171;cursor:pointer;">✕</button></div>`).join('') : ''}
       </div>` : ''}
     </div>`).join('') : '<div style="font-size:12px;color:var(--muted);">No partners yet — add one below.</div>';
 }

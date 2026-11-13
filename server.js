@@ -273,6 +273,8 @@ try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_unit REAL"); } catch(e) {}
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_set_at TEXT"); } catch(e) {}   // when you last typed its fee
 // A fee typed on one ITEM of a box: JSON { itemKey: fee per unit }. Those items carry qty × rate; the rest of finder_fee goes to the other items (itemView.js).
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_lines TEXT"); } catch(e) {}
+// A partner's order you have checked off as done and paid (a tracking mark on the Partners page; it doesn't change what you owe him).
+try { db.exec("ALTER TABLE bot_orders ADD COLUMN partner_paid INTEGER DEFAULT 0"); } catch(e) {}
 // 1 = on a Cancelled/Refunded order, the finder fee still has to be paid (not refunded), so it stays in your costs.
 try { db.exec("ALTER TABLE bot_orders ADD COLUMN fee_kept INTEGER DEFAULT 0"); } catch(e) {}
 const nowIso = () => new Date().toISOString();
@@ -1325,6 +1327,15 @@ app.delete('/api/admin/bot-partner-payouts/:id', auth, adminOnly, (req, res) => 
   db.prepare('DELETE FROM bot_partner_payouts WHERE id=?').run([Number(req.params.id)]);
   res.json({ ok: true });
 });
+// Check mark "done and paid" on a partner's orders (one or many at once).
+app.post('/api/admin/bot-orders/partner-paid', auth, adminOnly, (req, res) => {
+  const { orderIds, paid } = req.body || {};
+  const ids = [...new Set((Array.isArray(orderIds) ? orderIds : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return res.status(400).json({ error: 'orderIds required' });
+  const st = db.prepare('UPDATE bot_orders SET partner_paid=? WHERE id=?');
+  ids.forEach(id => st.run([paid ? 1 : 0, id]));
+  res.json({ updated: ids.length, paid: !!paid });
+});
 // Whose order: null = match automatically, 0 = mine, or a partner id.
 app.put('/api/admin/bot-orders/:id/owner', auth, adminOnly, (req, res) => {
   const v = (req.body || {}).partner_id;
@@ -1854,7 +1865,7 @@ app.get('/api/admin/bot-money', auth, adminOnly, (req, res) => {
         return { id: o.id, order_number: o.order_number, retailer: o.retailer, status: o.status,
           order_date: o.order_date, shipping_name: o.shipping_name || null, account_email: o.account_email || null,
           total: r2(total), fee: r2(fee), orderFee: r2(fx.orderFee || 0), unitFee: r2(fx.unitFee || 0), feeAuto: o.fee_source === 'auto',
-          landed: r2(total + fee), match: o.partner_match,
+          landed: r2(total + fee), match: o.partner_match, paid: !!o.partner_paid,
           lines: orderLines(o, catalog).map(l => ({ name: l.name, item_name: l.item_name, qty: l.qty, cost: l.cost })) };
       }),
       sales: ps,
