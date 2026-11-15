@@ -221,6 +221,21 @@ try { db.exec(`CREATE TABLE IF NOT EXISTS quote_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT DEFAULT 'quote', name TEXT NOT NULL, contact TEXT,
   message TEXT NOT NULL, handled INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
 
+// Public-site visitor log (shortened IP + approximate place, deleted after 90 days) — see visitors.js.
+const Visitors = require('./visitors');
+try { Visitors.ensureTable(db); Visitors.purge(db); } catch (e) { console.error('visitor log setup failed:', e.message); }
+setInterval(() => { try { Visitors.purge(db); } catch (_) {} }, 24 * 60 * 60 * 1000);
+// A random salt for the daily visitor id, made once and kept in settings (so ids can't be reversed from a guessable secret).
+function visitorSalt() {
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key='visitor_salt'").get();
+    if (row && row.value) return row.value;
+    const v = require('crypto').randomBytes(24).toString('hex');
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('visitor_salt', ?)").run([v]);
+    return v;
+  } catch (_) { return JWT_SECRET; }
+}
+
 // House owners: the person whose house a main address is. One row per place.
 try { db.exec(`CREATE TABLE IF NOT EXISTS bot_address_owners (
   addr_key TEXT PRIMARY KEY, owner TEXT NOT NULL, address TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`); } catch(e) {}
@@ -533,6 +548,31 @@ app.get('/api/build', (req, res) => { res.set('Cache-Control', 'no-store'); res.
 app.get('/api/categories', (req, res) => {
   const cats = db.prepare("SELECT DISTINCT category FROM products ORDER BY category").all().map(r => r.category);
   res.json(['All', ...cats]);
+});
+
+// Page-view beacon from the public pages (site.js). Unauthenticated write, so: cap the sizes and allow a
+// limited number of views per visitor per hour. Bots, repeat reloads and failures are quietly ignored.
+const _hitCounts = new Map();   // ip -> [timestamps]
+app.post('/api/hit', (req, res) => {
+  res.status(204).end();
+  try {
+    const ip = Visitors.clientIp(req);
+    const now = Date.now();
+    const recent = (_hitCounts.get(ip) || []).filter(t => now - t < 3600e3);
+    if (recent.length >= 200) return;
+    recent.push(now); _hitCounts.set(ip, recent);
+    if (_hitCounts.size > 5000) for (const [k, v] of _hitCounts) if (!v.some(t => now - t < 3600e3)) _hitCounts.delete(k);
+    const b = req.body || {};
+    Visitors.record(db, {
+      ip, ua: req.headers['user-agent'], host: req.headers.host,
+      path: String(b.path || '/').slice(0, 300), ref: String(b.ref || '').slice(0, 500),
+    }, { secret: visitorSalt() });
+  } catch (e) { /* tracking must never break a page */ }
+});
+
+// The Visitors tab: last N days (1 = today), counted in the owner's time zone.
+app.get('/api/admin/visitors', auth, adminOnly, (req, res) => {
+  res.json(Visitors.summary(db, { days: req.query.days, tz: req.query.tz }));
 });
 
 // Public quote / trade-account form. Unauthenticated write, so: trim and cap every

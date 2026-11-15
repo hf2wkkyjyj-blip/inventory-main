@@ -287,3 +287,22 @@ Site.detailHtml = (p, esc, opts) => {
       g.rows.map(r => '<tr><th>' + esc(r.k) + '</th><td>' + esc(r.v) + '</td></tr>').join('') + '</table></details>').join('') +
     (f.prose ? '<details class="spec-sec"' + (f.groups.length ? '' : ' open') + '><summary>Description</summary><div class="spec-prose">' + Site.proseHtml(f.prose, esc) + '</div></details>' : '');
 };
+
+// ── Visitor count ──
+// One small message per page view to /api/hit (page + where they came from; the server adds an approximate place from the
+// IP and keeps only a shortened IP). Skipped for you when you're signed in to the admin on this device, for visitors who
+// send Do Not Track / Global Privacy Control, and for pages the browser only pre-loads.
+(function () {
+  try {
+    if (localStorage.getItem('inv_admin_token')) return;
+  } catch (e) {}
+  try {
+    if (navigator.doNotTrack === '1' || window.doNotTrack === '1' || navigator.globalPrivacyControl) return;
+    if (document.prerendering || document.visibilityState === 'prerender') return;
+    const body = JSON.stringify({ path: location.pathname + location.search, ref: document.referrer || '' });
+    const blob = new Blob([body], { type: 'application/json' });
+    if (!(navigator.sendBeacon && navigator.sendBeacon('/api/hit', blob))) {
+      fetch('/api/hit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+    }
+  } catch (e) {}
+})();

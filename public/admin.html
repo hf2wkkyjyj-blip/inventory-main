@@ -125,6 +125,29 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
 .prod-views button:hover{color:var(--text);border-color:var(--muted);}
 .prod-views button.active{background:var(--accent);border-color:var(--accent);color:#fff;}
 .prod-views .n{opacity:.75;font-weight:500;margin-left:3px;}
+/* Visitors tab */
+.vz-range{display:flex;gap:6px;}
+.vz-range button{background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:999px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;}
+.vz-range button:hover{color:var(--text);border-color:var(--muted);}
+.vz-range button.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+.vz-note{font-size:12px;color:var(--muted);margin:-4px 0 16px;max-width:860px;line-height:1.5;}
+.vz-note i{color:var(--green);margin-right:5px;}
+.vz-legend{display:flex;gap:16px;font-size:11px;color:var(--muted);margin-bottom:10px;}
+.vz-dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px;}
+.vz-dot-v{background:var(--accent);} .vz-dot-p{background:rgba(47,129,247,.3);}
+.vz-chart{display:flex;align-items:flex-end;gap:2px;height:130px;}
+.vz-bar{flex:1;min-width:2px;height:100%;display:flex;align-items:flex-end;background:transparent;}
+.vz-bar .p{width:100%;background:rgba(47,129,247,.3);border-radius:3px 3px 0 0;position:relative;display:flex;align-items:flex-end;min-height:1px;}
+.vz-bar .v{width:100%;background:var(--accent);border-radius:3px 3px 0 0;}
+.vz-axis{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:6px;}
+.vz-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:6px;}
+.vz-cols .panel{margin-bottom:0;}
+.vz-h{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;padding:12px 14px 6px;}
+.vz-row{display:flex;justify-content:space-between;gap:12px;padding:7px 14px;font-size:13px;border-top:1px solid rgba(48,54,61,.5);background-repeat:no-repeat;}
+.vz-row .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.vz-row .ct{font-weight:600;white-space:nowrap;}
+.vz-row .ct small{color:var(--muted);font-weight:400;margin-left:6px;}
+.vz-empty{padding:18px 14px;font-size:12px;color:var(--muted);}
 .search-box{position:relative;flex:1;min-width:180px;}
 .search-box i{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:12px;}
 .search-box input{width:100%;padding:9px 12px 9px 30px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;}
@@ -290,6 +313,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
   <div class="tab" id="tab-members-nav" onclick="showTab('members')"><i class="fa fa-users"></i> Members</div>
   <div class="tab" id="tab-bot-orders-nav" onclick="showTab('bot-orders')" style="display:none;"><i class="fa fa-shipping-fast"></i> BOT Order Tracker</div>
   <div class="tab" id="tab-quotes-nav" onclick="showTab('quotes')"><i class="fa fa-inbox"></i> Quotes <span id="quotes-badge" style="display:none;background:#ef4444;color:#fff;border-radius:999px;font-size:10px;font-weight:700;padding:1px 7px;margin-left:4px;"></span></div>
+  <div class="tab" id="tab-visitors-nav" onclick="showTab('visitors')"><i class="fa fa-earth-americas"></i> Visitors</div>
   <div class="tab" onclick="showTab('settings')"><i class="fa fa-cog"></i> Business Info</div>
 </div>
 
@@ -780,6 +804,35 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <span style="font-size:12px;color:var(--muted);">From the forms on your website. Newest unhandled first.</span>
   </div>
   <div id="quotes-list"></div>
+</div>
+
+<!-- ══ VISITORS TAB ══ -->
+<div id="tab-visitors" style="display:none;">
+  <div class="toolbar">
+    <h3 style="font-size:15px;font-weight:700;"><i class="fa fa-earth-americas" style="color:var(--accent);margin-right:8px;"></i>Website visitors</h3>
+    <div style="flex:1"></div>
+    <div class="vz-range" id="vz-range">
+      <button type="button" data-d="1" onclick="vzSetDays(1)">Today</button>
+      <button type="button" data-d="7" onclick="vzSetDays(7)">7 days</button>
+      <button type="button" data-d="30" class="active" onclick="vzSetDays(30)">30 days</button>
+      <button type="button" data-d="90" onclick="vzSetDays(90)">90 days</button>
+    </div>
+  </div>
+  <div class="vz-note"><i class="fa fa-shield-halved"></i> Counts people who open your public pages. Your own visits (while you're signed in on this device), search-engine bots and visitors who send Do Not Track are left out. Only an approximate place and a shortened IP are kept, and they are deleted after 90 days.</div>
+  <div class="stat-grid" id="vz-stats"></div>
+  <div class="panel" id="vz-chart-panel" style="padding:16px 18px 12px;">
+    <div class="vz-legend"><span><i class="vz-dot vz-dot-v"></i>Visitors</span><span><i class="vz-dot vz-dot-p"></i>Page views</span></div>
+    <div id="vz-chart" class="vz-chart"></div>
+    <div id="vz-axis" class="vz-axis"></div>
+  </div>
+  <div class="vz-cols">
+    <div class="panel"><div class="vz-h">Where they are</div><div id="vz-places"></div></div>
+    <div class="panel"><div class="vz-h">Pages they open</div><div id="vz-pages"></div></div>
+    <div class="panel"><div class="vz-h">How they found you</div><div id="vz-sources"></div></div>
+    <div class="panel"><div class="vz-h">Phone or computer</div><div id="vz-devices"></div></div>
+  </div>
+  <div class="vz-h" style="padding:6px 2px 8px;">Latest visits</div>
+  <div class="panel" style="overflow-x:auto;"><table id="vz-recent"></table></div>
 </div>
 
 <!-- ══ SETTINGS TAB ══════════════════════════════════════════════════════════ -->
@@ -1404,6 +1457,7 @@ function applyRoleUI() {
     document.getElementById('tab-members-nav').style.display = 'none';
     document.getElementById('tab-bot-orders-nav').style.display = 'none';
     document.getElementById('tab-quotes-nav').style.display = 'none';
+    document.getElementById('tab-visitors-nav').style.display = 'none';
   } else {
     document.getElementById('tab-bot-orders-nav').style.display = '';
     loadQuoteBadge();
@@ -1453,14 +1507,14 @@ if (TOKEN) {
 
 // ── TABS ──────────────────────────────────────────────────────────────────────
 function showTab(name) {
-  ['products','expenses','pl','members','bot-orders','quotes','settings'].forEach(t => {
+  ['products','expenses','pl','members','bot-orders','quotes','visitors','settings'].forEach(t => {
     document.getElementById('tab-'+t).style.display = t===name ? 'block' : 'none';
   });
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  const namedNav = {'members':'tab-members-nav','pl':'tab-pl-nav','bot-orders':'tab-bot-orders-nav','quotes':'tab-quotes-nav'};
+  const namedNav = {'members':'tab-members-nav','pl':'tab-pl-nav','bot-orders':'tab-bot-orders-nav','quotes':'tab-quotes-nav','visitors':'tab-visitors-nav'};
   if (namedNav[name]) { document.getElementById(namedNav[name]).classList.add('active'); }
   else {
-    const idx = {products:0,expenses:1,settings:6};
+    const idx = {products:0,expenses:1,settings:7};
     const allTabs = document.querySelectorAll('.tab');
     if (allTabs[idx[name]]) allTabs[idx[name]].classList.add('active');
   }
@@ -1469,9 +1523,73 @@ function showTab(name) {
   if (name==='members') loadMembers();
   if (name==='bot-orders') loadBotOrders();
   if (name==='quotes') loadQuotes();
+  if (name==='visitors') loadVisitors();
 }
 
 // ── PRODUCTS ─────────────────────────────────────────────────────────────────
+// ── VISITORS ─────────────────────────────────────────────────────────────────
+// What the public pages record is in visitors.js: a place and a shortened IP per page view, kept 90 days.
+let vzDays = 30;
+function vzSetDays(d) { vzDays = d; loadVisitors(); }
+function vzPage(p) {
+  p = String(p || '/');
+  if (p === '/') return 'Home';
+  let u; try { u = new URL(p, 'http://x'); } catch (_) { return p; }
+  const cat = u.searchParams.get('cat'), q = u.searchParams.get('q');
+  const base = u.pathname.replace(/^\//, '').replace(/\.html$/, '');
+  const name = base === 'category' ? (cat || 'Category') : (base ? base.charAt(0).toUpperCase() + base.slice(1) : 'Home');
+  return name + (q ? ' · search "' + q + '"' : '');
+}
+const VZ_DEVICE = { mobile: ['Phone', 'fa-mobile-screen'], tablet: ['Tablet', 'fa-tablet-screen-button'], desktop: ['Computer', 'fa-desktop'] };
+function vzRows(id, rows, label) {
+  const box = document.getElementById(id);
+  if (!rows.length) { box.innerHTML = '<div class="vz-empty">Nothing yet</div>'; return; }
+  const max = Math.max(...rows.map(r => r.visitors)) || 1;
+  box.innerHTML = rows.map(r => {
+    const w = Math.round(r.visitors / max * 100), t = label(r);
+    return `<div class="vz-row" style="background-image:linear-gradient(90deg,rgba(47,129,247,.16) ${w}%,transparent ${w}%)"><span class="nm" title="${esc(t)}">${esc(t)}</span><span class="ct">${r.visitors}<small>${r.views} view${r.views === 1 ? '' : 's'}</small></span></div>`;
+  }).join('');
+}
+async function loadVisitors() {
+  document.querySelectorAll('#vz-range button').forEach(b => b.classList.toggle('active', +b.dataset.d === vzDays));
+  let tz = 'UTC'; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (_) {}
+  const s = await api('GET', '/admin/visitors?days=' + vzDays + '&tz=' + encodeURIComponent(tz));
+  if (!s) return;
+  const top = a => (a && a[0] && a[0].name !== 'Unknown') ? a[0].name : '—';
+  const card = (l, v, sub) => `<div class="stat-card"><div class="stat-label">${l}</div><div class="stat-value" style="font-size:${String(v).length > 12 ? 16 : 22}px">${esc(v)}</div><div class="stat-sub">${sub}</div></div>`;
+  document.getElementById('vz-stats').innerHTML =
+    card('Visitors', s.visitors, 'counted once a day') +
+    card('Page views', s.views, vzDays === 1 ? 'today' : 'last ' + vzDays + ' days') +
+    card('Pages per visitor', s.visitors ? (s.views / s.visitors).toFixed(1) : '—', 'how far they look') +
+    card('Top place', top(s.places), 'most visitors from') +
+    card('Top source', top(s.sources), 'where they came from');
+
+  // Day-by-day bars: light = page views, solid = visitors (a single day has no line to draw)
+  const panel = document.getElementById('vz-chart-panel');
+  panel.style.display = s.perDay.length > 1 ? '' : 'none';
+  const dayLabel = k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString([], { month: 'short', day: 'numeric' }); };
+  const maxV = Math.max(1, ...s.perDay.map(d => d.views));
+  document.getElementById('vz-chart').innerHTML = s.perDay.map(d => {
+    const ph = Math.round(d.views / maxV * 100), vh = d.views ? Math.round(d.visitors / d.views * 100) : 0;
+    return `<div class="vz-bar" title="${esc(dayLabel(d.day))}: ${d.visitors} visitor${d.visitors === 1 ? '' : 's'}, ${d.views} view${d.views === 1 ? '' : 's'}"><div class="p" style="height:${ph}%"><div class="v" style="height:${vh}%"></div></div></div>`;
+  }).join('');
+  const first = s.perDay[0], last = s.perDay[s.perDay.length - 1];
+  document.getElementById('vz-axis').innerHTML = first ? `<span>${esc(dayLabel(first.day))}</span><span>${esc(dayLabel(last.day))}</span>` : '';
+
+  vzRows('vz-places', s.places, r => r.name);
+  vzRows('vz-pages', s.pages, r => vzPage(r.name));
+  vzRows('vz-sources', s.sources, r => r.name);
+  vzRows('vz-devices', s.devices, r => (VZ_DEVICE[r.name] || [r.name])[0]);
+
+  const rec = document.getElementById('vz-recent');
+  rec.innerHTML = s.recent.length
+    ? '<thead><tr><th>When</th><th>Place</th><th>Page</th><th>From</th><th></th><th>IP (shortened)</th></tr></thead><tbody>' + s.recent.map(r => {
+        const dv = VZ_DEVICE[r.device] || ['', 'fa-desktop'];
+        return `<tr><td style="white-space:nowrap">${esc(new Date(r.ts).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))}</td><td>${esc(r.place)}</td><td>${esc(vzPage(r.path))}</td><td>${esc(r.source)}</td><td title="${esc(dv[0])}"><i class="fa ${dv[1]} text-muted"></i></td><td class="text-muted fs12">${esc(r.ip)}</td></tr>`;
+      }).join('') + '</tbody>'
+    : `<tbody><tr><td><div class="empty"><i class="fa fa-earth-americas"></i>No visits recorded yet.<br><span class="fs12">They show up here as people open your public pages.</span></div></td></tr></tbody>`;
+}
+
 // Products you've sold out of (stock "Out", quantity 0) live in the Archive view. Nothing is flagged by
 // hand: selling the last one moves it there, restocking it brings it back.
 let prodView = 'active';
