@@ -574,6 +574,13 @@ app.post('/api/hit', (req, res) => {
 app.get('/api/admin/visitors', auth, adminOnly, (req, res) => {
   res.json(Visitors.summary(db, { days: req.query.days, tz: req.query.tz }));
 });
+// One-time: add past page views taken from the hosting provider's request log ({ ts, path, ip, ua } rows).
+// Same rules as live views (bots out, only a place and a shortened IP are kept); running it twice adds nothing new.
+app.post('/api/admin/visitors/import', auth, adminOnly, (req, res) => {
+  const rows = req.body && req.body.rows;
+  if (!Array.isArray(rows) || !rows.length || rows.length > 5000) return res.status(400).json({ error: 'Send rows: 1 to 5000 of { ts, path, ip, ua }' });
+  res.json(Visitors.importLog(db, rows, { secret: visitorSalt() }));
+});
 
 // Public quote / trade-account form. Unauthenticated write, so: trim and cap every
 // field, and allow only a few submissions per visitor per hour.

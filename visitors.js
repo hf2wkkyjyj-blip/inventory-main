@@ -59,7 +59,8 @@ function maskIp(ip) {
   return '';
 }
 
-const BOT = /bot|crawl|spider|slurp|headless|lighthouse|pingdom|uptime|monitor|facebookexternalhit|preview|fetch|curl|wget|python|axios|go-http|java\/|okhttp|scrapy|httpclient|libwww|phantom|selenium|puppeteer|playwright/i;
+// Search engines, link previews, scanners and AI fetchers announce themselves; a real browser never puts a web address in its name.
+const BOT = /bot|crawl|spider|slurp|headless|lighthouse|pingdom|uptime|monitor|facebookexternalhit|preview|fetch|curl|wget|python|axios|go-http|java\/|okhttp|scrapy|httpclient|libwww|phantom|selenium|puppeteer|playwright|scan|xpanse|censys|zgrab|masscan|nuclei|hello from|research|security|bytespider|claude|gpt|openai|anthropic|perplexity|compatible;|https?:\/\//i;
 const isBot = ua => !ua || BOT.test(String(ua));
 
 function deviceOf(ua) {
@@ -109,22 +110,51 @@ function visitorId(secret, ip, ua, now) {
  * Save one page view. Returns the saved row, or null when it was left out (bot, no address, or the
  * same visitor reloading the same page within 30 seconds).
  */
-function record(db, hit, { secret = '', geo = geoLookup, now = Date.now() } = {}) {
+function record(db, hit, { secret = '', geo = geoLookup, now = Date.now(), source } = {}) {
   const ua = String(hit.ua || '');
   const ip = String(hit.ip || '');
   if (isBot(ua) || !ip) return null;
   const vid = visitorId(secret, ip, ua, now);
   const path = cleanPath(hit.path);
-  const since = new Date(now - 30e3).toISOString();
-  if (db.prepare('SELECT 1 FROM visits WHERE vid=? AND path=? AND ts>? LIMIT 1').get([vid, path, since])) return null;
+  // Within 30 seconds either side: a reload (or, when importing, a row that is already there) is not a second view.
+  const lo = new Date(now - 30e3).toISOString(), hi = new Date(now + 30e3).toISOString();
+  if (db.prepare('SELECT 1 FROM visits WHERE vid=? AND path=? AND ts>? AND ts<? LIMIT 1').get([vid, path, lo, hi])) return null;
   const g = geo(ip) || {};
   const row = {
-    ts: new Date(now).toISOString(), path, source: sourceOf(hit.ref, hit.host), device: deviceOf(ua),
+    ts: new Date(now).toISOString(), path, source: source || sourceOf(hit.ref, hit.host), device: deviceOf(ua),
     country: g.country || '', region: g.region || '', city: g.city || '', ip_mask: maskIp(ip), vid,
   };
   db.prepare('INSERT INTO visits (ts,path,source,device,country,region,city,ip_mask,vid) VALUES (?,?,?,?,?,?,?,?,?)')
     .run([row.ts, row.path, row.source, row.device, row.country, row.region, row.city, row.ip_mask, row.vid]);
   return row;
+}
+
+/** Facebook / Instagram's own in-app browser names itself in the user agent; there's no referrer to read, but this says where they came from. */
+function sourceFromUa(ua) {
+  ua = String(ua || '');
+  if (/Instagram/i.test(ua)) return 'Instagram';
+  if (/FB_IAB|FBAN|FBAV/i.test(ua)) return 'Facebook';
+  return 'Direct';
+}
+
+/**
+ * One-time: add page views taken from the hosting provider's request log (time, page, IP, browser). The log has no
+ * "came from", so the in-app browsers of Facebook / Instagram are the only sources it can tell. Same rules as live
+ * views (bots out, only a place + shortened IP kept); views older than the retention window are skipped; running it twice
+ * adds nothing the second time. Returns { added, skipped, old }.
+ */
+function importLog(db, rows, { secret = '', geo = geoLookup, now = Date.now() } = {}) {
+  const out = { added: 0, skipped: 0, old: 0 };
+  const oldest = now - RETAIN_DAYS * DAY;
+  const list = (Array.isArray(rows) ? rows : []).map(r => ({ ts: Date.parse(r && r.ts), path: r && r.path, ip: r && r.ip, ua: r && r.ua }))
+    .filter(r => Number.isFinite(r.ts) && r.ip).sort((a, b) => a.ts - b.ts);
+  for (const r of list) {
+    if (r.ts < oldest) { out.old++; continue; }
+    const hit = { ip: String(r.ip), ua: r.ua, path: r.path, ref: '' };
+    const row = record(db, hit, { secret, geo, now: r.ts, source: sourceFromUa(r.ua) });
+    if (row) out.added++; else out.skipped++;
+  }
+  return out;
 }
 
 /** Delete views older than `days`. */
@@ -189,4 +219,4 @@ function summary(db, { days = 30, tz = 'UTC', now = Date.now() } = {}) {
   };
 }
 
-module.exports = { ensureTable, record, purge, summary, clientIp, maskIp, isBot, deviceOf, sourceOf, cleanPath, placeLabel, geoLookup, RETAIN_DAYS };
+module.exports = { ensureTable, record, importLog, sourceFromUa, purge, summary, clientIp, maskIp, isBot, deviceOf, sourceOf, cleanPath, placeLabel, geoLookup, RETAIN_DAYS };

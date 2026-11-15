@@ -92,6 +92,33 @@ const ny = V.summary(db, { days: 1, tz: 'Pacific/Kiritimati', now: T0 + 3600e3 }
 eq('days are counted in the owner time zone', typeof ny.views, 'number');
 eq('a bad time zone falls back to UTC', V.summary(db, { days: 1, tz: 'Nope/Nowhere', now: NOW }).tz, 'UTC');
 
+console.log('\n── Past views from the hosting provider\'s request log ──');
+const FB = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/157.0.0.0 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/587.0.0.39.55;IABMV/1;]';
+eq('the in-app browser of Facebook says where they came from', V.sourceFromUa(FB), 'Facebook');
+eq('Instagram too', V.sourceFromUa('Mozilla/5.0 (iPhone) Instagram 300.0'), 'Instagram');
+eq('otherwise Direct', V.sourceFromUa(MAC), 'Direct');
+eq('a security scanner is a bot', V.isBot('Hello from Palo Alto Networks, find out more about our scans in https://docs-cortex.paloaltonetworks.com/'), true);
+eq('an AI fetcher is a bot', V.isBot('Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Claude-User/1.0; +claude-user@anthropic.com)'), true);
+eq('a name that is a web address is a bot', V.isBot('http://solids-supply.com/wp-admin/install.php?step=1'), true);
+eq('Safari on iPhone is still not', V.isBot(IPHONE), false);
+const LOGNOW = Date.parse('2026-11-15T17:00:00Z');
+const past = [
+  { ts: '2026-11-14T18:00:00.000Z', path: '/', ip: '73.158.20.5', ua: IPHONE },
+  { ts: '2026-11-14T18:00:05.000Z', path: '/', ip: '73.158.20.5', ua: IPHONE },          // a reload
+  { ts: '2026-11-14T19:00:00.000Z', path: '/flooring.html', ip: '98.20.1.9', ua: FB },
+  { ts: '2026-11-14T19:05:00.000Z', path: '/', ip: '8.8.8.8', ua: 'Hello from Palo Alto Networks, find out more about our scans' },
+  { ts: '2026-11-14T20:00:00.000Z', path: '/', ip: '', ua: MAC },
+  { ts: 'garbage', path: '/', ip: '24.10.2.2', ua: MAC },
+  { ts: '2026-06-01T12:00:00.000Z', path: '/', ip: '24.10.2.2', ua: MAC },                // older than 90 days
+];
+const imp = V.importLog(db, past, { geo, secret: 's', now: LOGNOW });
+eq('imported: real views added, bots / reloads / old ones left out', imp, { added: 2, skipped: 2, old: 1 });
+const im = raw.prepare("SELECT path, source, city, region, ip_mask FROM visits WHERE ts LIKE '2026-11-14T1%' ORDER BY ts").all();
+eq('each keeps its place and a shortened IP', im.map(r => [r.path, r.city || r.region, r.ip_mask]), [['/', 'Alameda', '73.158.20.0'], ['/flooring.html', 'TX', '98.20.1.0']]);
+eq('Facebook in-app browser shows as the source', im[1].source, 'Facebook');
+eq('the full IP is not kept', JSON.stringify(raw.prepare('SELECT * FROM visits').all()).includes('98.20.1.9'), false);
+eq('running it again adds nothing', V.importLog(db, past, { geo, secret: 's', now: LOGNOW }), { added: 0, skipped: 4, old: 1 });
+
 console.log('\n── Old views are deleted ──');
 rec({ ip: '73.158.20.5', ua: MAC, path: '/old' }, T0 - DAYS(120));
 eq('an old view exists before the cleanup', raw.prepare("SELECT COUNT(*) n FROM visits WHERE path='/old'").get().n, 1);
