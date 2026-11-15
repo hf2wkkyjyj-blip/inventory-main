@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Admin – Solid Supply</title>
+<meta name="robots" content="noindex, nofollow">
 <!-- Add to Home Screen: opens full-screen like an app (iPhone + Android) -->
 <link rel="manifest" href="/admin.webmanifest">
 <meta name="theme-color" content="#111827">
@@ -1556,12 +1557,14 @@ async function loadVisitors() {
   const s = await api('GET', '/admin/visitors?days=' + vzDays + '&tz=' + encodeURIComponent(tz));
   if (!s) return;
   const top = a => (a && a[0] && a[0].name !== 'Unknown') ? a[0].name : '—';
-  const card = (l, v, sub) => `<div class="stat-card"><div class="stat-label">${l}</div><div class="stat-value" style="font-size:${String(v).length > 12 ? 16 : 22}px">${esc(v)}</div><div class="stat-sub">${sub}</div></div>`;
+  // Phone-carrier addresses give a country but no city; they shouldn't outrank a real city as the "top place".
+  const topPlace = a => top((a || []).filter(p => p.name.includes(',')).concat(a || []));
+  const card = (l, v, sub) => `<div class="stat-card"><div class="stat-label">${l}</div><div class="stat-value" style="font-size:${String(v).length > 12 ? 16 : 22}px">${esc(String(v))}</div><div class="stat-sub">${sub}</div></div>`;
   document.getElementById('vz-stats').innerHTML =
     card('Visitors', s.visitors, 'counted once a day') +
     card('Page views', s.views, vzDays === 1 ? 'today' : 'last ' + vzDays + ' days') +
     card('Pages per visitor', s.visitors ? (s.views / s.visitors).toFixed(1) : '—', 'how far they look') +
-    card('Top place', top(s.places), 'most visitors from') +
+    card('Top place', topPlace(s.places), 'most visitors from') +
     card('Top source', top(s.sources), 'where they came from');
 
   // Day-by-day bars: light = page views, solid = visitors (a single day has no line to draw)
@@ -1576,7 +1579,7 @@ async function loadVisitors() {
   const first = s.perDay[0], last = s.perDay[s.perDay.length - 1];
   document.getElementById('vz-axis').innerHTML = first ? `<span>${esc(dayLabel(first.day))}</span><span>${esc(dayLabel(last.day))}</span>` : '';
 
-  vzRows('vz-places', s.places, r => r.name);
+  vzRows('vz-places', s.places, r => r.name === 'United States' ? 'United States (city not known)' : r.name);
   vzRows('vz-pages', s.pages, r => vzPage(r.name));
   vzRows('vz-sources', s.sources, r => r.name);
   vzRows('vz-devices', s.devices, r => (VZ_DEVICE[r.name] || [r.name])[0]);

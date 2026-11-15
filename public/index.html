@@ -158,7 +158,7 @@
 <header class="hero photo-band">
   <div class="wrap">
     <div>
-      <div class="eyebrow" id="hero-eyebrow">Local building materials</div>
+      <div class="eyebrow" id="hero-eyebrow">Flooring &amp; building materials · Hopkins, MN</div>
       <h1><span class="ln"><span>Stocked local.</span></span><span class="ln"><span>Priced right.</span></span><span class="ln"><span class="ghost">Ready to load.</span></span></h1>
       <p class="lede" id="hero-tagline">Flooring, vanities and more — in stock and ready for pickup. Tell us what the job needs and we'll price it.</p>
       <div class="cta-row">
@@ -266,6 +266,15 @@
   </div>
 </section>
 
+<section class="white local-copy" id="local">
+  <div class="wrap">
+    <div class="eyebrow">Visit us</div>
+    <h2 class="section">Flooring &amp; building materials <br>in Hopkins, MN.</h2>
+    <p class="lede">Solids Supply is a local building materials store in Hopkins, Minnesota. We keep waterproof luxury vinyl plank flooring, bathroom vanities and more on the shelf, with live prices online and same-day pickup on anything in stock.</p>
+    <p class="lede">Shopping for a floor? <a href="/flooring.html">See our flooring and use the room calculator</a> to work out how many boxes you need. Looking for something else? <a href="/materials.html">Browse everything we stock</a>, or <a href="#quote">send us your list</a> and we'll price it.</p>
+  </div>
+</section>
+
 <footer class="site">
   <div class="wrap">
     <span id="foot-copy">© Solids Supply</span>
@@ -296,9 +305,9 @@ async function loadSettings() {
   try {
     const s = await (await fetch('/api/settings')).json();
     const name = s.business_name || 'Solids Supply';
-    document.title = name + ' — Local Building Materials';
+    // The page title comes from the server (seo.js); the headline label keeps its town so it is in the page for search.
     $('brand-name').textContent = name;
-    if (s.service_area) { $('brand-area').textContent = s.service_area; $('hero-eyebrow').textContent = 'Local building materials · ' + s.service_area; }
+    if (s.service_area) $('brand-area').textContent = s.service_area;
     if (s.hero_tagline) $('hero-tagline').textContent = s.hero_tagline;
     if (s.business_phone) { $('ct-phone').textContent = s.business_phone; $('ct-phone').href = telHref(s.business_phone); } else { $('ct-phone').parentElement.remove(); }
     if (s.business_email) { $('ct-email').textContent = s.business_email; $('ct-email').href = 'mailto:' + s.business_email; } else { $('ct-email').parentElement.remove(); }

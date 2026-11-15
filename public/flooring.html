@@ -213,8 +213,8 @@
   <div class="planks" id="planks" aria-hidden="true"></div>
   <div class="wrap">
     <div class="eyebrow">Materials · Flooring</div>
-    <h1>Flooring, stocked for the job.</h1>
-    <p class="lede">Vinyl plank, laminate and tile on the shelf. Enter your room size and we'll show how many boxes you need and what it'll cost.</p>
+    <h1>Flooring in Hopkins, stocked for the job.</h1>
+    <p class="lede">Luxury vinyl plank, laminate and tile on the shelf in Hopkins, MN. Enter your room size and we'll show how many boxes you need and what it'll cost.</p>
     <div class="cta-row">
       <a class="btn btn-primary" href="#calc">Calculate my room <i class="fa fa-arrow-down"></i></a>
       <a class="btn btn-outline" href="/#quote">Request a quote</a>
@@ -267,6 +267,14 @@
     <div class="grid" id="grid"><div class="empty">Loading flooring…</div></div>
   </section>
 </main>
+
+<section class="local-copy">
+  <div class="wrap">
+    <h2 class="section">Luxury vinyl plank flooring in Hopkins, MN.</h2>
+    <p class="lede">Our flooring is stocked locally, so you see the real price and can pick up the same day. Waterproof luxury vinyl plank works in kitchens, bathrooms, basements and living areas. Duraplex, our exclusive line, has the underlayment already attached and a 10-year limited residential wear warranty.</p>
+    <p class="lede">Not sure how much to order? <a href="#calc">Use the room calculator</a>, or <a href="/#quote">send us your measurements</a> and we'll work it out. You can also <a href="/materials.html">browse our other materials</a>.</p>
+  </div>
+</section>
 
 <section class="cta-band">
   <div class="wrap">
@@ -451,7 +459,6 @@ async function loadSettings() {
   try {
     const s = await (await fetch('/api/settings')).json();
     const name = s.business_name || 'Solids Supply';
-    document.title = 'Flooring — ' + name;
     $('brand-name').textContent = name;
     if (s.service_area) $('brand-area').textContent = s.service_area;
     $('foot-copy').textContent = '© ' + new Date().getFullYear() + ' ' + name;

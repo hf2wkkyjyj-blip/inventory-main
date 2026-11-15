@@ -8,6 +8,8 @@ const fs = require('fs');
 const multer = require('multer');
 const cheerio = require('cheerio');
 const puppeteer = require('puppeteer-core');
+const compression = require('compression');
+const Seo = require('./seo');
 
 // Local modules. Declared up here because startup code further down calls
 // them — a `const` used before its declaration line throws, and inside a
@@ -78,8 +80,66 @@ const EMPLOYEE_PASSWORD = process.env.EMPLOYEE_PASSWORD || '';
 const DATA_DIR = process.env.DATA_DIR || (fs.existsSync('/data') ? '/data' : null);
 console.log(`📂 DATA_DIR: ${DATA_DIR || 'none (using app folder)'}`);
 
+app.use(compression());   // gzip pages, scripts and the product list: smaller downloads, faster on phones
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+
+// ── Search engines (seo.js) ───────────────────────────────────────────────────
+// The public pages are served with their own title, description, canonical link and share tags filled in on the
+// server, so Google sees them without running the page's scripts. The home page also carries the shop's name,
+// address, phone and hours in the form Google reads for local results. These routes come before the static
+// files so they win for the same addresses.
+const PUBLIC_DIR = path.join(__dirname, 'public');
+const pageCache = {};
+function readPublicPage(file) {
+  const full = path.join(PUBLIC_DIR, file);
+  const mtime = fs.statSync(full).mtimeMs;
+  if (!pageCache[file] || pageCache[file].mtime !== mtime) pageCache[file] = { mtime, html: fs.readFileSync(full, 'utf8') };
+  return pageCache[file].html;
+}
+function publicSettings() {
+  const o = {};
+  try { db.prepare('SELECT key, value FROM settings').all().forEach(r => { o[r.key] = r.value; }); } catch (e) {}
+  return o;
+}
+const categoryNames = () => { try { return db.prepare('SELECT DISTINCT category FROM products WHERE category IS NOT NULL').all().map(r => r.category); } catch (e) { return []; } };
+function sendSeoPage(res, file, meta, settings, withBusiness) {
+  try {
+    const m = Object.assign({}, meta);
+    if (withBusiness) m.jsonld = Seo.localBusiness(settings);
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(Seo.inject(readPublicPage(file), m, null, Seo.brandOf(settings)));
+  } catch (e) { res.sendFile(path.join(PUBLIC_DIR, file)); }   // never lose the page over a tag
+}
+app.get(['/', '/index.html'], (req, res) => { const s = publicSettings(); sendSeoPage(res, 'index.html', Seo.pageMeta('home', { settings: s }), s, true); });
+app.get('/flooring.html', (req, res) => { const s = publicSettings(); sendSeoPage(res, 'flooring.html', Seo.pageMeta('flooring', { settings: s }), s); });
+app.get('/materials.html', (req, res) => { const s = publicSettings(); sendSeoPage(res, 'materials.html', Seo.pageMeta('materials', { settings: s }), s); });
+app.get('/category.html', (req, res) => {
+  const s = publicSettings();
+  const m = Seo.pageMeta('category', { settings: s, categories: categoryNames(), category: String(req.query.cat || ''), query: String(req.query.q || '') });
+  if (m.redirect) return res.redirect(301, m.redirect);
+  sendSeoPage(res, 'category.html', m, s);
+});
+app.get('/robots.txt', (req, res) => { res.type('text/plain').send(Seo.robotsTxt()); });
+app.get('/sitemap.xml', (req, res) => {
+  let cats = [];
+  try { cats = db.prepare("SELECT DISTINCT category FROM products WHERE category IS NOT NULL AND stock IS NOT 'out_stock'").all().map(r => r.category); } catch (e) {}
+  res.type('application/xml').send(Seo.sitemapXml(Seo.sitemapPaths(cats)));
+});
+// The staff page is linked from every footer; keep it out of search results.
+app.use((req, res, next) => {
+  if (req.path === '/admin.html' || req.path === '/admin.webmanifest') res.set('X-Robots-Tag', 'noindex, nofollow');
+  next();
+});
+
+// Product photos get a fresh name on every upload, so they can be kept for a month; icons for a day. Pages, styles
+// and scripts are always re-checked so a new deploy shows up straight away.
+const staticOpts = {
+  setHeaders(res, filePath) {
+    if (/[\\/]uploads[\\/]/.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+    else if (/\.(png|jpe?g|webp|gif|svg|ico|woff2?)$/i.test(filePath)) res.setHeader('Cache-Control', 'public, max-age=86400');
+  },
+};
+app.use(express.static(PUBLIC_DIR, staticOpts));
 
 // Uploads folder for product images
 const uploadsDir = DATA_DIR
@@ -88,7 +148,7 @@ const uploadsDir = DATA_DIR
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 // When uploads are outside /public, serve them explicitly
 if (DATA_DIR) {
-  app.use('/uploads', express.static(uploadsDir));
+  app.use('/uploads', express.static(uploadsDir, staticOpts));
 }
 
 const storage = multer.diskStorage({
@@ -534,10 +594,14 @@ app.get('/api/products/:id', (req, res) => {
   res.json(isStaff(req) ? p : publicProduct(p));
 });
 
+// Only the business details the site and the admin Settings tab actually show. The settings table also holds
+// internal values (the visitor salt, email-scraper state, blocked order numbers), which must never be public.
+const PUBLIC_SETTINGS = ['business_name', 'business_phone', 'business_email', 'business_address', 'business_hours',
+  'service_area', 'hero_tagline', 'hide_out_of_stock'];
 app.get('/api/settings', (req, res) => {
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const obj = {};
-  rows.forEach(r => { if (r.key !== 'employee_password') obj[r.key] = r.value; });
+  rows.forEach(r => { if (PUBLIC_SETTINGS.includes(r.key)) obj[r.key] = r.value; });
   res.json(obj);
 });
 

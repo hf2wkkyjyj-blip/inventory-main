@@ -180,3 +180,8 @@ footer.site a:hover { color: var(--text); text-decoration: underline; }
 .spec-prose p { margin: 8px 0; }
 .spec-prose ul { margin: 8px 0 4px 18px; }
 .spec-prose li { margin: 4px 0; }
+
+/* Plain-text "where we are" block: real sentences for readers and for search engines. */
+.local-copy { padding: clamp(48px, 7vw, 88px) 0; }
+.local-copy .lede { margin: 0 0 14px; }
+.local-copy a { color: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }

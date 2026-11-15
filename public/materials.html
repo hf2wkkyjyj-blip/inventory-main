@@ -85,7 +85,7 @@
 
 <header class="page-head photo-band">
   <div class="wrap">
-    <div class="eyebrow">Materials</div>
+    <div class="eyebrow">Building materials · Hopkins, MN</div>
     <h1>What&rsquo;s on the shelf.</h1>
     <p class="lede" id="hero-tagline">Pick a category to see what&rsquo;s in stock right now, with current prices.</p>
     <div class="head-stats" id="head-stats"></div>
@@ -142,7 +142,6 @@ async function init() {
   try {
     const s = await (await fetch('/api/settings')).json();
     const name = s.business_name || 'Our Store';
-    document.title = 'Materials – ' + name;
     document.getElementById('site-name').textContent = name;
     document.getElementById('site-area').textContent = s.service_area || '';
     if (s.hero_tagline) document.getElementById('hero-tagline').textContent = s.hero_tagline;

@@ -399,7 +399,6 @@ function renderHeader() {
   if (!currentCat) {
     const q = document.getElementById('search-input').value.trim();
     const title = q ? 'Search: “' + q + '”' : 'All materials';
-    document.title = title + ' – ' + (settings.business_name || 'Materials');
     document.getElementById('crumb').textContent = q ? 'Search' : 'All';
     document.getElementById('hero-eyebrow').textContent = 'Materials';
     document.getElementById('hero-h1').textContent = q ? 'Search results.' : 'All materials.';
@@ -408,9 +407,7 @@ function renderHeader() {
     return;
   }
   const items = BY[currentCat] || [], cp = Site.copy(currentCat), live = Site.live(items);
-  document.title = currentCat + ' – ' + (settings.business_name || 'Materials');
-  const md = document.querySelector('meta[name="description"]');
-  if (md) md.content = currentCat + ' in stock' + (live.length ? ' (' + live.length + ' items)' : '') + (Site.minPrice(items) != null ? ', from $' + Site.minPrice(items) : '') + '. Live pricing, same-day pickup on in-stock items. Request a quote.';
+  // The page title and description come from the server (seo.js), already worded for search; don't overwrite them here.
   document.getElementById('crumb').textContent = currentCat;
   document.getElementById('hero-eyebrow').textContent = 'Materials · ' + currentCat;
   document.getElementById('hero-h1').textContent = cp.head;
@@ -421,7 +418,7 @@ function renderHeader() {
   // Photo: your own /cat-<name>.jpg (or .mp4/.webm) fills the header; until then a product photo sits in a card.
   const card = document.getElementById('hero-card'), img = Site.photo(currentCat, items);
   card.style.display = '';
-  if (img) card.innerHTML = '<img src="' + img.replace(/"/g, '%22') + '" alt="">'; else card.innerHTML = '<i class="fa fa-' + Site.icon(currentCat) + '"></i>';
+  if (img) { card.innerHTML = '<img src="' + img.replace(/"/g, '%22') + '" alt="">'; card.firstChild.alt = currentCat + ' at ' + (settings.business_name || 'our store'); } else card.innerHTML = '<i class="fa fa-' + Site.icon(currentCat) + '"></i>';
   bandPhoto('#cat-hero', '/cat-' + Site.slug(currentCat) + '.jpg');
   Site.probe(currentCat, () => hero.classList.add('has-photo'));
 
