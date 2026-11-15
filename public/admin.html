@@ -120,6 +120,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-s
 
 /* TOOLBAR */
 .toolbar{display:flex;gap:10px;margin-bottom:18px;align-items:center;flex-wrap:wrap;}
+.prod-views{display:flex;gap:6px;margin:-6px 0 14px;}
+.prod-views button{background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:999px;padding:6px 14px;font-size:12px;font-weight:600;cursor:pointer;}
+.prod-views button:hover{color:var(--text);border-color:var(--muted);}
+.prod-views button.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+.prod-views .n{opacity:.75;font-weight:500;margin-left:3px;}
 .search-box{position:relative;flex:1;min-width:180px;}
 .search-box i{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:12px;}
 .search-box input{width:100%;padding:9px 12px 9px 30px;background:var(--card);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;}
@@ -302,9 +307,13 @@ tr:hover>td{background:rgba(47,129,247,.03);}
       <option value="">All Stock</option>
       <option value="in_stock">In Stock</option>
       <option value="low_stock">Low Stock</option>
-      <option value="out_stock">Out of Stock</option>
     </select>
     <button class="btn btn-primary" onclick="openModal()"><i class="fa fa-plus"></i> Add Product</button>
+  </div>
+  <!-- Sold-out items move to the Archive on their own, and come back when restocked -->
+  <div class="prod-views" id="prod-views">
+    <button type="button" class="active" id="pv-active" onclick="setProdView('active')">Products <span class="n" id="pv-active-n"></span></button>
+    <button type="button" id="pv-archive" onclick="setProdView('archive')"><i class="fa fa-box-archive"></i> Archive <span class="n" id="pv-archive-n"></span></button>
   </div>
   <div class="panel" style="overflow-x:auto;">
     <table>
@@ -1463,6 +1472,13 @@ function showTab(name) {
 }
 
 // ── PRODUCTS ─────────────────────────────────────────────────────────────────
+// Products you've sold out of (stock "Out", quantity 0) live in the Archive view. Nothing is flagged by
+// hand: selling the last one moves it there, restocking it brings it back.
+let prodView = 'active';
+function setProdView(v) {
+  prodView = v === 'archive' ? 'archive' : 'active';
+  adminLoadProducts();
+}
 async function adminLoadProducts() {
   const search = document.getElementById('admin-search').value.trim();
   const cat    = document.getElementById('admin-cat-filter').value;
@@ -1470,16 +1486,25 @@ async function adminLoadProducts() {
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (cat)    params.set('category', cat);
-  if (stock)  params.set('stock', stock);
   // The storefront hides sold-out products; the admin must still see them in
   // order to restock or edit them.
   params.set('includeOOS', '1');
-  const [products, statsByProduct] = await Promise.all([
+  const [everything, statsByProduct] = await Promise.all([
     api('GET', '/products?' + params.toString()),
     api('GET', '/admin/sales/by-product')
   ]);
-  if (!products) return;
-  allProductsCache = products;
+  if (!everything) return;
+  const soldOut = p => p.stock === 'out_stock';
+  const archived = everything.filter(soldOut);
+  const live = everything.filter(p => !soldOut(p));
+  const archiveView = prodView === 'archive';
+  const products = archiveView ? archived : (stock ? live.filter(p => p.stock === stock) : live);
+  document.getElementById('pv-active').classList.toggle('active', !archiveView);
+  document.getElementById('pv-archive').classList.toggle('active', archiveView);
+  document.getElementById('pv-active-n').textContent = live.length;
+  document.getElementById('pv-archive-n').textContent = archived.length;
+  document.getElementById('admin-stock-filter').style.display = archiveView ? 'none' : '';
+  allProductsCache = everything;
   salesByProductCache = statsByProduct || {};
 
   // Find top seller by revenue
@@ -1491,7 +1516,7 @@ async function adminLoadProducts() {
   document.getElementById('product-count').textContent = products.length + ' product' + (products.length!==1?'s':'');
   const tbody = document.getElementById('products-tbody');
   if (!products.length) {
-    tbody.innerHTML = `<tr><td colspan="7"><div class="empty"><i class="fa fa-box-open"></i>No products found</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty"><i class="fa fa-box-open"></i>${archiveView ? 'Nothing sold out. A product lands here when its quantity hits 0, and moves back when you restock it.' : 'No products found'}</div></td></tr>`;
     return;
   }
   tbody.innerHTML = products.map(p => {
