@@ -965,7 +965,9 @@ app.get('/api/admin/products/:id/pl', auth, (req, res) => {
   `).get([pid]);
   const prod = db.prepare('SELECT quantity, cost_price FROM products WHERE id=?').get([pid]);
   const inventory_value = prod ? (prod.quantity||0)*(prod.cost_price||0) : 0;
-  const margin_pct = summary.total_cost > 0 ? (summary.gross_profit / summary.total_cost * 100) : 0;
+  // ROI = profit ÷ what the sold units cost. (This used to read summary.total_cost,
+  // which this query never returns, so the panel's ROI was always 0.0%.)
+  const margin_pct = summary.cogs > 0 ? (summary.gross_profit / summary.cogs * 100) : 0;
   res.json({ sales, restocks, summary: { ...summary, inventory_value, margin_pct } });
 });
 

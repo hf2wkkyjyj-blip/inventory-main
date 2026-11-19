@@ -194,6 +194,7 @@ tr:hover>td{background:rgba(47,129,247,.03);}
 .mini-table th{padding:6px 10px;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02);}
 .mini-table td{padding:7px 10px;border-bottom:1px solid rgba(48,54,61,.35);}
 .mini-table tr:last-child td{border-bottom:none;}
+.mini-table tfoot td{border-top:1px solid var(--border);background:rgba(255,255,255,.03);font-weight:700;}
 
 /* MODAL */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .2s;}
@@ -992,12 +993,17 @@ tr:hover>td{background:rgba(47,129,247,.03);}
     <div class="form-group"><label>Product</label><input type="text" id="sale-product-name" readonly style="background:var(--surface);font-weight:600;"></div>
     <input type="hidden" id="sale-product-id">
     <div class="form-row">
-      <div class="form-group" style="margin:0"><label>Qty Sold *</label><input type="number" id="sale-qty" value="1" min="1" step="1" oninput="updateSaleProfit()"></div>
-      <div class="form-group" style="margin:0"><label>Sale Price ($ each) *</label><input type="number" id="sale-price" placeholder="0.00" step="0.01" min="0" oninput="updateSaleProfit()"></div>
+      <div class="form-group" style="margin:0"><label>Qty Sold *</label><input type="number" id="sale-qty" value="1" min="1" step="1" oninput="saleInput('qty')"></div>
+      <div class="form-group" style="margin:0"><label>Total Sale Price ($)</label><input type="number" id="sale-total" placeholder="0.00" step="0.01" min="0" oninput="saleInput('total')"></div>
     </div>
+    <div class="form-row" style="margin-bottom:6px">
+      <div class="form-group" style="margin:0"><label>Sale Price ($ each) *</label><input type="number" id="sale-price" placeholder="0.00" step="any" min="0" oninput="saleInput('each')"></div>
+      <div class="form-group" style="margin:0"><label>Cost Price ($ each)</label><input type="number" id="sale-cost" placeholder="0.00" step="0.01" min="0" oninput="saleInput('cost')"></div>
+    </div>
+    <div class="fs11 text-muted" style="margin-bottom:14px">Type the total and the price each fills in (total ÷ qty), or type the price each and the total fills in.</div>
     <div class="form-row">
-      <div class="form-group" style="margin:0"><label>Cost Price ($ each)</label><input type="number" id="sale-cost" placeholder="0.00" step="0.01" min="0" oninput="updateSaleProfit()"></div>
       <div class="form-group" style="margin:0"><label>Profit (auto)</label><input type="text" id="sale-profit-preview" readonly style="background:var(--surface);font-weight:700;font-size:15px;"></div>
+      <div class="form-group" style="margin:0"><label>ROI % (auto)</label><input type="text" id="sale-roi-preview" readonly style="background:var(--surface);font-weight:700;font-size:15px;"></div>
     </div>
     <div class="form-row">
       <div class="form-group" style="margin:0"><label>Payment Method</label>
@@ -1716,6 +1722,24 @@ function renderMiniPL(id, data) {
       </td>
     </tr>`).join('') : `<tr><td colspan="8" class="text-muted" style="padding:12px;text-align:center;">No sales recorded yet</td></tr>`;
 
+  // Bottom line of the history: everything sold of this product, added up.
+  const salesTotals = data.sales.reduce((a, tx) => {
+    a.qty    += Number(tx.quantity_sold) || 0;
+    a.rev    += (Number(tx.quantity_sold) || 0) * (Number(tx.sale_price) || 0);
+    a.profit += Number(tx.profit) || 0;
+    return a;
+  }, { qty: 0, rev: 0, profit: 0 });
+  const salesFoot = data.sales.length ? `
+    <tfoot><tr>
+      <td>Total · ${data.sales.length} sale${data.sales.length === 1 ? '' : 's'}</td>
+      <td>${salesTotals.qty}</td>
+      <td class="text-muted fs11">${salesTotals.qty ? 'avg $' + (salesTotals.rev / salesTotals.qty).toFixed(2) : ''}</td>
+      <td>$${salesTotals.rev.toFixed(2)}</td>
+      <td></td><td></td>
+      <td style="color:${salesTotals.profit>=0?'var(--green)':'var(--red)'};">${salesTotals.profit>=0?'+':'-'}\$${Math.abs(salesTotals.profit).toFixed(2)}</td>
+      <td></td>
+    </tr></tfoot>` : '';
+
   const restockRows = data.restocks.length ? data.restocks.map(r => `
     <tr>
       <td>${fmtDate(r.restocked_at)}</td>
@@ -1740,7 +1764,7 @@ function renderMiniPL(id, data) {
     <div id="mini-sales-${id}">
       <table class="mini-table">
         <thead><tr><th>Date</th><th>Qty</th><th>Price</th><th>Total</th><th>Payment</th><th>Notes</th><th>Profit</th><th></th></tr></thead>
-        <tbody>${salesRows}</tbody>
+        <tbody>${salesRows}</tbody>${salesFoot}
       </table>
     </div>
     <div id="mini-restocks-${id}" style="display:none;">
@@ -2073,27 +2097,82 @@ function openSaleModal(productId) {
   document.getElementById('sale-payment').value = 'Cash';
   document.getElementById('sale-notes').value = '';
   document.getElementById('sale-date').value = todayStr();
-  updateSaleProfit();
+  saleLastEdited = 'each';          // starts from the listed price; the total follows it
+  saleInput('qty');
   document.getElementById('sale-overlay').classList.add('open');
 }
 function closeSaleModal() { document.getElementById('sale-overlay').classList.remove('open'); }
 document.getElementById('sale-overlay').addEventListener('click', e => { if(e.target.id==='sale-overlay') closeSaleModal(); });
 
+// Which price box was typed in last. The other one is worked out from it, so
+// changing the quantity afterwards keeps what you actually typed:
+//   'each'  → total = price each × qty
+//   'total' → price each = total ÷ qty
+let saleLastEdited = 'each';
+const saleCents = n => (Math.round(n * 100) / 100).toFixed(2);
+// A price each like 100 ÷ 3 can't be written exactly in cents, so show up to 4 decimals (33.3333).
+const saleUnitStr = n => {
+  const c = Math.round(n * 100) / 100;
+  return Math.abs(c - n) < 0.00005 ? c.toFixed(2) : String(Math.round(n * 10000) / 10000);
+};
+
+// The sale as the boxes currently describe it. `each` keeps full precision when
+// it came from the total, so qty × each lands back on exactly the total typed.
+function saleNumbers() {
+  const qty = parseInt(document.getElementById('sale-qty').value) || 0;
+  const cp  = parseFloat(document.getElementById('sale-cost').value) || 0;
+  let revenue, each;
+  if (saleLastEdited === 'total') {
+    revenue = parseFloat(document.getElementById('sale-total').value) || 0;
+    each    = qty > 0 ? Math.round(revenue / qty * 1e6) / 1e6 : 0;
+  } else {
+    each    = parseFloat(document.getElementById('sale-price').value) || 0;
+    revenue = each * qty;
+  }
+  return { qty, cp, each, revenue };
+}
+
+function saleInput(src) {
+  if (src === 'each' || src === 'total') saleLastEdited = src;
+  const qty = parseInt(document.getElementById('sale-qty').value) || 0;
+  const priceEl = document.getElementById('sale-price');
+  const totalEl = document.getElementById('sale-total');
+  if (saleLastEdited === 'total') {
+    const t = parseFloat(totalEl.value);
+    priceEl.value = (qty > 0 && !isNaN(t)) ? saleUnitStr(t / qty) : '';
+  } else {
+    const e = parseFloat(priceEl.value);
+    totalEl.value = (qty > 0 && !isNaN(e)) ? saleCents(e * qty) : '';
+  }
+  updateSaleProfit();
+}
+
 function updateSaleProfit() {
-  const qty = parseInt(document.getElementById('sale-qty').value)||0;
-  const sp  = parseFloat(document.getElementById('sale-price').value)||0;
-  const cp  = parseFloat(document.getElementById('sale-cost').value)||0;
-  const profit = (sp - cp) * qty;
+  const { qty, cp, revenue } = saleNumbers();
+  const cost   = cp * qty;
+  const profit = revenue - cost;
   const el = document.getElementById('sale-profit-preview');
   el.value = (profit>=0?'+$':'-$') + Math.abs(profit).toFixed(2);
   el.style.color = profit>=0 ? 'var(--green)' : 'var(--red)';
+  // ROI = profit ÷ what the units cost — the same formula as the ROI in the product list.
+  const roiEl = document.getElementById('sale-roi-preview');
+  const priceTyped = document.getElementById(saleLastEdited === 'total' ? 'sale-total' : 'sale-price').value !== '';
+  if (cost > 0 && priceTyped) {
+    const roi = profit / cost * 100;
+    roiEl.value = (roi>=0?'+':'-') + Math.abs(roi).toFixed(1) + '%';
+    roiEl.style.color = roi>=0 ? 'var(--green)' : 'var(--red)';
+  } else {
+    roiEl.value = '—';          // no cost on file, so there is nothing to divide by
+    roiEl.style.color = 'var(--muted)';
+  }
 }
 
 async function saveSale() {
   const pid = parseInt(document.getElementById('sale-product-id').value);
-  const qty = parseInt(document.getElementById('sale-qty').value)||0;
-  const sp  = parseFloat(document.getElementById('sale-price').value);
-  if (!qty || isNaN(sp)) { alert('Qty and sale price required'); return; }
+  const { qty, each } = saleNumbers();
+  const typed = document.getElementById(saleLastEdited === 'total' ? 'sale-total' : 'sale-price').value;
+  if (!qty || typed === '' || isNaN(parseFloat(typed))) { alert('Qty and sale price required'); return; }
+  const sp = each;
   const p = allProductsCache.find(x => x.id === pid);
   const body = {
     product_id: pid,
